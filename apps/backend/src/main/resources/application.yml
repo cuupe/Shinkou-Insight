@@ -1,0 +1,22 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: Shinkou-Insight
+
+  # PostgreSQL
+  datasource:
+    url: jdbc:postgresql://localhost:5432/shinkou_insight
+    username: postgres
+    password: 11451419
+    driver-class-name: org.postgresql.Driver
+
+  # Redis
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+      password:
+      timeout: 3000ms

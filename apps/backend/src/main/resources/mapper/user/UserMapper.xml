@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.cuupe.backend.modules.user.mapper.UserMapper">
+    <select
+            id="findUserByPhoneNumber"
+            resultType="com.cuupe.backend.modules.user.entity.User">
+        SELECT
+        id,
+        phone_number,
+        user_name,
+        password,
+        login_at,
+        create_at,
+        status
+        FROM user
+        WHERE phone_number = #{phoneNumber}
+        LIMIT 1
+    </select>
+
+    <select id="findAuthUserByPhoneNumber"
+            resultType="org.springframework.security.core.userdetails.UserDetails">
+        SELECT
+        id,
+        phone_number
+        user_name,
+        password,
+        status
+        FROM user
+        WHERE phone_number = #{phoneNumber}
+    </select>
+
+    <insert id="createUser">
+
+    </insert>
+
+</mapper>
