@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { onUnmounted, ref } from "vue";
 import {
   CheckCircle2Icon,
   EyeIcon,
@@ -39,7 +39,10 @@ import ImageCaptcha from "@/components/auth/ImageCaptcha.vue";
 import RecoveryDialog from "@/components/auth/RecoveryDialog.vue";
 import SubmitButton from "@/components/auth/SubmitButton.vue";
 import { useAuth } from "@/composables/useAuth";
+import { ApiError, api, getApiErrorMessage } from "@/api";
+import { useRouter } from "vue-router";
 type Status = { type: "success" | "error" | "info"; message: string };
+const router = useRouter();
 const { isPhone, isCode, isCaptcha } = useAuth();
 const loginMode = ref("password");
 const showPassword = ref(false);
@@ -51,11 +54,28 @@ const errors = ref<Record<string, string>>({});
 const phone = ref(localStorage.getItem("shinkou-login-phone") || "");
 const password = ref("");
 const smsCode = ref("");
+const smsId = ref("");
 const captcha = ref("");
 const captchaId = ref("");
 const recoveryOpen = ref(false);
 const agreementOpen = ref(false);
 const agreementType = ref<"terms" | "privacy">("terms");
+const smsSending = ref(false);
+const smsCountdown = ref(0);
+let smsTimer: number | undefined;
+function startSmsCountdown() {
+  window.clearInterval(smsTimer);
+  smsCountdown.value = 60;
+  smsTimer = window.setInterval(() => {
+    smsCountdown.value -= 1;
+    if (smsCountdown.value <= 0) {
+      window.clearInterval(smsTimer);
+      smsTimer = undefined;
+      smsCountdown.value = 0;
+    }
+  }, 1000);
+}
+onUnmounted(() => window.clearInterval(smsTimer));
 function clearErrors() {
   errors.value = {};
   status.value = null;
@@ -63,20 +83,44 @@ function clearErrors() {
 function refreshCaptcha() {
   captcha.value = "";
 }
-function submit() {
+function clearSmsState() {
+  clearErrors();
+  smsId.value = "";
+}
+async function submit() {
   const next: Record<string, string> = {};
   if (!isPhone(phone.value)) next.phone = "请输入正确的 11 位手机号";
   if (loginMode.value === "password" && !password.value)
     next.password = "请输入登录密码";
   if (loginMode.value === "sms" && !isCode(smsCode.value))
     next.smsCode = "请输入 6 位短信验证码";
+  if (loginMode.value === "sms" && !smsId.value)
+    next.smsCode = "请先获取短信验证码";
   if (!isCaptcha(captcha.value)) next.captcha = "请输入图片验证码";
   if (!agreed.value) next.agreement = "请先同意用户协议和隐私政策";
   errors.value = next;
   if (Object.keys(next).length) return;
   isSubmitting.value = true;
-  window.setTimeout(() => {
-    isSubmitting.value = false;
+
+  try {
+    if (loginMode.value === "password") {
+      await api.auth.login.password({
+        phoneNumber: phone.value,
+        password: password.value,
+        captcha: captcha.value,
+        captchaId: captchaId.value,
+      });
+    } else {
+      const response = await api.auth.login.sms({
+        phoneNumber: phone.value,
+        verifyCode: smsCode.value,
+        verifyCodeId: smsId.value,
+        captcha: captcha.value,
+        captchaId: captchaId.value,
+      });
+
+      if (!response) throw new ApiError("短信登录失败", "AUTH_LOGIN_FAILED");
+    }
     if (remember.value && loginMode.value === "password")
       localStorage.setItem("shinkou-login-phone", phone.value);
     else localStorage.removeItem("shinkou-login-phone");
@@ -84,14 +128,63 @@ function submit() {
       type: "success",
       message: "登录成功，正在为你打开工作台…",
     };
-  }, 650);
+
+    // 给用户一个可见的成功反馈，避免登录页瞬间消失让人误以为按钮没有响应。
+    await new Promise((resolve) => window.setTimeout(resolve, 450));
+
+    try {
+      const navigationFailure = await router.replace({
+        name: "workspace-dashboard",
+        params: { workspaceId: "shinkou-labs" },
+      });
+
+      if (navigationFailure) {
+        status.value = {
+          type: "error",
+          message: "登录成功，但工作台打开失败，请刷新页面后重试。",
+        };
+      }
+    } catch {
+      status.value = {
+        type: "error",
+        message: "登录成功，但工作台打开失败，请刷新页面后重试。",
+      };
+    }
+  } catch (error) {
+    status.value = {
+      type: "error",
+      message: getApiErrorMessage(error, "登录失败，请稍后重试。"),
+    };
+  } finally {
+    isSubmitting.value = false;
+  }
 }
-function sendSms() {
-  if (!isCaptcha(captcha.value)) {
-    errors.value = { captcha: "请输入图片验证码" };
+async function sendSms() {
+  if (smsSending.value || smsCountdown.value > 0) return;
+  if (!isPhone(phone.value)) {
+    errors.value = { phone: "请输入正确的 11 位手机号" };
     return;
   }
-  status.value = { type: "info", message: "短信验证码已发送，有效期 5 分钟。" };
+  smsSending.value = true;
+  try {
+    const response = await api.auth.sms();
+    if (!response.smsId) {
+      throw new ApiError("短信验证码发送失败，请稍后重试。", "SMS_ID_MISSING");
+    }
+    smsId.value = response.smsId;
+    startSmsCountdown();
+    status.value = { type: "info", message: "短信验证码已发送" };
+  } catch (error) {
+    status.value = {
+      type: "error",
+      message: getApiErrorMessage(
+        error,
+        "验证码发送失败，请刷新页面后重试。",
+      ),
+    };
+  } finally {
+    smsSending.value = false;
+  }
 }
 function openAgreement(type: "terms" | "privacy") {
   agreementType.value = type;
@@ -207,7 +300,7 @@ function openAgreement(type: "terms" | "privacy") {
                   autocomplete="tel"
                   placeholder="请输入 11 位手机号"
                   :aria-invalid="!!errors.phone"
-                  @input="clearErrors"
+                  @input="clearSmsState"
                 /><FieldError v-if="errors.phone">{{
                   errors.phone
                 }}</FieldError></Field
@@ -229,8 +322,12 @@ function openAgreement(type: "terms" | "privacy") {
                     type="button"
                     variant="outline"
                     class="shrink-0 px-3 text-xs"
+                    :disabled="smsSending || smsCountdown > 0"
                     @click="sendSms"
-                    >获取验证码</Button
+                    ><span v-if="smsSending">发送中...</span
+                    ><span v-else-if="smsCountdown > 0"
+                      >{{ smsCountdown }}s 后重新获取</span
+                    ><span v-else>获取验证码</span></Button
                   >
                 </div>
                 <FieldDescription>验证码 5 分钟内有效。</FieldDescription

@@ -5,9 +5,47 @@ import {
   FileText,
   SlidersHorizontal,
 } from "@lucide/vue";
+import { computed, ref } from "vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
+import { reportFilters, reportReaderCopy } from "@/data/mock";
 const { reports, notify } = useWorkspace();
+const selectedReportId = ref(reports[0]?.id ?? "");
+const filterIndex = ref(0);
+const filters = reportFilters;
+const filterLabel = computed(() => filters[filterIndex.value]);
+const filteredReports = computed(() =>
+  filterLabel.value === "全部"
+    ? reports
+    : reports.filter((report) => report.status === filterLabel.value),
+);
+const selectedReport = computed(
+  () => reports.find((report) => report.id === selectedReportId.value) ?? reports[0],
+);
+
+function cycleFilter() {
+  filterIndex.value = (filterIndex.value + 1) % filters.length;
+}
+
+function exportReport() {
+  if (!selectedReport.value) return;
+  const content = `# ${selectedReport.value.title}\n\n项目：${selectedReport.value.project}\n版本：${selectedReport.value.version}\n`;
+  const url = URL.createObjectURL(new Blob([content], { type: "text/markdown" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${selectedReport.value.title}.md`;
+  link.click();
+  URL.revokeObjectURL(url);
+  notify("报告已导出");
+}
+
+function editReport() {
+  if (!selectedReport.value) return;
+  const title = window.prompt("请输入报告标题", selectedReport.value.title);
+  if (!title?.trim()) return;
+  selectedReport.value.title = title.trim();
+  notify("报告标题已更新");
+}
 </script>
 
 <template>
@@ -19,7 +57,7 @@ const { reports, notify } = useWorkspace();
       ><button
         class="button button-secondary"
         type="button"
-        @click="notify('导出接口待接入')"
+        @click="exportReport"
       >
         <Download :size="16" />导出报告
       </button></template
@@ -30,22 +68,24 @@ const { reports, notify } = useWorkspace();
       <div class="panel-heading">
         <div>
           <h2>全部报告</h2>
-          <p>{{ reports.length }} 份报告 · 按更新时间排序</p>
+          <p>{{ filteredReports.length }} 份报告 · {{ filterLabel }} · 按更新时间排序</p>
         </div>
         <button
           class="icon-button small"
           type="button"
-          @click="notify('报告筛选接口待接入')"
+          @click="cycleFilter"
         >
           <SlidersHorizontal :size="16" />
         </button>
       </div>
       <div class="report-list full-list">
         <button
-          v-for="report in reports"
+          v-for="report in filteredReports"
           :key="report.id"
-          class="report-item report-item-selected"
+          class="report-item"
+          :class="{ 'report-item-selected': report.id === selectedReportId }"
           type="button"
+          @click="selectedReportId = report.id"
         >
           <span class="report-file"><FileText :size="17" /></span
           ><span
@@ -64,34 +104,30 @@ const { reports, notify } = useWorkspace();
     </section>
     <section class="panel report-reader">
       <div class="reader-toolbar">
-        <span class="status-badge status-indexed"><i />已发布 · v1.4</span
+        <span
+          class="status-badge"
+          :class="selectedReport?.status === '已发布' ? 'status-indexed' : 'status-muted'"
+          ><i />{{ selectedReport?.status }} · {{ selectedReport?.version }}</span
         ><button
           class="text-button"
           type="button"
-          @click="notify('报告编辑接口待接入')"
+          @click="editReport"
         >
           编辑
         </button>
       </div>
       <article class="markdown-body">
-        <p class="eyebrow">TECHNICAL DECISION REPORT</p>
-        <h2>消息队列技术选型建议</h2>
-        <p class="lead">
-          结合内部业务约束与现有团队能力，建议当前阶段采用 Kafka
-          作为核心消息总线，并以明确的可靠性边界控制迁移风险。
-        </p>
+        <p class="eyebrow">{{ reportReaderCopy.eyebrow }}</p>
+        <h2>{{ selectedReport?.title }}</h2>
+        <p class="lead">{{ selectedReport?.lead }}</p>
         <hr />
-        <h3>01 / 执行摘要</h3>
-        <p>
-          Kafka
-          在吞吐能力、生态成熟度和团队已有经验之间取得了更好的平衡。RabbitMQ
-          在低延迟与简单路由场景中仍有优势。
-        </p>
+        <h3>{{ reportReaderCopy.summaryHeading }}</h3>
+        <p>{{ selectedReport?.summary }}</p>
         <div class="recommendation-box">
           <span class="quick-icon teal-bg"><CheckCircle2 :size="18" /></span>
           <div>
-            <strong>推荐方案：Kafka</strong>
-            <p>优先验证跨地域复制与积压治理，完成后进入灰度迁移。</p>
+            <strong>{{ selectedReport?.recommendation }}</strong>
+            <p>{{ selectedReport?.recommendationDetail }}</p>
           </div>
         </div>
       </article>

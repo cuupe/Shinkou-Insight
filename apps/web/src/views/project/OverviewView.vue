@@ -11,7 +11,12 @@ import {
   Zap,
 } from "@lucide/vue";
 import { useWorkspace } from "@/composables/useWorkspace";
-const { selectedProject, router, routeTo, assets, notify } = useWorkspace();
+import { projectOverviewData } from "@/data/mock";
+const { selectedProject, router, routeTo, assets } = useWorkspace();
+
+function overviewIcon(icon: string) {
+  return icon === "database" ? Database : Zap;
+}
 </script>
 
 <template>
@@ -24,9 +29,9 @@ const { selectedProject, router, routeTo, assets, notify } = useWorkspace();
       <h1>{{ selectedProject?.name }}</h1>
       <p>{{ selectedProject?.description }}</p>
       <div class="hero-meta">
-        <span><Users :size="15" />4 位成员</span
-        ><span><Clock3 :size="15" />最近更新 今天 10:06</span
-        ><span><ShieldCheck :size="15" />内部项目</span>
+        <span><Users :size="15" />{{ projectOverviewData.memberCountLabel }}</span
+        ><span><Clock3 :size="15" />{{ projectOverviewData.updatedLabel }}</span
+        ><span><ShieldCheck :size="15" />{{ projectOverviewData.visibilityLabel }}</span>
       </div>
     </div>
     <button
@@ -38,26 +43,27 @@ const { selectedProject, router, routeTo, assets, notify } = useWorkspace();
     </button>
   </div>
   <div class="quick-actions">
-    <button type="button" @click="router.push(routeTo('project-assets'))">
-      <span class="quick-icon teal-bg"><Upload :size="18" /></span
-      ><span><strong>上传资料</strong><small>PDF、Markdown、TXT</small></span
-      ><ArrowRight :size="15" /></button
-    ><button type="button" @click="router.push(routeTo('project-playground'))">
-      <span class="quick-icon violet-bg"><Search :size="18" /></span
-      ><span><strong>检索测试</strong><small>验证知识库召回</small></span
-      ><ArrowRight :size="15" /></button
-    ><button type="button" @click="router.push(routeTo('project-new-run'))">
-      <span class="quick-icon amber-bg"><Zap :size="18" /></span
-      ><span><strong>创建调研</strong><small>让 Agent 开始工作</small></span
-      ><ArrowRight :size="15" />
+    <button
+      v-for="(action, index) in projectOverviewData.quickActions"
+      :key="action.label"
+      type="button"
+      @click="router.push(routeTo(action.route))"
+    >
+      <span class="quick-icon" :class="`${action.tone}-bg`">
+        <Upload v-if="index === 0" :size="18" />
+        <Search v-else-if="index === 1" :size="18" />
+        <Zap v-else :size="18" />
+      </span>
+      <span><strong>{{ action.label }}</strong><small>{{ action.description }}</small></span>
+      <ArrowRight :size="15" />
     </button>
   </div>
   <div class="overview-grid">
     <section class="panel">
       <div class="panel-heading">
         <div>
-          <h2>知识资产状态</h2>
-          <p>当前项目的资料索引进度</p>
+          <h2>{{ projectOverviewData.assetSummary.title }}</h2>
+          <p>{{ projectOverviewData.assetSummary.description }}</p>
         </div>
         <button
           class="text-button"
@@ -70,15 +76,15 @@ const { selectedProject, router, routeTo, assets, notify } = useWorkspace();
       <div class="asset-health">
         <div>
           <strong>{{ assets.length }}</strong
-          ><span>全部资料</span>
+          ><span>{{ projectOverviewData.assetSummary.totalLabel }}</span>
         </div>
         <div>
           <strong class="teal-text">{{
             assets.filter((item) => item.status === "indexed").length
           }}</strong
-          ><span>已索引</span>
+          ><span>{{ projectOverviewData.assetSummary.indexedLabel }}</span>
         </div>
-        <div><strong>86%</strong><span>索引完成率</span></div>
+        <div><strong>{{ projectOverviewData.assetSummary.completion }}</strong><span>{{ projectOverviewData.assetSummary.completionLabel }}</span></div>
       </div>
     </section>
     <section class="panel">
@@ -89,16 +95,10 @@ const { selectedProject, router, routeTo, assets, notify } = useWorkspace();
         </div>
       </div>
       <div class="capability-list">
-        <div>
-          <Database :size="18" /><span
-            ><strong>知识库已就绪</strong
-            ><small>支持混合检索与证据引用</small></span
-          >
-        </div>
-        <div>
-          <Zap :size="18" /><span
-            ><strong>Agent 可运行</strong
-            ><small>可直接创建调研任务</small></span
+        <div v-for="capability in projectOverviewData.capabilities" :key="capability.title">
+          <component :is="overviewIcon(capability.icon)" :size="18" /><span
+            ><strong>{{ capability.title }}</strong
+            ><small>{{ capability.description }}</small></span
           >
         </div>
       </div>

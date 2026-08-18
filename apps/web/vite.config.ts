@@ -16,7 +16,13 @@ export default defineConfig({
       "/api": {
         target: "http://localhost:8080",
         changeOrigin: true,
+        // 后端实际接口从 /auth 开始，不包含 /api 前缀。
         rewrite: (path) => path.replace(/^\/api/, ""),
+      },
+      // 当前前端默认直接使用 /auth；保留该代理以兼容现有接口调用。
+      "/auth": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
       },
     },
   },

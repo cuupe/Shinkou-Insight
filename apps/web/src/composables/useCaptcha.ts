@@ -1,5 +1,5 @@
 import { ref } from "vue";
-import { api } from "@/api";
+import { api, getApiErrorMessage } from "@/api";
 
 export function useCaptcha() {
   const imageUrl = ref("");
@@ -14,10 +14,10 @@ export function useCaptcha() {
       const captcha = await api.auth.captcha();
       imageUrl.value = captcha.imgUrl;
       captchaId.value = captcha.captchaId;
-    } catch {
+    } catch (caughtError) {
       imageUrl.value = "";
       captchaId.value = "";
-      error.value = "验证码加载失败";
+      error.value = getApiErrorMessage(caughtError, "验证码加载失败");
     } finally {
       loading.value = false;
     }

@@ -14,6 +14,7 @@ import {
   Search,
   Settings2,
   SlidersHorizontal,
+  UserRound,
   Users,
 } from "@lucide/vue";
 import {
@@ -21,12 +22,16 @@ import {
   assets,
   evaluationCases,
   projects,
+  playgroundDefaults,
   recentRuns,
   reports,
   retrievalResults,
+  researchDefaults,
   stats,
   workspace,
+  userProfile,
 } from "@/data/mock";
+import type { AssetStatus } from "@/data/mock";
 
 const mobileOpen = ref(false);
 const searchQuery = ref("");
@@ -34,18 +39,17 @@ const assetFilter = ref("全部");
 const assetTab = ref("全部");
 const uploadInput = ref<HTMLInputElement | null>(null);
 const toast = ref("");
-const playgroundQuery = ref("消息队列在峰值流量下如何保证可靠投递？");
-const retrievalMode = ref("Hybrid");
-const topK = ref(5);
-const rerank = ref(true);
-const newRunGoal = ref(
-  "结合内部业务约束，比较 Kafka、RabbitMQ 和 RocketMQ，给出当前阶段的推荐方案、风险和待确认问题。",
-);
-const allowWeb = ref(true);
-const maxRounds = ref(5);
+const playgroundQuery = ref(playgroundDefaults.query);
+const retrievalMode = ref(playgroundDefaults.mode);
+const topK = ref(playgroundDefaults.topK);
+const rerank = ref(playgroundDefaults.rerank);
+const newRunGoal = ref(researchDefaults.goal);
+const allowWeb = ref(researchDefaults.allowWeb);
+const maxRounds = ref(researchDefaults.maxRounds);
 const runStarted = ref(false);
 const copied = ref(false);
-const selectedEvidence = ref(0);
+  const selectedEvidence = ref(0);
+  let toastTimer: number | undefined;
 
 const workspaceNav = [
   { label: "概览", icon: LayoutDashboard, name: "workspace-dashboard" },
@@ -62,6 +66,7 @@ const projectNav = [
   { label: "评估", icon: BarChart3, name: "project-evaluation" },
 ];
 const settingsNav = [
+  { label: "个人设置", icon: UserRound, name: "user-settings" },
   { label: "工作区设置", icon: Settings2, name: "workspace-settings" },
   { label: "模型配置", icon: Cpu, name: "settings-models" },
   { label: "工具与连接器", icon: Network, name: "settings-tools" },
@@ -111,6 +116,7 @@ export function useWorkspace() {
           "workspace-projects": "项目",
           "workspace-members": "成员与权限",
           "workspace-settings": "工作区设置",
+          "user-settings": "个人信息设置",
           "settings-models": "模型配置",
           "settings-tools": "工具与连接器",
           "settings-prompts": "Prompt 版本",
@@ -142,7 +148,8 @@ export function useWorkspace() {
   }
   function notify(message: string) {
     toast.value = message;
-    window.setTimeout(() => {
+    window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => {
       toast.value = "";
     }, 2600);
   }
@@ -151,11 +158,52 @@ export function useWorkspace() {
   }
   function onFilesSelected(event: Event) {
     const input = event.target as HTMLInputElement;
-    if (input.files?.length)
-      notify(`已选择 ${input.files.length} 个文件，等待接入上传接口`);
+    const selectedFiles = Array.from(input.files || []);
+    if (!selectedFiles.length) return;
+
+    const now = Date.now();
+    selectedFiles.forEach((file, index) => {
+      const asset = {
+        id: `asset-local-${now}-${index}`,
+        name: file.name,
+        type: file.name.split(".").pop()?.toUpperCase() || "FILE",
+        size: file.size > 1024 * 1024
+          ? `${(file.size / 1024 / 1024).toFixed(1)} MB`
+          : `${Math.max(1, Math.round(file.size / 1024))} KB`,
+        uploader: userProfile.name,
+        updated: "刚刚",
+        chunks: 0,
+        progress: 12,
+        status: "indexing" as AssetStatus,
+        reason: "",
+      };
+      assets.unshift(asset);
+
+      window.setTimeout(() => {
+        asset.status = "indexed";
+        asset.progress = 100;
+        asset.chunks = Math.max(1, Math.ceil(file.size / 1800));
+        asset.updated = "刚刚完成";
+      }, 1100 + index * 250);
+    });
+
+    input.value = "";
+    notify(`已添加 ${selectedFiles.length} 个文件，正在建立索引`);
   }
   function retryAsset(name: string) {
-    notify(`已准备重试「${name}」，请在 API 层接入实际任务`);
+    const asset = assets.find((item) => item.name === name);
+    if (!asset) return;
+
+    asset.status = "indexing";
+    asset.progress = 18;
+    asset.reason = "";
+    notify(`已重新开始索引「${name}」`);
+    window.setTimeout(() => {
+      asset.status = "indexed";
+      asset.progress = 100;
+      asset.chunks = Math.max(asset.chunks || 0, 12);
+      asset.updated = "刚刚完成";
+    }, 1200);
   }
   function copyEvidence() {
     copied.value = true;
@@ -166,7 +214,28 @@ export function useWorkspace() {
   }
   function startRun() {
     runStarted.value = true;
-    notify("已创建本地演示运行，等待接入调研接口");
+    const runId = `run-local-${Date.now()}`;
+    recentRuns.unshift({
+      id: runId,
+      project: selectedProject.value?.name || "当前项目",
+      title: newRunGoal.value.slice(0, 34) || "未命名调研",
+      status: "running",
+      statusLabel: "运行中",
+      time: "刚刚",
+      duration: "0m 00s",
+      tokens: "0",
+    });
+    notify("调研任务已创建，正在运行");
+    window.setTimeout(() => {
+      const run = recentRuns.find((item) => item.id === runId);
+      if (!run) return;
+      run.status = "completed";
+      run.statusLabel = "已完成";
+      run.duration = "1m 24s";
+      run.tokens = "12.6k";
+      run.time = "刚刚完成";
+      notify("调研已完成，可查看运行结果");
+    }, 1800);
   }
   function statusLabel(status: string) {
     return (

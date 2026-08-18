@@ -10,6 +10,7 @@ import {
 } from "@lucide/vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
+import { assetFilterOptions, assetTabs } from "@/data/mock";
 const {
   filteredAssets,
   searchQuery,
@@ -21,7 +22,8 @@ const {
   retryAsset,
   statusLabel,
   statusClass,
-  notify,
+  router,
+  routeTo,
 } = useWorkspace();
 </script>
 
@@ -52,7 +54,7 @@ const {
       /></label>
       <div class="filter-tabs">
         <button
-          v-for="tab in ['全部', '已索引', '处理中', '失败']"
+          v-for="tab in assetTabs"
           :key="tab"
           type="button"
           :class="{ active: assetTab === tab }"
@@ -62,10 +64,9 @@ const {
         </button>
       </div>
       <select v-model="assetFilter">
-        <option>全部</option>
-        <option value="indexed">indexed</option>
-        <option value="indexing">indexing</option>
-        <option value="failed">failed</option>
+        <option v-for="option in assetFilterOptions" :key="option.value" :value="option.value">
+          {{ option.label }}
+        </option>
       </select>
     </div>
     <div class="data-table">
@@ -73,7 +74,25 @@ const {
         <span>资料</span><span>状态</span><span>切片</span><span>更新时间</span
         ><span />
       </div>
-      <div v-for="asset in filteredAssets" :key="asset.id" class="table-row">
+      <div
+        v-for="asset in filteredAssets"
+        :key="asset.id"
+        class="table-row asset-row"
+        role="button"
+        tabindex="0"
+        @click="
+          router.push({
+            name: 'project-asset-detail',
+            params: { ...routeTo('project-asset-detail').params, assetId: asset.id },
+          })
+        "
+        @keydown.enter="
+          router.push({
+            name: 'project-asset-detail',
+            params: { ...routeTo('project-asset-detail').params, assetId: asset.id },
+          })
+        "
+      >
         <div class="asset-title">
           <span class="file-type"><FileText :size="16" /></span
           ><span
@@ -91,7 +110,7 @@ const {
           v-if="asset.status === 'failed'"
           class="icon-button small"
           type="button"
-          @click="retryAsset(asset.name)"
+          @click.stop="retryAsset(asset.name)"
         >
           <RefreshCw :size="16" /></button
         ><CheckCircle2

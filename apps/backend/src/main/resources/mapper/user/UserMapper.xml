@@ -15,25 +15,47 @@
         login_at,
         create_at,
         status
-        FROM user
+        FROM users
         WHERE phone_number = #{phoneNumber}
         LIMIT 1
     </select>
 
     <select id="findAuthUserByPhoneNumber"
-            resultType="org.springframework.security.core.userdetails.UserDetails">
+            resultType="com.cuupe.backend.modules.user.security.UserLoginByPassword">
         SELECT
         id,
-        phone_number
-        user_name,
+        phone_number AS phoneNumber,
+        user_name AS userName,
         password,
         status
-        FROM user
+        FROM users
         WHERE phone_number = #{phoneNumber}
     </select>
 
-    <insert id="createUser">
+    <select id="existPhoneNumber" resultType="java.lang.Boolean">
+        SELECT EXISTS (
+        SELECT 1
+        FROM users
+        WHERE phone_number = #{phoneNumber}
+        )
+    </select>
 
+    <insert id="createNewUser">
+        INSERT
+        INTO users (
+        user_name,
+        phone_number,
+        password,
+        create_at,
+        status
+        )
+        VALUES(
+        #{userName},
+        #{phoneNumber},
+        #{password},
+        #{createAt},
+        #{status}
+        )
     </insert>
 
 </mapper>

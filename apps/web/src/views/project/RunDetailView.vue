@@ -2,27 +2,23 @@
 import { ArrowLeft, Check, Copy, FileText, X } from "@lucide/vue";
 import { useRouter } from "vue-router";
 import { recentRuns } from "@/data/mock";
+import { runDetailData } from "@/data/mock";
 import { useWorkspace } from "@/composables/useWorkspace";
 const router = useRouter();
-const { copied, selectedEvidence, copyEvidence, notify } = useWorkspace();
+const { copied, selectedEvidence, copyEvidence, notify, statusClass } = useWorkspace();
 const run = recentRuns[0]!;
-const evidence = [
-  {
-    code: "E1",
-    title: "生产端等待持久化确认",
-    source: "订单系统架构说明.pdf · p.12",
-  },
-  {
-    code: "E2",
-    title: "团队具备 Kafka 基础运维经验",
-    source: "团队技术能力评估.txt · 现状",
-  },
-  {
-    code: "C1",
-    title: "重试策略存在冲突",
-    source: "峰值流量与可靠性要求.md · 峰值流量",
-  },
-];
+const evidence = runDetailData.evidence;
+
+function generateReport() {
+  const content = `# ${run.title}\n\n${run.project}\n\n${runDetailData.summary}`;
+  const url = URL.createObjectURL(new Blob([content], { type: "text/markdown" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${run.title}.md`;
+  link.click();
+  URL.revokeObjectURL(url);
+  notify("报告已生成并下载");
+}
 </script>
 
 <template>
@@ -37,36 +33,26 @@ const evidence = [
         {{ run.id }} · {{ run.project }} · {{ run.time }}
       </p>
     </div>
-    <span class="status-badge status-completed"><i />已完成</span>
+    <span class="status-badge" :class="statusClass(run.status)"><i />{{ run.statusLabel }}</span>
   </div>
   <div class="run-metrics">
-    <div>
-      <span>运行耗时</span><strong>{{ run.duration }}</strong>
+    <div v-for="metric in runDetailData.metrics" :key="metric.label">
+      <span>{{ metric.label }}</span><strong>{{ metric.value }}</strong>
     </div>
-    <div>
-      <span>消耗 Tokens</span><strong>{{ run.tokens }}</strong>
-    </div>
-    <div><span>引用证据</span><strong>24</strong></div>
-    <div><span>可信度</span><strong>91%</strong></div>
   </div>
   <div class="research-workspace">
     <section class="panel markdown-body">
       <p class="eyebrow">FINAL SUMMARY</p>
       <h2>结论摘要</h2>
-      <p>
-        结合内部业务约束与已检索证据，当前阶段建议采用 Kafka
-        作为核心消息总线，并优先验证跨地域复制与积压治理能力。
-      </p>
+      <p>{{ runDetailData.summary }}</p>
       <h3>关键判断</h3>
       <ul>
-        <li>吞吐能力和团队已有经验使 Kafka 更适合当前阶段。</li>
-        <li>生产端应等待持久化确认，消费端在事务提交后手动 ack。</li>
-        <li>跨地域复制与长期运维成本仍需补充验证。</li>
+        <li v-for="point in runDetailData.keyPoints" :key="point">{{ point }}</li>
       </ul>
       <button
         class="button button-secondary button-sm"
         type="button"
-        @click="notify('报告生成接口待接入')"
+        @click="generateReport"
       >
         <FileText :size="14" />生成报告
       </button>
@@ -100,8 +86,7 @@ const evidence = [
           <span class="eyebrow">EVIDENCE</span>
           <h2>{{ evidence[selectedEvidence]?.title }}</h2>
           <p>
-            生产端必须等待 Broker
-            返回持久化确认，消费端在业务事务提交后确认消息。
+            {{ runDetailData.evidenceDetail }}
           </p>
         </div>
         <div>

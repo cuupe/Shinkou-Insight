@@ -1,6 +1,11 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { EyeIcon, EyeOffIcon } from "@lucide/vue";
+import { onUnmounted, ref } from "vue";
+import { CheckCircle2Icon, EyeIcon, EyeOffIcon } from "@lucide/vue";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert";
 import {
   Card,
   CardContent,
@@ -28,6 +33,7 @@ import AgreementDialog from "@/components/auth/AgreementDialog.vue";
 import ImageCaptcha from "@/components/auth/ImageCaptcha.vue";
 import SubmitButton from "@/components/auth/SubmitButton.vue";
 import { useAuth } from "@/composables/useAuth";
+import { ApiError, api, getApiErrorMessage } from "@/api";
 import { useRouter } from "vue-router";
 const router = useRouter();
 const { isPhone, isCode, isCaptcha } = useAuth();
@@ -36,29 +42,72 @@ const smsCode = ref("");
 const username = ref("");
 const password = ref("");
 const confirmPassword = ref("");
-const captcha = ref(""); const captchaId = ref("");
+const captcha = ref("");
+const captchaId = ref("");
+const verifyCodeId = ref("");
 const agreed = ref(false);
 const isSubmitting = ref(false);
 const errors = ref<Record<string, string>>({});
+const status = ref<{ type: "success" | "error"; message: string } | null>(
+  null,
+);
+const registrationSucceeded = ref(false);
 const showPassword = ref(false);
 const showConfirm = ref(false);
 const agreementOpen = ref(false);
 const agreementType = ref<"terms" | "privacy">("terms");
+const smsSending = ref(false);
+const smsCountdown = ref(0);
+let smsTimer: number | undefined;
+function startSmsCountdown() {
+  window.clearInterval(smsTimer);
+  smsCountdown.value = 60;
+  smsTimer = window.setInterval(() => {
+    smsCountdown.value -= 1;
+    if (smsCountdown.value <= 0) {
+      window.clearInterval(smsTimer);
+      smsTimer = undefined;
+      smsCountdown.value = 0;
+    }
+  }, 1000);
+}
+onUnmounted(() => window.clearInterval(smsTimer));
 function clearErrors() {
   errors.value = {};
+  status.value = null;
 }
-function sendSms() {
+function clearPhoneState() {
+  clearErrors();
+  verifyCodeId.value = "";
+}
+function goToLogin() {
+  void router.push({ name: "login" });
+}
+async function sendSms() {
+  if (smsSending.value || smsCountdown.value > 0) return;
   if (!isPhone(phone.value)) {
     errors.value = { phone: "请输入正确的 11 位手机号" };
     return;
   }
-  if (!isCaptcha(captcha.value)) {
-    errors.value = { captcha: "请先输入图片验证码" };
-    return;
-  }
   errors.value = {};
+  smsSending.value = true;
+
+  try {
+    const response = await api.auth.sms();
+    if (!response.smsId) {
+      throw new ApiError("短信验证码发送失败，请稍后重试。", "SMS_ID_MISSING");
+    }
+    verifyCodeId.value = response.smsId;
+    startSmsCountdown();
+  } catch (error) {
+    errors.value = {
+      smsCode: getApiErrorMessage(error, "验证码发送失败，请稍后重试。"),
+    };
+  } finally {
+    smsSending.value = false;
+  }
 }
-function submit() {
+async function submit() {
   const next: Record<string, string> = {};
   if (!isPhone(phone.value)) next.phone = "请输入正确的 11 位手机号";
   if (!isCode(smsCode.value)) next.smsCode = "请输入 6 位手机验证码";
@@ -68,14 +117,34 @@ function submit() {
   if (password.value !== confirmPassword.value)
     next.confirmPassword = "两次输入的密码不一致";
   if (!isCaptcha(captcha.value)) next.captcha = "请输入图片验证码";
+  if (!verifyCodeId.value) next.smsCode = "请先获取手机验证码";
   if (!agreed.value) next.agreement = "请先同意用户协议和隐私政策";
   errors.value = next;
   if (Object.keys(next).length) return;
   isSubmitting.value = true;
-  window.setTimeout(() => {
+  try {
+    await api.auth.register({
+      phoneNumber: phone.value,
+      userName: username.value.trim(),
+      password: password.value,
+      captchaId: captchaId.value,
+      captcha: captcha.value,
+      verifyCodeId: verifyCodeId.value,
+      verifyCode: smsCode.value,
+    });
+    registrationSucceeded.value = true;
+    status.value = {
+      type: "success",
+      message: "账号已经创建，请点击下方按钮进入登录页面。",
+    };
+  } catch (error) {
+    status.value = {
+      type: "error",
+      message: getApiErrorMessage(error, "注册失败，请稍后重试。"),
+    };
+  } finally {
     isSubmitting.value = false;
-    router.push({ name: "login" });
-  }, 650);
+  }
 }
 function openAgreement(type: "terms" | "privacy") {
   agreementType.value = type;
@@ -91,7 +160,19 @@ function openAgreement(type: "terms" | "privacy") {
         >加入团队，开始沉淀有价值的洞察</CardDescription
       ></CardHeader
     ><CardContent class="px-6 sm:px-7"
-      ><form class="flex flex-col gap-5" @submit.prevent="submit">
+      ><Alert
+        v-if="status"
+        class="mb-5"
+        :variant="status.type === 'error' ? 'destructive' : 'default'"
+        ><CheckCircle2Icon v-if="status.type === 'success'" /><AlertTitle>{{
+          status.type === "success" ? "注册成功" : "注册失败"
+        }}</AlertTitle
+        ><AlertDescription>{{ status.message }}</AlertDescription></Alert
+      ><form
+        v-if="!registrationSucceeded"
+        class="flex flex-col gap-5"
+        @submit.prevent="submit"
+      >
         <FieldGroup
           ><Field :data-invalid="!!errors.phone"
             ><FieldLabel for="register-phone">手机号</FieldLabel
@@ -102,7 +183,7 @@ function openAgreement(type: "terms" | "privacy") {
               autocomplete="tel"
               placeholder="请输入 11 位手机号"
               :aria-invalid="!!errors.phone"
-              @input="clearErrors"
+              @input="clearPhoneState"
             /><FieldError v-if="errors.phone">{{
               errors.phone
             }}</FieldError></Field
@@ -111,6 +192,7 @@ function openAgreement(type: "terms" | "privacy") {
             ><Input
               id="register-username"
               v-model="username"
+              autocomplete="username"
               placeholder="请输入用户名"
               :aria-invalid="!!errors.username"
               @input="clearErrors"
@@ -124,6 +206,7 @@ function openAgreement(type: "terms" | "privacy") {
                 id="register-password"
                 v-model="password"
                 :type="showPassword ? 'text' : 'password'"
+                autocomplete="new-password"
                 placeholder="至少 8 位字符"
                 class="pr-10"
                 :aria-invalid="!!errors.password"
@@ -147,6 +230,7 @@ function openAgreement(type: "terms" | "privacy") {
                 id="register-confirm-password"
                 v-model="confirmPassword"
                 :type="showConfirm ? 'text' : 'password'"
+                autocomplete="new-password"
                 placeholder="再次输入密码"
                 class="pr-10"
                 :aria-invalid="!!errors.confirmPassword"
@@ -183,15 +267,19 @@ function openAgreement(type: "terms" | "privacy") {
                 type="button"
                 variant="outline"
                 class="shrink-0 px-3 text-xs"
+                :disabled="smsSending || smsCountdown > 0"
                 @click="sendSms"
-                >获取验证码</Button
+                ><span v-if="smsSending">发送中...</span
+                ><span v-else-if="smsCountdown > 0"
+                  >{{ smsCountdown }}s 后重新获取</span
+                ><span v-else>获取验证码</span></Button
               >
             </div>
             <FieldDescription>验证码 5 分钟内有效。</FieldDescription
             ><FieldError v-if="errors.smsCode">{{
               errors.smsCode
             }}</FieldError></Field
-        ></FieldGroup
+          ></FieldGroup
         ><ImageCaptcha
           id="register-captcha"
           v-model="captcha"
@@ -204,7 +292,15 @@ function openAgreement(type: "terms" | "privacy") {
           :error="errors.agreement"
           @open="openAgreement"
         /><SubmitButton :loading="isSubmitting">创建账号</SubmitButton>
-      </form></CardContent
+      </form>
+      <div v-else class="flex flex-col items-center gap-4 py-4 text-center">
+        <p class="text-sm text-muted-foreground">
+          注册信息已保存，现在可以使用手机号和密码登录。
+        </p>
+        <Button type="button" class="w-full" @click="goToLogin">
+          去登录
+        </Button>
+      </div></CardContent
     ><CardFooter class="border-t px-6 pb-6 pt-4 sm:px-7"
       ><p class="flex items-center gap-2 text-xs text-muted-foreground">
         注册后即可邀请团队成员协作

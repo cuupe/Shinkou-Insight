@@ -1,28 +1,31 @@
 <script setup lang="ts">
 import { ArrowRight, Plus } from "@lucide/vue";
+import { ref } from "vue";
 import Layout from "@/components/settings/Layout.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
+import { promptConfigs } from "@/data/mock";
 const { notify } = useWorkspace();
-const prompts = [
-  {
-    name: "research-planner",
-    version: "v3.2",
-    updated: "今天 09:12",
-    status: "生产中",
-  },
-  {
-    name: "evidence-reviewer",
-    version: "v2.8",
-    updated: "昨天 18:03",
-    status: "生产中",
-  },
-  {
-    name: "report-writer",
-    version: "v1.6",
-    updated: "8 月 05 日",
+const prompts = ref(promptConfigs.map((prompt) => ({ ...prompt })));
+
+function editPrompt(prompt: (typeof prompts.value)[number]) {
+  const version = window.prompt("请输入 Prompt 版本", prompt.version);
+  if (!version?.trim()) return;
+  prompt.version = version.trim();
+  prompt.updated = "刚刚";
+  notify(`${prompt.name} 已更新`);
+}
+
+function createPrompt() {
+  const name = window.prompt("请输入 Prompt 名称");
+  if (!name?.trim()) return;
+  prompts.value.push({
+    name: name.trim(),
+    version: "v0.1",
+    updated: "刚刚",
     status: "草稿",
-  },
-];
+  });
+  notify("Prompt 已创建");
+}
 </script>
 
 <template>
@@ -45,7 +48,7 @@ const prompts = [
           ><button
             class="icon-button small"
             type="button"
-            @click="notify('Prompt 编辑接口待接入')"
+            @click="editPrompt(prompt)"
           >
             <ArrowRight :size="15" />
           </button>
@@ -54,7 +57,7 @@ const prompts = [
       <button
         class="button button-secondary"
         type="button"
-        @click="notify('新建 Prompt 接口待接入')"
+        @click="createPrompt"
       >
         <Plus :size="16" />新建 Prompt
       </button>

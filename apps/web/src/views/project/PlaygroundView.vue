@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ArrowRight, Check, Search, SlidersHorizontal } from "@lucide/vue";
+import { ref } from "vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
+import { retrievalModes } from "@/data/mock";
 const {
   playgroundQuery,
   retrievalMode,
@@ -10,6 +12,25 @@ const {
   retrievalResults,
   notify,
 } = useWorkspace();
+const isSearching = ref(false);
+const selectedRank = ref<number | null>(null);
+
+function runSearch() {
+  if (!playgroundQuery.value.trim() || isSearching.value) return;
+  isSearching.value = true;
+  selectedRank.value = null;
+  window.setTimeout(() => {
+    isSearching.value = false;
+    notify(`检索完成，返回 ${retrievalResults.length} 条结果`);
+  }, 700);
+}
+
+function openParameters() {
+  const currentIndex = retrievalModes.indexOf(retrievalMode.value);
+  retrievalMode.value = retrievalModes[(currentIndex + 1) % retrievalModes.length]!;
+  topK.value = Math.min(20, Math.max(3, topK.value));
+  notify(`已切换为 ${retrievalMode.value} 检索`);
+}
 </script>
 
 <template>
@@ -21,7 +42,7 @@ const {
       ><button
         class="button button-secondary"
         type="button"
-        @click="notify('检索参数接口待接入')"
+        @click="openParameters"
       >
         <SlidersHorizontal :size="16" />参数设置
       </button></template
@@ -39,9 +60,7 @@ const {
       <div class="playground-controls">
         <label
           >模式<select v-model="retrievalMode">
-            <option>Hybrid</option>
-            <option>Vector</option>
-            <option>Keyword</option>
+            <option v-for="mode in retrievalModes" :key="mode">{{ mode }}</option>
           </select></label
         ><label
           >Top K<input
@@ -56,9 +75,9 @@ const {
       <button
         class="button button-primary"
         type="button"
-        @click="notify('检索接口待接入')"
+        @click="runSearch"
       >
-        <Search :size="16" />运行检索
+        <Search :size="16" />{{ isSearching ? "检索中..." : "运行检索" }}
       </button>
     </section>
     <section class="panel retrieval-results">
@@ -72,6 +91,8 @@ const {
         v-for="result in retrievalResults"
         :key="result.rank"
         class="retrieval-card"
+        :class="{ selected: selectedRank === result.rank }"
+        @click="selectedRank = result.rank"
       >
         <div class="retrieval-card-top">
           <span class="rank-number">0{{ result.rank }}</span
@@ -85,7 +106,7 @@ const {
         <button
           class="text-button"
           type="button"
-          @click="notify('证据详情接口待接入')"
+          @click.stop="selectedRank = result.rank"
         >
           查看证据 <ArrowRight :size="14" />
         </button>

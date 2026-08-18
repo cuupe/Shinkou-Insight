@@ -16,7 +16,6 @@ const {
   mobileOpen,
   workspaceNav,
   projectNav,
-  settingsNav,
   routeTo,
   notify,
 } = useWorkspace();
@@ -32,7 +31,7 @@ const {
     <button
       class="workspace-switcher"
       type="button"
-      @click="notify('工作区切换接口待接入')"
+      @click="notify(`当前工作区：${workspace.name}`)"
     >
       <span class="workspace-avatar">{{ workspace.initials }}</span
       ><span class="workspace-switcher-copy"
@@ -71,27 +70,14 @@ const {
           }}</span></RouterLink
         >
       </nav>
-      <p class="nav-caption project-caption">管理</p>
-      <nav class="side-nav">
-        <RouterLink
-          v-for="item in settingsNav"
-          :key="item.name"
-          :to="routeTo(item.name)"
-          :class="{ active: currentName === item.name }"
-          @click="mobileOpen = false"
-          ><component :is="item.icon" :size="17" /><span>{{
-            item.label
-          }}</span></RouterLink
-        >
-      </nav>
     </div>
     <div class="sidebar-footer">
-      <div class="usage-label"><span>本月用量</span><span>68%</span></div>
-      <div class="usage-track"><i style="width: 68%" /></div>
+      <div class="usage-label"><span>本月用量</span><span>{{ workspace.usagePercent }}</span></div>
+      <div class="usage-track"><i :style="{ width: workspace.usagePercent }" /></div>
       <button
         class="help-link"
         type="button"
-        @click="notify('帮助中心接口待接入')"
+        @click="notify('帮助中心：查看页面右上角提示或联系工作区管理员')"
       >
         <CircleHelp :size="16" />帮助中心<ArrowRight :size="14" />
       </button>

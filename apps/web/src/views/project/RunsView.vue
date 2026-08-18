@@ -1,8 +1,23 @@
 <script setup lang="ts">
 import { ArrowRight, MoreHorizontal, Plus, RefreshCw } from "@lucide/vue";
+import { computed, ref } from "vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
+import { runStatusFilters, runSummary } from "@/data/mock";
 const { recentRuns, statusClass, router, routeTo, notify } = useWorkspace();
+const filterIndex = ref(0);
+const filters = runStatusFilters;
+const filterLabel = computed(() => filters[filterIndex.value]);
+const filteredRuns = computed(() =>
+  filterLabel.value === "全部状态"
+    ? recentRuns
+    : recentRuns.filter((run) => run.statusLabel === filterLabel.value),
+);
+
+function cycleFilter() {
+  filterIndex.value = (filterIndex.value + 1) % filters.length;
+  notify(`已切换到${filterLabel.value}`);
+}
 </script>
 
 <template>
@@ -22,15 +37,15 @@ const { recentRuns, statusClass, router, routeTo, notify } = useWorkspace();
   >
   <section class="panel table-panel">
     <div class="run-summary-row">
-      <div><strong>48</strong><span>总运行</span></div>
-      <div><strong>91.4%</strong><span>完成率</span></div>
-      <div><strong>2.4m</strong><span>平均耗时</span></div>
+      <div v-for="item in runSummary" :key="item.label">
+        <strong>{{ item.value }}</strong><span>{{ item.label }}</span>
+      </div>
       <button
         class="select-button"
         type="button"
-        @click="notify('运行筛选接口待接入')"
+        @click="cycleFilter"
       >
-        全部状态 <MoreHorizontal :size="15" />
+        {{ filterLabel }} <MoreHorizontal :size="15" />
       </button>
     </div>
     <div class="data-table run-table">
@@ -38,7 +53,7 @@ const { recentRuns, statusClass, router, routeTo, notify } = useWorkspace();
         <span>调研运行</span><span>状态</span><span>耗时</span
         ><span>Tokens</span><span>时间</span>
       </div>
-      <div v-for="run in recentRuns" :key="run.id" class="table-row">
+      <div v-for="run in filteredRuns" :key="run.id" class="table-row">
         <div class="run-title">
           <span class="run-icon"><RefreshCw :size="15" /></span>
           <div>

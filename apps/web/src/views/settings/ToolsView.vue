@@ -1,28 +1,22 @@
 <script setup lang="ts">
 import { Database, Globe2, ListChecks } from "@lucide/vue";
+import { ref } from "vue";
 import Layout from "@/components/settings/Layout.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
+import { toolConfigs } from "@/data/mock";
 const { notify } = useWorkspace();
-const tools = [
-  {
-    name: "内部知识库",
-    description: "检索当前工作区已索引资产",
-    icon: Database,
-    enabled: true,
-  },
-  {
-    name: "Web Search",
-    description: "补充外部公开资料与最新信息",
-    icon: Globe2,
-    enabled: true,
-  },
-  {
-    name: "Jira",
-    description: "读取项目缺陷与行动项状态",
-    icon: ListChecks,
-    enabled: false,
-  },
-];
+const toolIcons = { database: Database, globe: Globe2, list: ListChecks };
+const tools = ref(
+  toolConfigs.map((tool) => ({
+    ...tool,
+    icon: toolIcons[tool.icon as keyof typeof toolIcons],
+  })),
+);
+
+function toggleTool(tool: (typeof tools.value)[number]) {
+  tool.enabled = !tool.enabled;
+  notify(`${tool.name}已${tool.enabled ? "连接" : "断开"}`);
+}
 </script>
 
 <template>
@@ -49,7 +43,7 @@ const tools = [
           ><button
             class="button button-secondary button-sm"
             type="button"
-            @click="notify('连接器授权接口待接入')"
+            @click="toggleTool(tool)"
           >
             {{ tool.enabled ? "管理" : "连接" }}
           </button>

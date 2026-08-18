@@ -5,5 +5,6 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 
-public class RegisterResponse {
-}
+public record RegisterResponse(
+    String info
+) { }

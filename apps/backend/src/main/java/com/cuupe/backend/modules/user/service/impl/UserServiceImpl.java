@@ -23,6 +23,10 @@ public class UserServiceImpl implements UserService, UserDetailsService {
     @Override
     public UserDetails loadUserByUsername(@NonNull String phoneNumber)
             throws UsernameNotFoundException {
-        return userMapper.findAuthUserByPhoneNumber(phoneNumber);
+        UserDetails userDetails = userMapper.findAuthUserByPhoneNumber(phoneNumber);
+        if (userDetails == null) {
+            throw new UsernameNotFoundException("手机号或密码错误");
+        }
+        return userDetails;
     }
 }

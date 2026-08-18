@@ -2,7 +2,25 @@
 import { ArrowRight, MoreHorizontal, Plus } from "@lucide/vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
+import { projectDefaults } from "@/data/mock";
 const { projects, workspaceId, routeTo, notify } = useWorkspace();
+function createProject() {
+  const name = window.prompt("请输入项目名称");
+  if (!name?.trim()) return;
+  projects.push({
+    id: `project-local-${Date.now()}`,
+    name: name.trim(),
+    description: projectDefaults.description,
+    assets: 0,
+    runs: 0,
+    reports: 0,
+    color: projectDefaults.color,
+  });
+  notify("项目已创建");
+}
+function openProjectMenu(name: string) {
+  notify(`已打开「${name}」的项目菜单`);
+}
 </script>
 
 <template>
@@ -14,7 +32,7 @@ const { projects, workspaceId, routeTo, notify } = useWorkspace();
       ><button
         class="button button-primary"
         type="button"
-        @click="notify('创建项目表单接口待接入')"
+        @click="createProject"
       >
         <Plus :size="17" />新建项目
       </button></template
@@ -29,7 +47,8 @@ const { projects, workspaceId, routeTo, notify } = useWorkspace();
         /><button
           class="icon-button small"
           type="button"
-          @click="notify('项目菜单接口待接入')"
+          :aria-label="`打开项目菜单：${project.name}`"
+          @click="openProjectMenu(project.name)"
         >
           <MoreHorizontal :size="17" />
         </button>
@@ -60,7 +79,8 @@ const { projects, workspaceId, routeTo, notify } = useWorkspace();
     <button
       class="project-card project-create-card"
       type="button"
-      @click="notify('创建项目表单接口待接入')"
+      aria-label="创建新项目"
+      @click="createProject"
     >
       <span><Plus :size="23" /></span><strong>创建新项目</strong
       ><small>从一个清晰的问题开始</small>

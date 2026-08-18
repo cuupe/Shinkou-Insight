@@ -33,11 +33,15 @@ public class UserLoginByPassword implements UserDetails {
 
     @Override
     public String getUsername() {
+        return phoneNumber;
+    }
+
+    public String getDisplayName() {
         return userName;
     }
 
     @Override
     public boolean isEnabled() {
-        return status != null && status == 1;
+        return status != null && status == 0;
     }
 }

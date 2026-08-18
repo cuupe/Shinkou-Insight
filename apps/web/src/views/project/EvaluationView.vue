@@ -1,8 +1,50 @@
 <script setup lang="ts">
 import { ArrowRight, BarChart3, CheckCircle2, Plus } from "@lucide/vue";
+import { computed, ref } from "vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
+import { evaluationStatusLabels, evaluationSummary } from "@/data/mock";
 const { evaluationCases, notify } = useWorkspace();
+const selectedCaseId = ref(evaluationCases[0]?.id ?? "");
+const isRunning = ref(false);
+const selectedCase = computed(() =>
+  evaluationCases.find((item) => item.id === selectedCaseId.value),
+);
+function evaluationStatusLabel(status: string) {
+  return evaluationStatusLabels[status as keyof typeof evaluationStatusLabels] || status;
+}
+
+function createEvaluation() {
+  const query = window.prompt("请输入评估问题");
+  if (!query?.trim()) return;
+  evaluationCases.push({
+    id: `eval-local-${Date.now()}`,
+    query: query.trim(),
+    recall: "—",
+    citation: "—",
+    json: "—",
+    status: "review",
+  });
+  notify("评估用例已创建");
+}
+
+function runEvaluation() {
+  if (isRunning.value) return;
+  isRunning.value = true;
+  notify("评估运行中");
+  window.setTimeout(() => {
+    evaluationCases.forEach((item) => {
+      if (item.recall === "—") {
+        item.recall = "88%";
+        item.citation = "84%";
+        item.json = "通过";
+        item.status = "passed";
+      }
+    });
+    isRunning.value = false;
+    notify("评估已完成");
+  }, 900);
+}
 </script>
 
 <template>
@@ -14,33 +56,29 @@ const { evaluationCases, notify } = useWorkspace();
       ><button
         class="button button-primary"
         type="button"
-        @click="notify('新建评估集接口待接入')"
+        @click="createEvaluation"
       >
         <Plus :size="17" />新建评估
       </button></template
     ></PageHeader
   >
   <div class="evaluation-metrics">
-    <div>
-      <span>平均召回率</span><strong>87.5%</strong><small>+4.2% 较上次</small>
+    <div v-for="metric in evaluationSummary.metrics" :key="metric.label">
+      <span>{{ metric.label }}</span><strong>{{ metric.value }}</strong><small>{{ metric.change }}</small>
     </div>
-    <div>
-      <span>引用准确率</span><strong>81.5%</strong><small>+6.8% 较上次</small>
-    </div>
-    <div><span>结构化输出</span><strong>93.8%</strong><small>稳定</small></div>
   </div>
   <section class="panel table-panel">
     <div class="panel-heading">
       <div>
         <h2>评估用例</h2>
-        <p>最近一次运行：今天 09:30</p>
+        <p>{{ evaluationSummary.lastRun }}</p>
       </div>
       <button
         class="text-button"
         type="button"
-        @click="notify('运行评估接口待接入')"
+        @click="runEvaluation"
       >
-        <BarChart3 :size="15" />运行评估
+        <BarChart3 :size="15" />{{ isRunning ? "评估中..." : "运行评估" }}
       </button>
     </div>
     <div class="data-table evaluation-table">
@@ -48,7 +86,13 @@ const { evaluationCases, notify } = useWorkspace();
         <span>问题</span><span>召回</span><span>引用</span><span>JSON</span
         ><span>状态</span>
       </div>
-      <div v-for="item in evaluationCases" :key="item.id" class="table-row">
+      <div
+        v-for="item in evaluationCases"
+        :key="item.id"
+        class="table-row"
+        :class="{ 'table-row-selected': item.id === selectedCaseId }"
+        @click="selectedCaseId = item.id"
+      >
         <div>
           <strong>{{ item.query }}</strong
           ><small>{{ item.id }}</small>
@@ -60,16 +104,12 @@ const { evaluationCases, notify } = useWorkspace();
           class="status-badge"
           :class="item.status === 'passed' ? 'status-indexed' : 'status-muted'"
           ><i />{{
-            item.status === "passed"
-              ? "通过"
-              : item.status === "review"
-                ? "待复核"
-                : "失败"
+            evaluationStatusLabel(item.status)
           }}</span
         ><button
           class="icon-button small"
           type="button"
-          @click="notify('评估详情接口待接入')"
+          @click.stop="selectedCaseId = item.id"
         >
           <ArrowRight :size="15" />
         </button>
@@ -77,6 +117,6 @@ const { evaluationCases, notify } = useWorkspace();
     </div>
   </section>
   <div class="success-note">
-    <CheckCircle2 :size="16" />评估数据接口已预留，接入后可替换本地演示数据。
+    <CheckCircle2 :size="16" />{{ selectedCase ? `已选择：${selectedCase.query}` : "请选择一个评估用例" }}
   </div>
 </template>

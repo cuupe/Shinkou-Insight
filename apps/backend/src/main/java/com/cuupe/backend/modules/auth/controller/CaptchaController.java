@@ -18,7 +18,7 @@ public class CaptchaController {
     public Result<CaptchaResponse> captcha(){
         var res = captchaService.generate();
 
-        return Result.success(new CaptchaResponse(
+        return Result.success("SUCCESS", "图片验证码获取成功", new CaptchaResponse(
                 res.captchaId(),
                 res.imgUrl()
         ));

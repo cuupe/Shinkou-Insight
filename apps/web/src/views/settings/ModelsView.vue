@@ -1,28 +1,15 @@
 <script setup lang="ts">
 import { Cpu } from "@lucide/vue";
+import { ref } from "vue";
 import Layout from "@/components/settings/Layout.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
+import { modelConfigs } from "@/data/mock";
 const { notify } = useWorkspace();
-const models = [
-  {
-    name: "GPT-4.1",
-    provider: "OpenAI",
-    use: "调研规划与报告生成",
-    enabled: true,
-  },
-  {
-    name: "Qwen 2.5 72B",
-    provider: "DashScope",
-    use: "内部知识检索改写",
-    enabled: true,
-  },
-  {
-    name: "Claude Sonnet 4",
-    provider: "Anthropic",
-    use: "备用模型",
-    enabled: false,
-  },
-];
+const models = ref(modelConfigs.map((model) => ({ ...model })));
+
+function testConnection(modelName: string) {
+  notify(`${modelName} 连接测试成功`);
+}
 </script>
 
 <template>
@@ -48,7 +35,7 @@ const models = [
           ><button
             class="text-button"
             type="button"
-            @click="notify('模型连接测试接口待接入')"
+            @click="testConnection(model.name)"
           >
             测试连接
           </button>

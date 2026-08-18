@@ -7,6 +7,7 @@ import DashboardView from "@/views/workspace/DashboardView.vue";
 import ProjectsView from "@/views/workspace/ProjectsView.vue";
 import MembersView from "@/views/workspace/MembersView.vue";
 import GeneralSettingsView from "@/views/settings/GeneralView.vue";
+import UserSettingsView from "@/views/settings/UserSettingsView.vue";
 import ModelsSettingsView from "@/views/settings/ModelsView.vue";
 import ToolsSettingsView from "@/views/settings/ToolsView.vue";
 import PromptsSettingsView from "@/views/settings/PromptsView.vue";
@@ -62,6 +63,11 @@ const router = createRouter({
           path: "settings",
           name: "workspace-settings",
           component: GeneralSettingsView,
+        },
+        {
+          path: "account/settings",
+          name: "user-settings",
+          component: UserSettingsView,
         },
         {
           path: "settings/models",

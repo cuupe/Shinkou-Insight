@@ -20,3 +20,8 @@ spring:
       database: 0
       password:
       timeout: 3000ms
+
+mybatis:
+  mapper-locations: classpath*:mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true

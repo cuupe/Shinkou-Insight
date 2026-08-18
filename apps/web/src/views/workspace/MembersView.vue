@@ -1,39 +1,39 @@
 <script setup lang="ts">
 import { ChevronDown, MoreHorizontal, Plus } from "@lucide/vue";
+import { computed, ref } from "vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
-import { ref } from "vue";
+import { memberInviteDefaults, memberRoleCycle, memberRoleFilters, workspaceMembers } from "@/data/mock";
 const { notify } = useWorkspace();
-const members = ref([
-  {
-    name: "林默",
-    email: "lin.mo@shinkou.ai",
-    role: "OWNER",
-    date: "2026/06/12",
-    active: "刚刚",
-  },
-  {
-    name: "周然",
-    email: "ran.zhou@shinkou.ai",
-    role: "ADMIN",
-    date: "2026/06/14",
-    active: "12 分钟前",
-  },
-  {
-    name: "陈雪",
-    email: "xue.chen@shinkou.ai",
-    role: "MEMBER",
-    date: "2026/07/03",
-    active: "今天 09:32",
-  },
-  {
-    name: "顾言",
-    email: "yan.gu@shinkou.ai",
-    role: "MEMBER",
-    date: "2026/07/18",
-    active: "昨天",
-  },
-]);
+const members = ref(workspaceMembers.map((member) => ({ ...member })));
+const roleFilter = ref("全部");
+const filteredMembers = computed(() =>
+  roleFilter.value === "全部"
+    ? members.value
+    : members.value.filter((member) => member.role === roleFilter.value),
+);
+function cycleRoleFilter() {
+  roleFilter.value = memberRoleFilters[
+    (memberRoleFilters.indexOf(roleFilter.value) + 1) % memberRoleFilters.length
+  ]!;
+}
+function inviteMember() {
+  const email = window.prompt("请输入成员邮箱");
+  if (!email?.includes("@")) return;
+  const name = email.split("@")[0] || "新成员";
+  members.value.push({
+    name,
+    email,
+    role: memberInviteDefaults.role,
+    date: memberInviteDefaults.date,
+    active: memberInviteDefaults.active,
+  });
+  notify(`邀请已发送给 ${email}`);
+}
+function cycleMemberRole(member: (typeof members.value)[number]) {
+  member.role = memberRoleCycle[(memberRoleCycle.indexOf(member.role) + 1) % memberRoleCycle.length]!;
+  notify(`${member.name} 的角色已更新为 ${member.role}`);
+}
 </script>
 
 <template>
@@ -45,7 +45,7 @@ const members = ref([
       ><button
         class="button button-primary"
         type="button"
-        @click="notify('邀请成员接口待接入')"
+        @click="inviteMember"
       >
         <Plus :size="17" />邀请成员
       </button></template
@@ -62,9 +62,10 @@ const members = ref([
       <button
         class="select-button"
         type="button"
-        @click="notify('成员筛选接口待接入')"
+        @click="cycleRoleFilter"
       >
-        全部角色 <ChevronDown :size="14" />
+        {{ roleFilter === "全部" ? "全部角色" : roleFilter }}
+        <ChevronDown :size="14" />
       </button>
     </div>
     <div class="data-table member-table">
@@ -73,7 +74,7 @@ const members = ref([
         ><span>最后活跃</span><span />
       </div>
       <div
-        v-for="(member, index) in members"
+        v-for="(member, index) in filteredMembers"
         :key="member.email"
         class="table-row"
       >
@@ -92,7 +93,8 @@ const members = ref([
         ><button
           class="icon-button small"
           type="button"
-          @click="notify('成员操作接口待接入')"
+          :aria-label="`更新成员角色：${member.name}`"
+          @click="cycleMemberRole(member)"
         >
           <MoreHorizontal :size="17" />
         </button>

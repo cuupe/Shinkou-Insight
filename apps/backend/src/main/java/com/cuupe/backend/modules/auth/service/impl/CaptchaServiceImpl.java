@@ -3,7 +3,10 @@ package com.cuupe.backend.modules.auth.service.impl;
 import com.cuupe.backend.modules.auth.dto.response.CaptchaResponse;
 import com.cuupe.backend.modules.auth.service.CaptchaService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
@@ -13,7 +16,9 @@ import java.io.ByteArrayOutputStream;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.Collections;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class CaptchaServiceImpl implements CaptchaService {
@@ -27,6 +32,20 @@ public class CaptchaServiceImpl implements CaptchaService {
     private static final Duration CAPTCHA_TTL =
             Duration.ofMinutes(2);
     private static final String REDIS_PREFIX = "auth:captcha:";
+    /**
+     * GETDEL 只在 Redis 6.2 及以上可用。
+     * 使用 EVAL 在 Redis 2.6+ 中原子完成“校验并删除”，兼容旧版本 Redis。
+     */
+    private static final RedisScript<Long> VERIFY_AND_DELETE_SCRIPT =
+            new DefaultRedisScript<>(
+                    "local value = redis.call('GET', KEYS[1]) " +
+                            "if value == ARGV[1] then " +
+                            "redis.call('DEL', KEYS[1]) " +
+                            "return 1 " +
+                            "end " +
+                            "return 0",
+                    Long.class
+            );
     private final StringRedisTemplate redisTemplate;
     private final SecureRandom secureRandom =
             new SecureRandom();
@@ -38,7 +57,7 @@ public class CaptchaServiceImpl implements CaptchaService {
 
         redisTemplate.opsForValue().set(
                 REDIS_PREFIX + captchaId,
-                code,
+                code.toLowerCase(),
                 CAPTCHA_TTL
         );
 
@@ -52,10 +71,20 @@ public class CaptchaServiceImpl implements CaptchaService {
 
     @Override
     public boolean verifyCaptcha(String captchaId, String captcha) {
-        String captcha_get = redisTemplate.opsForValue().get(
-                REDIS_PREFIX + captchaId);
+        if (captchaId == null || captcha == null || captcha.isBlank()) {
+            return false;
+        }
 
-        return captcha_get != null && !captcha_get.equals(captcha);
+        String normalizedCaptcha = captcha.trim().toLowerCase();
+        Long verified = redisTemplate.execute(
+                VERIFY_AND_DELETE_SCRIPT,
+                Collections.singletonList(REDIS_PREFIX + captchaId),
+                normalizedCaptcha
+        );
+        log.debug("captcha verified = {}, captcha length = {}",
+                Long.valueOf(1L).equals(verified),
+                normalizedCaptcha.length());
+        return Long.valueOf(1L).equals(verified);
     }
 
 

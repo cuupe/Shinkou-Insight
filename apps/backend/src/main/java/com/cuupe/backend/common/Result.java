@@ -28,14 +28,14 @@ public class Result<T> {
      * @return 成功响应对象
      */
     public static <T> Result<T> success(T data){
-        return new Result<>("SUCCESS", "success", data);
+        return new Result<>("SUCCESS", "操作成功", data);
     }
     /**
      * 创建成功响应（无数据）
      * @return 成功响应对象
      */
     public static Result<Void> success(){
-        return new Result<>("SUCCESS","success", null);
+        return new Result<>("SUCCESS","操作成功", null);
     }
     /**
      * 创建失败响应
