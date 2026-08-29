@@ -55,6 +55,13 @@ export interface SmsResponse {
   smsId: string;
 }
 
+export type SmsPurpose =
+  | "REGISTER"
+  | "LOGIN"
+  | "PASSWORD_CHANGE"
+  | "PHONE_CHANGE"
+  | "PASSWORD_RESET";
+
 export interface CsrfTokenResponse {
   token: string;
   headerName: string;
@@ -65,8 +72,22 @@ export interface AuthUser {
   id: number | string;
   phoneNumber: string;
   userName: string;
-  avatarUrl?: string;
   roles?: string[];
+  email?: string | null;
+  timezone?: string;
+  notificationPreferences?: string;
+}
+
+export interface NotificationRecord {
+  id: number | string;
+  workspaceId: number | string;
+  projectId?: number | string | null;
+  kind: string;
+  title: string;
+  body: string;
+  routeName?: string | null;
+  read: boolean;
+  createdAt: string;
 }
 
 export interface Workspace {
@@ -76,6 +97,7 @@ export interface Workspace {
   description?: string;
   plan?: string;
   initials?: string;
+  preferences?: string;
   [key: string]: unknown;
 }
 
@@ -85,30 +107,27 @@ export interface WorkspaceMember {
   userName?: string;
   phoneNumber?: string;
   role?: string;
+  createdAt: string;
   status?: string;
+  department?: string;
+  title?: string;
+  lastActiveAt?: string;
   [key: string]: unknown;
 }
 
 export interface Project {
-  id: number | string;
+  id: number;
   name: string;
   code?: string;
   description?: string;
+  color?: string;
   [key: string]: unknown;
 }
 
 export type AssetParseStatus =
-  | "PENDING"
-  | "PROCESSING"
-  | "SUCCESS"
-  | "FAILED"
-  | string;
+  "PENDING" | "PROCESSING" | "SUCCESS" | "FAILED" | string;
 export type AssetIndexStatus =
-  | "PENDING"
-  | "INDEXING"
-  | "SUCCESS"
-  | "FAILED"
-  | string;
+  "PENDING" | "INDEXING" | "SUCCESS" | "FAILED" | string;
 
 export interface KnowledgeAsset {
   id: number | string;
@@ -175,6 +194,129 @@ export interface KnowledgeAnswerResponse {
   insufficientEvidence: boolean;
 }
 
+export type AgentMessageRole = "user" | "assistant";
+
+export type AgentEventKind =
+  "plan" | "search" | "tool" | "evidence" | "synthesis";
+
+export type AgentEventStatus = "pending" | "running" | "completed" | "failed";
+
+export interface AgentCitation {
+  id: string;
+  title: string;
+  source: string;
+  quote: string;
+  score?: string;
+  pageNumber?: number;
+  url?: string;
+}
+
+export type AgentAttachmentKind =
+  | "image"
+  | "video"
+  | "audio"
+  | "pdf"
+  | "document"
+  | "spreadsheet"
+  | "presentation"
+  | "file";
+
+export interface AgentAttachment {
+  id: string;
+  name: string;
+  kind: AgentAttachmentKind;
+  mimeType: string;
+  size?: string;
+  url?: string;
+  previewUrl?: string;
+  uploadId?: string | number;
+  /** 浏览器待上传文件，仅用于前端状态，不会发送给后端。 */
+  file?: File;
+}
+
+export interface AgentAttachmentUploadResponse {
+  uploadId: string | number;
+  name: string;
+  kind: AgentAttachmentKind;
+  mimeType: string;
+  size: number;
+  url: string;
+}
+
+export interface AgentMedia {
+  id: string;
+  kind: "image" | "video";
+  name: string;
+  mimeType?: string;
+  url: string;
+  uploadId?: string | number;
+}
+
+export interface AgentMessage {
+  id: string;
+  role: AgentMessageRole;
+  content: string;
+  createdAt: string;
+  status?: "streaming" | "completed" | "failed";
+  citations?: AgentCitation[];
+  attachments?: AgentAttachment[];
+  media?: AgentMedia[];
+}
+
+export interface AgentEvent {
+  id: string;
+  kind: AgentEventKind;
+  title: string;
+  detail: string;
+  status: AgentEventStatus;
+  startedAt?: string;
+  completedAt?: string;
+  duration?: string;
+  meta?: Record<string, unknown>;
+}
+
+export interface AgentThreadSummary {
+  id: string;
+  title: string;
+  preview: string;
+  updatedAt: string;
+  messageCount: number;
+}
+
+export interface AgentSendMessagePayload {
+  threadId: string;
+  messageId: string;
+  content: string;
+  context?: {
+    assetIds?: Array<number | string>;
+    runId?: number | string;
+    mode?: string;
+  };
+  attachments?: Array<
+    Pick<
+      AgentAttachment,
+      "id" | "name" | "kind" | "mimeType" | "size" | "uploadId"
+    >
+  >;
+}
+
+export interface AgentRunAccepted {
+  runId: number | string;
+  messageId: number | string;
+  status: string;
+  eventsUrl?: string;
+}
+
+export type AgentStreamEvent =
+  | { type: "run.started"; runId: string; data?: Record<string, unknown> }
+  | { type: "event.updated"; runId: string; event: AgentEvent }
+  | { type: "message.delta"; runId: string; messageId: string; delta: string }
+  | { type: "citation.added"; runId: string; citation: AgentCitation }
+  | { type: "media.added"; runId: string; messageId: string; media: AgentMedia }
+  | { type: "message.completed"; runId: string; messageId: string }
+  | { type: "run.completed"; runId: string; data?: Record<string, unknown> }
+  | { type: "run.failed"; runId: string; message: string };
+
 export interface CreateRunPayload {
   goal: string;
   allowWebSearch?: boolean;
@@ -185,12 +327,30 @@ export interface CreateRunPayload {
 }
 
 export type RunStatus =
-  | "PENDING"
-  | "RUNNING"
-  | "COMPLETED"
-  | "FAILED"
-  | "CANCELLED"
-  | string;
+  "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | string;
+
+export type AgentQueueStatus =
+  "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
+
+export type AgentQueuePriority = "low" | "normal" | "high";
+
+export interface AgentQueueTask {
+  id: string;
+  runId?: number | string;
+  projectId: number | string;
+  projectName: string;
+  title: string;
+  source: "agent-chat" | "research";
+  status: AgentQueueStatus;
+  priority: AgentQueuePriority;
+  progress: number;
+  currentStep: string;
+  time: string;
+  duration: string;
+  tokens: string;
+  threadId?: string;
+  errorMessage?: string;
+}
 
 export interface ResearchRun {
   id?: number | string;
@@ -199,6 +359,9 @@ export interface ResearchRun {
   status: RunStatus;
   currentNode?: string;
   progress?: number;
+  currentStep?: string;
+  durationSeconds?: number;
+  tokenCount?: number;
   finalSummary?: string;
   eventsUrl?: string;
   [key: string]: unknown;
@@ -217,7 +380,11 @@ export interface Report {
   title: string;
   reportType?: string;
   status: string;
-  versionNo?: number;
+  versionNo?: number | string;
+  lead?: string;
+  summary?: string;
+  recommendation?: string;
+  recommendationDetail?: string;
   markdownContent?: string;
   citations?: number;
   createdAt?: string;
@@ -241,4 +408,53 @@ export interface EvaluationRun {
   status: string;
   metrics?: Record<string, unknown>;
   [key: string]: unknown;
+}
+
+export interface StatisticsSummary {
+  projectCount: number;
+  activeProjectCount: number;
+  assetCount: number;
+  indexedAssetCount: number;
+  failedAssetCount: number;
+  chunkCount: number;
+  runCount: number;
+  queuedRunCount: number;
+  runningRunCount: number;
+  completedRunCount: number;
+  failedRunCount: number;
+  cancelledRunCount: number;
+  reportCount: number;
+  publishedReportCount: number;
+  actionItemCount: number;
+  openActionItemCount: number;
+  overdueActionItemCount: number;
+  evaluationCaseCount: number;
+  avgRecall?: number | null;
+  avgCitation?: number | null;
+  avgJsonScore?: number | null;
+  unreadNotificationCount: number;
+}
+
+export interface StatisticsTrendPoint {
+  date: string;
+  assets: number;
+  runs: number;
+  reports: number;
+  actionItems: number;
+  recall?: number | null;
+  citation?: number | null;
+  jsonScore?: number | null;
+}
+
+export interface StatisticsBreakdown {
+  status: string;
+  count: number;
+}
+
+export interface StatisticsResponse {
+  summary: StatisticsSummary;
+  dailyTrend: StatisticsTrendPoint[];
+  runStatuses: StatisticsBreakdown[];
+  assetStatuses: StatisticsBreakdown[];
+  actionItemStatuses: StatisticsBreakdown[];
 }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { ECharts } from "echarts/core";
+import { useTheme } from "@/composables/useTheme";
 
 type TrendSeries = {
   name: string;
@@ -12,6 +13,8 @@ const props = defineProps<{
   labels: string[];
   series: TrendSeries[];
 }>();
+
+const { isDark } = useTheme();
 
 const chartElement = ref<HTMLDivElement | null>(null);
 let chart: ECharts | null = null;
@@ -41,8 +44,10 @@ async function renderChart() {
   if (!chartElement.value) return;
   chart ??= echarts.init(chartElement.value);
   const styles = getComputedStyle(chartElement.value);
-  const axisColor = styles.getPropertyValue("--workspace-chart-axis").trim() || "#89979e";
-  const gridColor = styles.getPropertyValue("--workspace-chart-grid").trim() || "#edf1f1";
+  const axisColor =
+    styles.getPropertyValue("--workspace-chart-axis").trim() || "#89979e";
+  const gridColor =
+    styles.getPropertyValue("--workspace-chart-grid").trim() || "#edf1f1";
   const surfaceColor = styles.getPropertyValue("--surface").trim() || "#ffffff";
   chart.setOption({
     animationDuration: 450,
@@ -58,9 +63,34 @@ async function renderChart() {
       type: "category",
       boundaryGap: false,
       data: props.labels,
-      axisLine: { lineStyle: { color: gridColor } },
-      axisTick: { show: false },
-      axisLabel: { color: axisColor, fontSize: 10 },
+
+      axisLine: {
+        lineStyle: {
+          color: gridColor,
+        },
+      },
+
+      axisTick: {
+        show: true,
+        interval: 0,
+        length: 4,
+      },
+
+      axisLabel: {
+        color: axisColor,
+        fontSize: 10,
+        interval: 0,
+        hideOverlap: true,
+      },
+
+      splitLine: {
+        show: true,
+        interval: 0,
+        lineStyle: {
+          color: gridColor,
+          type: "dashed",
+        },
+      },
     },
     yAxis: {
       type: "value",
@@ -79,7 +109,11 @@ async function renderChart() {
       symbolSize: index === 0 ? 6 : 5,
       data: item.data,
       lineStyle: { width: 2, color: item.color },
-      itemStyle: { color: item.color, borderWidth: 2, borderColor: surfaceColor },
+      itemStyle: {
+        color: item.color,
+        borderWidth: 2,
+        borderColor: surfaceColor,
+      },
       areaStyle: index === 0 ? { color: item.color, opacity: 0.12 } : undefined,
     })),
   });
@@ -93,7 +127,9 @@ onMounted(() => {
   }
 });
 
-watch(() => [props.labels, props.series], renderChart, { deep: true });
+watch([() => props.labels, () => props.series, isDark], renderChart, {
+  deep: true,
+});
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
@@ -103,5 +139,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="chartElement" class="trend-chart" role="img" aria-label="运行趋势图" />
+  <div
+    ref="chartElement"
+    class="trend-chart"
+    role="img"
+    aria-label="运行趋势图"
+  />
 </template>

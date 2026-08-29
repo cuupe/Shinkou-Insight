@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cuupe.backend.modules.statistics.mapper.StatisticsMapper">
+    <sql id="scopeProjects">
+        SELECT p.id, p.status
+        FROM projects p
+        JOIN workspace_members wm
+          ON wm.workspace_id = p.workspace_id
+         AND wm.user_id = #{userId}
+         AND wm.status = 'ACTIVE'
+        WHERE p.workspace_id = #{workspaceId}
+          AND p.status &lt;&gt; 'DELETED'
+          AND (p.visibility = 'WORKSPACE' OR p.created_by = #{userId})
+        <if test="projectId != null">
+          AND p.id = #{projectId}
+        </if>
+    </sql>
+
+    <select id="findSummary" resultType="com.cuupe.backend.modules.statistics.dto.StatisticsSummary">
+        WITH scope_projects AS (<include refid="scopeProjects"/>)
+        SELECT
+          (SELECT COUNT(*) FROM scope_projects) AS projectCount,
+          (SELECT COUNT(*) FROM scope_projects WHERE status = 'ACTIVE') AS activeProjectCount,
+          (SELECT COUNT(*) FROM knowledge_assets a WHERE a.project_id IN (SELECT id FROM scope_projects)) AS assetCount,
+          (SELECT COUNT(*) FROM knowledge_assets a WHERE a.project_id IN (SELECT id FROM scope_projects) AND a.index_status IN ('SUCCESS', 'INDEXED')) AS indexedAssetCount,
+          (SELECT COUNT(*) FROM knowledge_assets a WHERE a.project_id IN (SELECT id FROM scope_projects) AND a.index_status = 'FAILED') AS failedAssetCount,
+          (SELECT COALESCE(SUM(a.chunk_count), 0) FROM knowledge_assets a WHERE a.project_id IN (SELECT id FROM scope_projects)) AS chunkCount,
+          (SELECT COUNT(*) FROM research_runs r WHERE r.project_id IN (SELECT id FROM scope_projects)) AS runCount,
+          (SELECT COUNT(*) FROM research_runs r WHERE r.project_id IN (SELECT id FROM scope_projects) AND r.status IN ('QUEUED', 'PENDING')) AS queuedRunCount,
+          (SELECT COUNT(*) FROM research_runs r WHERE r.project_id IN (SELECT id FROM scope_projects) AND r.status IN ('RUNNING', 'PROCESSING')) AS runningRunCount,
+          (SELECT COUNT(*) FROM research_runs r WHERE r.project_id IN (SELECT id FROM scope_projects) AND r.status IN ('COMPLETED', 'SUCCESS')) AS completedRunCount,
+          (SELECT COUNT(*) FROM research_runs r WHERE r.project_id IN (SELECT id FROM scope_projects) AND r.status = 'FAILED') AS failedRunCount,
+          (SELECT COUNT(*) FROM research_runs r WHERE r.project_id IN (SELECT id FROM scope_projects) AND r.status IN ('CANCELLED', 'CANCELED')) AS cancelledRunCount,
+          (SELECT COUNT(*) FROM reports r WHERE r.project_id IN (SELECT id FROM scope_projects)) AS reportCount,
+          (SELECT COUNT(*) FROM reports r WHERE r.project_id IN (SELECT id FROM scope_projects) AND r.status IN ('PUBLISHED', 'FINAL', 'COMPLETED')) AS publishedReportCount,
+          (SELECT COUNT(*) FROM action_items i WHERE i.project_id IN (SELECT id FROM scope_projects)) AS actionItemCount,
+          (SELECT COUNT(*) FROM action_items i WHERE i.project_id IN (SELECT id FROM scope_projects) AND i.status NOT IN ('DONE', 'COMPLETED', 'CANCELLED', 'CANCELED')) AS openActionItemCount,
+          (SELECT COUNT(*) FROM action_items i WHERE i.project_id IN (SELECT id FROM scope_projects) AND i.due_at &lt; CURRENT_DATE AND i.status NOT IN ('DONE', 'COMPLETED', 'CANCELLED', 'CANCELED')) AS overdueActionItemCount,
+          (SELECT COUNT(*) FROM evaluation_cases e WHERE e.workspace_id = #{workspaceId} AND (e.project_id IS NULL OR e.project_id IN (SELECT id FROM scope_projects)) <if test="projectId != null">AND e.project_id = #{projectId}</if>) AS evaluationCaseCount,
+          (SELECT AVG(e.recall) FROM evaluation_cases e WHERE e.workspace_id = #{workspaceId} AND (e.project_id IS NULL OR e.project_id IN (SELECT id FROM scope_projects)) <if test="projectId != null">AND e.project_id = #{projectId}</if>) AS avgRecall,
+          (SELECT AVG(e.citation) FROM evaluation_cases e WHERE e.workspace_id = #{workspaceId} AND (e.project_id IS NULL OR e.project_id IN (SELECT id FROM scope_projects)) <if test="projectId != null">AND e.project_id = #{projectId}</if>) AS avgCitation,
+          (SELECT AVG(e.json_score) FROM evaluation_cases e WHERE e.workspace_id = #{workspaceId} AND (e.project_id IS NULL OR e.project_id IN (SELECT id FROM scope_projects)) <if test="projectId != null">AND e.project_id = #{projectId}</if>) AS avgJsonScore,
+          (SELECT COUNT(*) FROM notifications n WHERE n.workspace_id = #{workspaceId} AND n.recipient_user_id = #{userId} AND n.read_at IS NULL) AS unreadNotificationCount
+    </select>
+
+    <select id="findDailyTrend" resultType="com.cuupe.backend.modules.statistics.dto.StatisticsTrendPoint">
+        WITH scope_projects AS (<include refid="scopeProjects"/>),
+        days AS (
+          SELECT (CURRENT_DATE - series.day_offset)::date AS day
+          FROM generate_series(0, #{days} - 1) AS series(day_offset)
+        ),
+        assets_by_day AS (
+          SELECT a.created_at::date AS day, COUNT(*) AS count
+          FROM knowledge_assets a
+          WHERE a.project_id IN (SELECT id FROM scope_projects)
+            AND a.created_at &gt;= CURRENT_DATE - (#{days} - 1)
+          GROUP BY a.created_at::date
+        ),
+        runs_by_day AS (
+          SELECT r.created_at::date AS day, COUNT(*) AS count
+          FROM research_runs r
+          WHERE r.project_id IN (SELECT id FROM scope_projects)
+            AND r.created_at &gt;= CURRENT_DATE - (#{days} - 1)
+          GROUP BY r.created_at::date
+        ),
+        reports_by_day AS (
+          SELECT r.created_at::date AS day, COUNT(*) AS count
+          FROM reports r
+          WHERE r.project_id IN (SELECT id FROM scope_projects)
+            AND r.created_at &gt;= CURRENT_DATE - (#{days} - 1)
+          GROUP BY r.created_at::date
+        ),
+        actions_by_day AS (
+          SELECT i.created_at::date AS day, COUNT(*) AS count
+          FROM action_items i
+          WHERE i.project_id IN (SELECT id FROM scope_projects)
+            AND i.created_at &gt;= CURRENT_DATE - (#{days} - 1)
+          GROUP BY i.created_at::date
+        ),
+        evaluations_by_day AS (
+          SELECT e.created_at::date AS day,
+                 AVG(e.recall) AS recall,
+                 AVG(e.citation) AS citation,
+                 AVG(e.json_score) AS jsonScore
+          FROM evaluation_cases e
+          WHERE e.workspace_id = #{workspaceId}
+            AND (e.project_id IS NULL OR e.project_id IN (SELECT id FROM scope_projects))
+          <if test="projectId != null">AND e.project_id = #{projectId}</if>
+            AND e.created_at &gt;= CURRENT_DATE - (#{days} - 1)
+          GROUP BY e.created_at::date
+        )
+        SELECT to_char(days.day, 'MM-DD') AS date,
+               COALESCE(assets_by_day.count, 0) AS assets,
+               COALESCE(runs_by_day.count, 0) AS runs,
+               COALESCE(reports_by_day.count, 0) AS reports,
+               COALESCE(actions_by_day.count, 0) AS actionItems,
+               evaluations_by_day.recall AS recall,
+               evaluations_by_day.citation AS citation,
+               evaluations_by_day.jsonScore AS jsonScore
+        FROM days
+        LEFT JOIN assets_by_day ON assets_by_day.day = days.day
+        LEFT JOIN runs_by_day ON runs_by_day.day = days.day
+        LEFT JOIN reports_by_day ON reports_by_day.day = days.day
+        LEFT JOIN actions_by_day ON actions_by_day.day = days.day
+        LEFT JOIN evaluations_by_day ON evaluations_by_day.day = days.day
+        ORDER BY days.day
+    </select>
+
+    <select id="findRunStatuses" resultType="com.cuupe.backend.modules.statistics.dto.StatisticsBreakdown">
+        WITH scope_projects AS (<include refid="scopeProjects"/>)
+        SELECT r.status AS status, COUNT(*) AS count
+        FROM research_runs r
+        WHERE r.project_id IN (SELECT id FROM scope_projects)
+        GROUP BY r.status ORDER BY count DESC, r.status
+    </select>
+
+    <select id="findAssetStatuses" resultType="com.cuupe.backend.modules.statistics.dto.StatisticsBreakdown">
+        WITH scope_projects AS (<include refid="scopeProjects"/>)
+        SELECT a.index_status AS status, COUNT(*) AS count
+        FROM knowledge_assets a
+        WHERE a.project_id IN (SELECT id FROM scope_projects)
+        GROUP BY a.index_status ORDER BY count DESC, a.index_status
+    </select>
+
+    <select id="findActionItemStatuses" resultType="com.cuupe.backend.modules.statistics.dto.StatisticsBreakdown">
+        WITH scope_projects AS (<include refid="scopeProjects"/>)
+        SELECT i.status AS status, COUNT(*) AS count
+        FROM action_items i
+        WHERE i.project_id IN (SELECT id FROM scope_projects)
+        GROUP BY i.status ORDER BY count DESC, i.status
+    </select>
+</mapper>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { EyeIcon, EyeOffIcon } from "@lucide/vue";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/input-otp";
 import ImageCaptcha from "@/components/auth/ImageCaptcha.vue";
 import { useAuth } from "@/composables/useAuth";
+import { useSmsCode } from "@/composables/useSmsCode";
 type Status = { type: "success" | "error" | "info"; message: string };
 const props = defineProps<{ open: boolean; phone: string }>();
 const emit = defineEmits<{ "update:open": [value: boolean] }>();
@@ -39,6 +40,17 @@ const password = ref("");
 const confirmPassword = ref("");
 const status = ref<Status | null>(null);
 const showPassword = ref(false);
+const {
+  codeId,
+  expired,
+  start: startSmsCode,
+  clear: clearSmsCode,
+  stopTimer: stopSmsTimer,
+} = useSmsCode();
+onUnmounted(stopSmsTimer);
+watch(expired, (value) => {
+  if (value) code.value = "";
+});
 const title = computed(() =>
   step.value === "verify"
     ? "输入验证码"
@@ -51,6 +63,7 @@ watch(
   (open) => {
     if (open) {
       step.value = "account";
+      clearSmsCode();
       account.value = props.phone;
       code.value = "";
       captcha.value = "";
@@ -71,10 +84,27 @@ function sendCode() {
     status.value = { type: "error", message: captchaError.value };
     return;
   }
+  if (!captchaId.value) {
+    status.value = {
+      type: "error",
+      message: "图片验证码已过期，请点击图片刷新。",
+    };
+    return;
+  }
+  startSmsCode(`recovery-${Date.now()}`);
   step.value = "verify";
   status.value = { type: "info", message: "验证码已发送，有效期 5 分钟。" };
 }
 function verify() {
+  if (!codeId.value) {
+    status.value = {
+      type: "error",
+      message: expired.value
+        ? "验证码已过期，请重新获取。"
+        : "请先获取验证码。",
+    };
+    return;
+  }
   if (!isCode(code.value)) {
     status.value = { type: "error", message: "请输入 6 位验证码。" };
     return;
@@ -142,7 +172,10 @@ function reset() {
                 v-for="index in 6"
                 :key="index"
                 :index="index - 1" /></InputOTPGroup></InputOTP
-          ><FieldDescription>验证码 5 分钟内有效。</FieldDescription></Field
+          ><FieldDescription v-if="expired"
+            >验证码已过期，请重新获取。</FieldDescription
+          ><FieldDescription v-else
+            >验证码 5 分钟内有效。</FieldDescription></Field
         ></FieldGroup
       ><FieldGroup v-else
         ><Field

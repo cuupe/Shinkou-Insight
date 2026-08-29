@@ -32,6 +32,31 @@
         WHERE phone_number = #{phoneNumber}
     </select>
 
+    <select id="findUserById" resultType="com.cuupe.backend.modules.user.entity.User">
+        SELECT id, phone_number, user_name, login_at, create_at, status, email, timezone, notification_preferences
+        FROM users WHERE id = #{id} LIMIT 1
+    </select>
+
+    <update id="updateLoginAt">
+        UPDATE users SET login_at = CURRENT_TIMESTAMP WHERE id = #{id}
+    </update>
+
+    <update id="updateProfile">
+        UPDATE users SET user_name = #{userName}, email = #{email}, timezone = #{timezone} WHERE id = #{id}
+    </update>
+
+    <update id="updateNotificationPreferences">
+        UPDATE users SET notification_preferences = CAST(#{preferences} AS jsonb) WHERE id = #{id}
+    </update>
+
+    <update id="updatePassword">
+        UPDATE users SET password = #{password} WHERE id = #{id}
+    </update>
+
+    <update id="updatePhoneNumber">
+        UPDATE users SET phone_number = #{phoneNumber} WHERE id = #{id}
+    </update>
+
     <select id="existPhoneNumber" resultType="java.lang.Boolean">
         SELECT EXISTS (
         SELECT 1

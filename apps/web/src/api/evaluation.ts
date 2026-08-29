@@ -3,18 +3,17 @@ import { workspacePath } from "./paths";
 import type { ApiResponse, EvaluationRun } from "./types";
 
 export const evaluationApi = {
+  list: (workspaceId: number | string) =>
+    unwrap<EvaluationRun[]>(
+      anet.get<ApiResponse<EvaluationRun[]>>(
+        `${workspacePath(workspaceId)}/evaluation-cases`,
+      ),
+    ),
   create: (workspaceId: number | string, payload: Record<string, unknown>) =>
     unwrap<EvaluationRun>(
       anet.post<ApiResponse<EvaluationRun>>(
-        `${workspacePath(workspaceId)}/evaluation-runs`,
+        `${workspacePath(workspaceId)}/evaluation-cases`,
         payload,
-      ),
-    ),
-
-  detail: (workspaceId: number | string, id: number | string) =>
-    unwrap<EvaluationRun>(
-      anet.get<ApiResponse<EvaluationRun>>(
-        `${workspacePath(workspaceId)}/evaluation-runs/${id}`,
       ),
     ),
 };

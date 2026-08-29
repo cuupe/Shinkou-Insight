@@ -1,0 +1,1 @@
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS preferences JSONB NOT NULL DEFAULT '{"webSearch":true,"citationsRequired":true,"retention":"90 天"}'::jsonb;

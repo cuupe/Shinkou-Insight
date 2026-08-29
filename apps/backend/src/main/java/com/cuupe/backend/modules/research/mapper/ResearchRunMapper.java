@@ -1,0 +1,3 @@
+package com.cuupe.backend.modules.research.mapper;
+import com.cuupe.backend.modules.research.entity.ResearchRun; import org.apache.ibatis.annotations.*; import java.util.List;
+@Mapper public interface ResearchRunMapper { List<ResearchRun> findByProject(@Param("projectId") Long projectId,@Param("userId") Long userId); ResearchRun findById(@Param("id") Long id,@Param("projectId") Long projectId,@Param("userId") Long userId); int insert(ResearchRun run); int updateStatus(@Param("id") Long id,@Param("projectId") Long projectId,@Param("userId") Long userId,@Param("status") String status); }

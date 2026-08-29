@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+
+# Local build and runtime output
+*.log
+*.log.*
+apps/web/tsc.log
+apps/web/tmp-*.png
+apps/web/*tmp*.png
+
+# Local captcha/debug artifacts
+scripts/browser-captcha.b64

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cuupe.backend.modules.settings.mapper.ToolConfigMapper">
+	<sql id="c">id,project_id,name,connector_type,endpoint,auth_type,credential_ciphertext,(credential_ciphertext IS NOT NULL) AS has_credential,config,enabled,created_by,created_at,updated_at</sql>
+	<select id="findByProject" resultType="com.cuupe.backend.modules.settings.entity.ToolConfig">SELECT <include refid="c"/> FROM project_tool_configs WHERE project_id=#{projectId} AND EXISTS(SELECT 1 FROM projects p JOIN workspace_members wm ON wm.workspace_id=p.workspace_id WHERE p.id=#{projectId} AND wm.user_id=#{userId} AND wm.status='ACTIVE') ORDER BY updated_at DESC</select>
+	<select id="findById" resultType="com.cuupe.backend.modules.settings.entity.ToolConfig">SELECT <include refid="c"/> FROM project_tool_configs WHERE id=#{id} AND project_id=#{projectId} AND EXISTS(SELECT 1 FROM projects p JOIN workspace_members wm ON wm.workspace_id=p.workspace_id WHERE p.id=#{projectId} AND wm.user_id=#{userId} AND wm.status='ACTIVE')</select>
+	<insert id="insert" useGeneratedKeys="true" keyProperty="id">INSERT INTO project_tool_configs(project_id,name,connector_type,endpoint,auth_type,credential_ciphertext,config,enabled,created_by) VALUES(#{projectId},#{name},#{connectorType},#{endpoint},#{authType},#{credentialCiphertext},CAST(#{config} AS jsonb),#{enabled},#{createdBy})</insert>
+	<update id="update">UPDATE project_tool_configs SET name=#{name},connector_type=#{connectorType},endpoint=#{endpoint},auth_type=#{authType},credential_ciphertext=COALESCE(#{credentialCiphertext},credential_ciphertext),config=CAST(#{config} AS jsonb),enabled=#{enabled},updated_at=CURRENT_TIMESTAMP WHERE id=#{id} AND project_id=#{projectId}</update>
+	<delete id="delete">DELETE FROM project_tool_configs WHERE id=#{id} AND project_id=#{projectId}</delete>
+</mapper>

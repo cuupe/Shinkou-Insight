@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onUnmounted, ref } from "vue";
+import { onUnmounted, ref, watch } from "vue";
 import {
   CheckCircle2Icon,
   EyeIcon,
@@ -39,43 +39,42 @@ import ImageCaptcha from "@/components/auth/ImageCaptcha.vue";
 import RecoveryDialog from "@/components/auth/RecoveryDialog.vue";
 import SubmitButton from "@/components/auth/SubmitButton.vue";
 import { useAuth } from "@/composables/useAuth";
+import { useSmsCode } from "@/composables/useSmsCode";
 import { ApiError, api, getApiErrorMessage } from "@/api";
 import { useRouter } from "vue-router";
 type Status = { type: "success" | "error" | "info"; message: string };
 const router = useRouter();
 const { isPhone, isCode, isCaptcha } = useAuth();
+const rememberedPhone = localStorage.getItem("shinkou-login-phone") || "";
 const loginMode = ref("password");
 const showPassword = ref(false);
-const remember = ref(false);
+const remember = ref(Boolean(rememberedPhone));
 const agreed = ref(false);
 const isSubmitting = ref(false);
 const status = ref<Status | null>(null);
 const errors = ref<Record<string, string>>({});
-const phone = ref(localStorage.getItem("shinkou-login-phone") || "");
+const phone = ref(rememberedPhone);
 const password = ref("");
 const smsCode = ref("");
-const smsId = ref("");
 const captcha = ref("");
 const captchaId = ref("");
 const recoveryOpen = ref(false);
 const agreementOpen = ref(false);
 const agreementType = ref<"terms" | "privacy">("terms");
 const smsSending = ref(false);
-const smsCountdown = ref(0);
-let smsTimer: number | undefined;
-function startSmsCountdown() {
-  window.clearInterval(smsTimer);
-  smsCountdown.value = 60;
-  smsTimer = window.setInterval(() => {
-    smsCountdown.value -= 1;
-    if (smsCountdown.value <= 0) {
-      window.clearInterval(smsTimer);
-      smsTimer = undefined;
-      smsCountdown.value = 0;
-    }
-  }, 1000);
-}
-onUnmounted(() => window.clearInterval(smsTimer));
+const {
+  codeId: smsId,
+  resendCountdown: smsCountdown,
+  expired: smsExpired,
+  start: startSmsCode,
+  markExpired: markSmsExpired,
+  clear: clearSmsCode,
+  stopTimer: stopSmsTimer,
+} = useSmsCode();
+onUnmounted(stopSmsTimer);
+watch(smsExpired, (value) => {
+  if (value) smsCode.value = "";
+});
 function clearErrors() {
   errors.value = {};
   status.value = null;
@@ -85,18 +84,23 @@ function refreshCaptcha() {
 }
 function clearSmsState() {
   clearErrors();
-  smsId.value = "";
+  clearSmsCode();
+  smsCode.value = "";
 }
 async function submit() {
   const next: Record<string, string> = {};
   if (!isPhone(phone.value)) next.phone = "请输入正确的 11 位手机号";
   if (loginMode.value === "password" && !password.value)
     next.password = "请输入登录密码";
-  if (loginMode.value === "sms" && !isCode(smsCode.value))
-    next.smsCode = "请输入 6 位短信验证码";
-  if (loginMode.value === "sms" && !smsId.value)
-    next.smsCode = "请先获取短信验证码";
+  if (loginMode.value === "sms") {
+    if (!smsId.value)
+      next.smsCode = smsExpired.value
+        ? "短信验证码已过期，请重新获取"
+        : "请先获取短信验证码";
+    else if (!isCode(smsCode.value)) next.smsCode = "请输入 6 位短信验证码";
+  }
   if (!isCaptcha(captcha.value)) next.captcha = "请输入图片验证码";
+  if (!captchaId.value) next.captcha = "图片验证码已过期，请点击图片刷新";
   if (!agreed.value) next.agreement = "请先同意用户协议和隐私政策";
   errors.value = next;
   if (Object.keys(next).length) return;
@@ -151,6 +155,10 @@ async function submit() {
       };
     }
   } catch (error) {
+    if (error instanceof ApiError && error.code === "SMS_CODE_INVALID") {
+      markSmsExpired();
+      smsCode.value = "";
+    }
     status.value = {
       type: "error",
       message: getApiErrorMessage(error, "登录失败，请稍后重试。"),
@@ -167,12 +175,15 @@ async function sendSms() {
   }
   smsSending.value = true;
   try {
-    const response = await api.auth.sms();
+    const response = await api.auth.sms({
+      phoneNumber: phone.value.trim(),
+      purpose: "LOGIN",
+    });
     if (!response.smsId) {
       throw new ApiError("短信验证码发送失败，请稍后重试。", "SMS_ID_MISSING");
     }
-    smsId.value = response.smsId;
-    startSmsCountdown();
+    smsCode.value = "";
+    startSmsCode(response.smsId);
     status.value = { type: "info", message: "短信验证码已发送" };
   } catch (error) {
     status.value = {
@@ -330,7 +341,10 @@ function openAgreement(type: "terms" | "privacy") {
                     ><span v-else>获取验证码</span></Button
                   >
                 </div>
-                <FieldDescription>验证码 5 分钟内有效。</FieldDescription
+                <FieldDescription v-if="smsExpired"
+                  >验证码已过期，请重新获取。</FieldDescription
+                ><FieldDescription v-else
+                  >验证码 5 分钟内有效。</FieldDescription
                 ><FieldError v-if="errors.smsCode">{{
                   errors.smsCode
                 }}</FieldError></Field

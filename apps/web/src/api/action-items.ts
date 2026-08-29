@@ -3,7 +3,18 @@ import { projectPath } from "./paths";
 import type { ActionItem, ApiResponse } from "./types";
 
 export const actionItemsApi = {
-  list: (workspaceId: number | string, projectId: number | string) =>
+  create: (
+    workspaceId: number | string,
+    projectId: number,
+    payload: Record<string, unknown>,
+  ) =>
+    unwrap<ActionItem>(
+      anet.post<ApiResponse<ActionItem>>(
+        `${projectPath(workspaceId, projectId)}/action-items`,
+        payload,
+      ),
+    ),
+  list: (workspaceId: number | string, projectId: number) =>
     unwrap<ActionItem[]>(
       anet.get<ApiResponse<ActionItem[]>>(
         `${projectPath(workspaceId, projectId)}/action-items`,
@@ -12,7 +23,7 @@ export const actionItemsApi = {
 
   update: (
     workspaceId: number | string,
-    projectId: number | string,
+    projectId: number,
     id: number | string,
     payload: Record<string, unknown>,
   ) =>
@@ -23,15 +34,9 @@ export const actionItemsApi = {
       ),
     ),
 
-  accept: (
-    workspaceId: number | string,
-    projectId: number | string,
-    id: number | string,
-  ) => actionItemsApi.update(workspaceId, projectId, id, { status: "accepted" }),
+  accept: (workspaceId: number | string, projectId: number, id: number | string) =>
+    actionItemsApi.update(workspaceId, projectId, id, { status: "accepted" }),
 
-  reject: (
-    workspaceId: number | string,
-    projectId: number | string,
-    id: number | string,
-  ) => actionItemsApi.update(workspaceId, projectId, id, { status: "rejected" }),
+  reject: (workspaceId: number | string, projectId: number, id: number | string) =>
+    actionItemsApi.update(workspaceId, projectId, id, { status: "rejected" }),
 };

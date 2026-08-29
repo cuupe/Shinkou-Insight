@@ -11,7 +11,7 @@ import type {
 export const retrievalApi = {
   search: (
     workspaceId: number | string,
-    projectId: number | string,
+    projectId: number,
     payload: KnowledgeSearchPayload,
   ) =>
     unwrap<KnowledgeSearchResponse>(
@@ -23,7 +23,7 @@ export const retrievalApi = {
 
   answer: (
     workspaceId: number | string,
-    projectId: number | string,
+    projectId: number,
     payload: KnowledgeAnswerPayload,
   ) =>
     unwrap<KnowledgeAnswerResponse>(

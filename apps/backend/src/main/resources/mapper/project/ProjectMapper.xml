@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cuupe.backend.modules.project.mapper.ProjectMapper">
+    <sql id="columns">p.id, p.workspace_id, p.code, p.name, p.description, p.color, p.visibility, p.status, p.archived_at, p.created_by, p.created_at, p.updated_at, (SELECT COUNT(1) FROM knowledge_assets a WHERE a.project_id=p.id) AS assets, (SELECT COUNT(1) FROM research_runs r WHERE r.project_id=p.id) AS runs, (SELECT COUNT(1) FROM reports r2 WHERE r2.project_id=p.id) AS reports</sql>
+    <select id="findAccessible" resultType="com.cuupe.backend.modules.project.entity.Project">
+        SELECT <include refid="columns"/> FROM projects p
+        JOIN workspace_members wm ON wm.workspace_id = p.workspace_id AND wm.user_id = #{userId} AND wm.status = 'ACTIVE'
+        WHERE p.workspace_id = #{workspaceId} AND p.status &lt;&gt; 'DELETED' AND (p.visibility = 'WORKSPACE' OR p.created_by = #{userId})
+        ORDER BY p.updated_at DESC
+    </select>
+    <select id="findAccessibleById" resultType="com.cuupe.backend.modules.project.entity.Project">
+        SELECT <include refid="columns"/> FROM projects p
+        JOIN workspace_members wm ON wm.workspace_id = p.workspace_id AND wm.user_id = #{userId} AND wm.status = 'ACTIVE'
+        WHERE p.id = #{projectId} AND p.workspace_id = #{workspaceId} AND p.status &lt;&gt; 'DELETED' AND (p.visibility = 'WORKSPACE' OR p.created_by = #{userId})
+    </select>
+    <select id="hasWriteAccess" resultType="boolean">
+        SELECT EXISTS (SELECT 1 FROM projects p JOIN workspace_members wm ON wm.workspace_id=p.workspace_id
+        WHERE p.id=#{projectId} AND p.workspace_id=#{workspaceId} AND wm.user_id=#{userId} AND wm.status='ACTIVE'
+        AND (p.created_by=#{userId} OR wm.role IN ('OWNER','ADMIN')))
+    </select>
+    <select id="existsCode" resultType="int">
+        SELECT COUNT(1) FROM projects
+        WHERE workspace_id = #{workspaceId}
+        AND code = #{code}
+        AND status &lt;&gt; 'DELETED'
+        <if test="projectId != null">
+          AND id &lt;&gt; #{projectId}
+        </if>
+    </select>
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO projects (workspace_id, code, name, description, color, visibility, created_by) VALUES (#{workspaceId}, #{code}, #{name}, #{description}, COALESCE(#{color}, '#14b8a6'), #{visibility}, #{createdBy})
+    </insert>
+    <update id="update">UPDATE projects SET name=#{name}, description=#{description}, color=COALESCE(#{color}, color), visibility=#{visibility}, updated_at=CURRENT_TIMESTAMP WHERE id=#{id} AND workspace_id=#{workspaceId} AND status &lt;&gt; 'DELETED'</update>
+    <update id="changeStatus">UPDATE projects SET status=#{status}, archived_at=CASE WHEN #{status} = 'ARCHIVED' THEN CURRENT_TIMESTAMP ELSE NULL END, updated_at=CURRENT_TIMESTAMP WHERE id=#{projectId} AND workspace_id=#{workspaceId} AND EXISTS (SELECT 1 FROM workspace_members WHERE workspace_id=#{workspaceId} AND user_id=#{userId} AND status='ACTIVE')</update>
+</mapper>

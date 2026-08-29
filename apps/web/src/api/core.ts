@@ -9,12 +9,8 @@ export async function unwrap<T>(
 ): Promise<T> {
   const response = await request;
   const body = response.data;
-
   if (!body || body.code !== "SUCCESS") {
-    throw new ApiError(
-      body?.message || "接口返回数据格式不正确",
-      body?.code,
-    );
+    throw new ApiError(body?.message || "接口返回数据格式不正确", body?.code);
   }
 
   return body.data;

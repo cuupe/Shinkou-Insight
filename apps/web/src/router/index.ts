@@ -1,4 +1,7 @@
 import { createRouter, createWebHistory } from "vue-router";
+import { authApi } from "@/api/auth";
+import { isSessionLocallyInvalid } from "@/utils/request";
+import { workspaceApi } from "@/api/workspace";
 import AuthLayout from "@/layouts/AuthLayout.vue";
 import WorkspaceLayout from "@/layouts/WorkspaceLayout.vue";
 import LoginView from "@/views/auth/LoginView.vue";
@@ -21,6 +24,9 @@ import RunDetailView from "@/views/project/RunDetailView.vue";
 import ReportsView from "@/views/project/ReportsView.vue";
 import ActionItemsView from "@/views/project/ActionItemsView.vue";
 import EvaluationView from "@/views/project/EvaluationView.vue";
+import AgentWorkspaceView from "@/views/project/AgentWorkspaceView.vue";
+import HelpCenterView from "@/views/help/HelpCenterView.vue";
+import NotificationsView from "@/views/workspace/NotificationsView.vue";
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -60,6 +66,16 @@ const router = createRouter({
           component: MembersView,
         },
         {
+          path: "help",
+          name: "help-center",
+          component: HelpCenterView,
+        },
+        {
+          path: "notifications",
+          name: "notifications",
+          component: NotificationsView,
+        },
+        {
           path: "settings",
           name: "workspace-settings",
           component: GeneralSettingsView,
@@ -88,6 +104,11 @@ const router = createRouter({
           path: "projects/:projectId/overview",
           name: "project-overview",
           component: OverviewView,
+        },
+        {
+          path: "projects/:projectId/agent",
+          name: "project-agent-chat",
+          component: AgentWorkspaceView,
         },
         {
           path: "projects/:projectId/knowledge/assets",
@@ -141,6 +162,60 @@ const router = createRouter({
       redirect: { name: "login" },
     },
   ],
+});
+
+/* 工作区路由守卫：
+ * 1. 未登录跳转登录页；
+ * 2. URL 中的 workspaceId 必须是当前用户真实的工作区雪花 ID，
+ *    非法/过期时重定向到第一个可用工作区；
+ * 3. 用户没有任何工作区时自动创建默认工作区。 */
+let workspaceCache: string[] | null = null;
+
+async function loadWorkspaceIds(force = false): Promise<string[]> {
+  if (workspaceCache && !force) return workspaceCache;
+  let list = await workspaceApi.list();
+  if (!list.length) {
+    const me = await authApi.me().catch(() => null);
+    const created = await workspaceApi.create({
+      name: `${me?.userName || "我的"} 的工作区`,
+    });
+    list = [created];
+  }
+  workspaceCache = list.map((workspace) => String(workspace.id));
+  return workspaceCache;
+}
+
+router.beforeEach(async (to) => {
+  if (!to.matched.length || !String(to.params.workspaceId ?? "")) {
+    return true;
+  }
+  if (isSessionLocallyInvalid()) {
+    return { name: "login" };
+  }
+  try {
+    await authApi.me();
+  } catch {
+    return { name: "login" };
+  }
+  const requested = String(to.params.workspaceId);
+  try {
+    let ids = await loadWorkspaceIds();
+    if (!ids.includes(requested)) {
+      // 缓存可能已过期，强制刷新一次再判断
+      ids = await loadWorkspaceIds(true);
+    }
+    if (!ids.includes(requested)) {
+      return {
+        path: to.fullPath.replace(
+          `/workspaces/${requested}`,
+          `/workspaces/${ids[0]}`,
+        ),
+      };
+    }
+  } catch {
+    return { name: "login" };
+  }
+  return true;
 });
 
 export default router;

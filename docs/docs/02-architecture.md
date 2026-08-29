@@ -179,6 +179,10 @@ Browser 创建 Run
 
 MVP 可用 Spring `@Async` 或轻量 Worker；若任务可靠性成为瓶颈，再引入消息队列。个人项目首版不强制部署 Kafka/RabbitMQ。
 
+当前队列选型：不立即引入 Kafka/RabbitMQ。`research_runs` 作为 PostgreSQL 中的任务事实表，Worker 使用短事务和 `FOR UPDATE SKIP LOCKED` 抢占 `PENDING` 任务；任务状态、重试次数和租约写回数据库。这样可以先获得重启恢复、并发消费和可审计性，同时避免新增基础设施。当前 `AgentService` 中的虚拟线程仅适合单实例原型，不能作为生产级可靠队列。
+
+当出现多实例高吞吐、跨服务解耦或外部任务积压时，再引入消息队列。优先评估已有 Redis 的 Streams/Consumer Group；如果需要更强的投递确认、死信队列和独立消费治理，再使用 RabbitMQ。Kafka 适合事件流和大规模日志，不是当前任务队列的首选。
+
 ## 6. Agent 运行持久化
 
 建议同时持久化两层状态：

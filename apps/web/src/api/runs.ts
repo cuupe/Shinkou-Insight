@@ -1,24 +1,16 @@
 import { anet, unwrap } from "./core";
 import { projectPath } from "./paths";
-import type {
-  ApiResponse,
-  CreateRunPayload,
-  ResearchRun,
-} from "./types";
+import type { ApiResponse, CreateRunPayload, ResearchRun } from "./types";
 
 export const runsApi = {
-  list: (workspaceId: number | string, projectId: number | string) =>
+  list: (workspaceId: number | string, projectId: number) =>
     unwrap<ResearchRun[]>(
       anet.get<ApiResponse<ResearchRun[]>>(
         `${projectPath(workspaceId, projectId)}/runs`,
       ),
     ),
 
-  create: (
-    workspaceId: number | string,
-    projectId: number | string,
-    payload: CreateRunPayload,
-  ) =>
+  create: (workspaceId: number | string, projectId: number, payload: CreateRunPayload) =>
     unwrap<ResearchRun>(
       anet.post<ApiResponse<ResearchRun>>(
         `${projectPath(workspaceId, projectId)}/runs`,
@@ -26,75 +18,48 @@ export const runsApi = {
       ),
     ),
 
-  detail: (
-    workspaceId: number | string,
-    projectId: number | string,
-    runId: number | string,
-  ) =>
+  detail: (workspaceId: number | string, projectId: number, runId: number | string) =>
     unwrap<ResearchRun>(
       anet.get<ApiResponse<ResearchRun>>(
         `${projectPath(workspaceId, projectId)}/runs/${runId}`,
       ),
     ),
 
-  cancel: (
-    workspaceId: number | string,
-    projectId: number | string,
-    runId: number | string,
-  ) =>
+  cancel: (workspaceId: number | string, projectId: number, runId: number | string) =>
     unwrap<ResearchRun>(
       anet.post<ApiResponse<ResearchRun>>(
         `${projectPath(workspaceId, projectId)}/runs/${runId}/cancel`,
       ),
     ),
 
-  retry: (
-    workspaceId: number | string,
-    projectId: number | string,
-    runId: number | string,
-  ) =>
+  retry: (workspaceId: number | string, projectId: number, runId: number | string) =>
     unwrap<ResearchRun>(
       anet.post<ApiResponse<ResearchRun>>(
         `${projectPath(workspaceId, projectId)}/runs/${runId}/retry`,
       ),
     ),
 
-  steps: (
-    workspaceId: number | string,
-    projectId: number | string,
-    runId: number | string,
-  ) =>
+  steps: (workspaceId: number | string, projectId: number, runId: number | string) =>
     unwrap<Record<string, unknown>[]>(
       anet.get<ApiResponse<Record<string, unknown>[]>>(
         `${projectPath(workspaceId, projectId)}/runs/${runId}/steps`,
       ),
     ),
 
-  tools: (
-    workspaceId: number | string,
-    projectId: number | string,
-    runId: number | string,
-  ) =>
+  tools: (workspaceId: number | string, projectId: number, runId: number | string) =>
     unwrap<Record<string, unknown>[]>(
       anet.get<ApiResponse<Record<string, unknown>[]>>(
         `${projectPath(workspaceId, projectId)}/runs/${runId}/tools`,
       ),
     ),
 
-  evidences: (
-    workspaceId: number | string,
-    projectId: number | string,
-    runId: number | string,
-  ) =>
+  evidences: (workspaceId: number | string, projectId: number, runId: number | string) =>
     unwrap<Record<string, unknown>[]>(
       anet.get<ApiResponse<Record<string, unknown>[]>>(
         `${projectPath(workspaceId, projectId)}/runs/${runId}/evidences`,
       ),
     ),
 
-  eventsUrl: (
-    workspaceId: number | string,
-    projectId: number | string,
-    runId: number | string,
-  ) => `${projectPath(workspaceId, projectId)}/runs/${runId}/events`,
+  eventsUrl: (workspaceId: number | string, projectId: number, runId: number | string) =>
+    `${projectPath(workspaceId, projectId)}/runs/${runId}/events`,
 };

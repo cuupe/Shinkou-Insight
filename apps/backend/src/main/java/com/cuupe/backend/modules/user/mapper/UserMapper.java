@@ -17,6 +17,18 @@ public interface UserMapper {
             @Param("phoneNumber") String phoneNumber
     );
 
+    User findUserById(@Param("id") Long id);
+
+    void updateLoginAt(@Param("id") Long id);
+
+        void updateProfile(@Param("id") Long id, @Param("userName") String userName, @Param("email") String email, @Param("timezone") String timezone);
+
+        void updateNotificationPreferences(@Param("id") Long id, @Param("preferences") String preferences);
+
+        void updatePassword(@Param("id") Long id, @Param("password") String password);
+
+        int updatePhoneNumber(@Param("id") Long id, @Param("phoneNumber") String phoneNumber);
+
     boolean existPhoneNumber(
             @Param("phoneNumber") String phoneNumber
     );

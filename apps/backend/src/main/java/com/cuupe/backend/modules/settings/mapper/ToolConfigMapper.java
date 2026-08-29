@@ -1,0 +1,3 @@
+package com.cuupe.backend.modules.settings.mapper;
+import com.cuupe.backend.modules.settings.entity.ToolConfig; import org.apache.ibatis.annotations.*; import java.util.List;
+@Mapper public interface ToolConfigMapper { List<ToolConfig> findByProject(@Param("projectId") Long projectId,@Param("userId") Long userId); ToolConfig findById(@Param("id") Long id,@Param("projectId") Long projectId,@Param("userId") Long userId); int insert(ToolConfig config); int update(ToolConfig config); int delete(@Param("id") Long id,@Param("projectId") Long projectId); }

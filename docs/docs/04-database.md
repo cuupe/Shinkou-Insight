@@ -3,6 +3,7 @@
 ## 1. 设计原则
 
 - PostgreSQL 保存业务数据和 AI 运行数据。
+- `users` 与工作区、项目、调研和 Agent 数据共用同一个 PostgreSQL 数据库，统一由 Flyway 管理；不使用独立的用户数据库。
 - pgvector 保存 Embedding。
 - 所有项目级表包含 `workspace_id` 和 `project_id`。
 - 核心业务使用外键；高频 Trace 表可根据清理策略决定是否使用强外键。

@@ -3,6 +3,6 @@ export const workspacePath = (workspaceId: number | string) =>
 
 export const projectPath = (
   workspaceId: number | string,
-  projectId: number | string,
+  projectId: number,
 ) =>
   `${workspacePath(workspaceId)}/projects/${encodeURIComponent(String(projectId))}`;

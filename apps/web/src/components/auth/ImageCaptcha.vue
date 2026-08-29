@@ -23,6 +23,7 @@ const {
   captchaId,
   loading,
   error: loadError,
+  expired,
   refresh: loadCaptcha,
 } = useCaptcha();
 
@@ -35,13 +36,21 @@ async function refreshCaptcha() {
 
 onMounted(refreshCaptcha);
 watch(captchaId, (value) => emit("update:captchaId", value));
+watch(expired, (value) => {
+  if (!value) return;
+  emit("update:modelValue", "");
+  emit("update:captchaId", "");
+  emit("refresh");
+});
 </script>
 
 <template>
   <Field class="image-captcha-field" :data-invalid="!!props.error">
     <div class="image-captcha-label-row">
       <FieldLabel :for="props.id">图片验证码</FieldLabel
-      ><span class="image-captcha-hint">点击图片刷新</span>
+      ><span class="image-captcha-hint"
+        >{{ expired ? "验证码已过期，请刷新" : "点击图片刷新" }}</span
+      >
     </div>
     <div class="image-captcha-row">
       <Input
@@ -58,8 +67,9 @@ watch(captchaId, (value) => emit("update:captchaId", value));
         :disabled="loading"
         @click="refreshCaptcha"
       >
-        <img
-          v-if="props.imageUrl || imageUrl"
+        <small v-if="expired">验证码已过期<br />点击刷新</small
+        ><img
+          v-else-if="props.imageUrl || imageUrl"
           :src="props.imageUrl || imageUrl"
           alt="图片验证码"
         />

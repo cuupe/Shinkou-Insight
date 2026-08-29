@@ -1,0 +1,55 @@
+import { anet, unwrap } from "./core";
+import { projectPath } from "./paths";
+import type {
+  AgentAttachmentUploadResponse,
+  AgentSendMessagePayload,
+  AgentRunAccepted,
+  AgentStreamEvent,
+  ApiResponse,
+} from "./types";
+
+/**
+ * Agent 工作台的后端契约：
+ * 1. POST /agent/messages 接收用户消息并返回 runId/messageId；
+ * 2. GET /agent/runs/:runId/events 以 SSE 推送 AgentStreamEvent；
+ * 3. 前端只依赖事件类型，不依赖具体模型或工作流实现。
+ */
+export const agentApi = {
+  sendMessage: (
+    workspaceId: number | string,
+    projectId: number,
+    payload: AgentSendMessagePayload,
+  ) =>
+    unwrap<AgentRunAccepted>(
+      anet.post<ApiResponse<AgentRunAccepted>>(
+        `${projectPath(workspaceId, projectId)}/agent/messages`,
+        payload,
+      ),
+    ),
+
+  uploadAttachment: (
+    workspaceId: number | string,
+    projectId: number,
+    file: File,
+  ) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return unwrap<AgentAttachmentUploadResponse>(
+      anet.post<ApiResponse<AgentAttachmentUploadResponse>>(
+        `${projectPath(workspaceId, projectId)}/agent/attachments`,
+        formData,
+      ),
+    );
+  },
+
+  eventsUrl: (workspaceId: number | string, projectId: number, runId: number | string) =>
+    `/api${projectPath(workspaceId, projectId)}/agent/runs/${runId}/events`,
+
+  parseEvent: (event: MessageEvent<string>): AgentStreamEvent | null => {
+    try {
+      return JSON.parse(event.data) as AgentStreamEvent;
+    } catch {
+      return null;
+    }
+  },
+};

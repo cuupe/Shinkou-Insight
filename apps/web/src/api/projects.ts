@@ -21,14 +21,14 @@ export const projectApi = {
       ),
     ),
 
-  detail: (workspaceId: number | string, projectId: number | string) =>
+  detail: (workspaceId: number | string, projectId: number) =>
     unwrap<Project>(
       anet.get<ApiResponse<Project>>(projectPath(workspaceId, projectId)),
     ),
 
   update: (
     workspaceId: number | string,
-    projectId: number | string,
+    projectId: number,
     payload: Record<string, unknown>,
   ) =>
     unwrap<Project>(
@@ -38,8 +38,22 @@ export const projectApi = {
       ),
     ),
 
-  remove: (workspaceId: number | string, projectId: number | string) =>
+  remove: (workspaceId: number | string, projectId: number) =>
     unwrap<void>(
       anet.delete<ApiResponse<void>>(projectPath(workspaceId, projectId)),
+    ),
+
+  archive: (workspaceId: number | string, projectId: number) =>
+    unwrap<Project>(
+      anet.patch<ApiResponse<Project>>(
+        `${projectPath(workspaceId, projectId)}/archive`,
+      ),
+    ),
+
+  restore: (workspaceId: number | string, projectId: number) =>
+    unwrap<Project>(
+      anet.patch<ApiResponse<Project>>(
+        `${projectPath(workspaceId, projectId)}/restore`,
+      ),
     ),
 };
