@@ -14,11 +14,11 @@ import UserSettingsView from "@/views/settings/UserSettingsView.vue";
 import ModelsSettingsView from "@/views/settings/ModelsView.vue";
 import ToolsSettingsView from "@/views/settings/ToolsView.vue";
 import PromptsSettingsView from "@/views/settings/PromptsView.vue";
+import SecuritySettingsView from "@/views/settings/SecurityView.vue";
 import OverviewView from "@/views/project/OverviewView.vue";
 import AssetsView from "@/views/project/AssetsView.vue";
 import AssetDetailView from "@/views/project/AssetDetailView.vue";
 import PlaygroundView from "@/views/project/PlaygroundView.vue";
-import NewResearchView from "@/views/project/NewResearchView.vue";
 import RunsView from "@/views/project/RunsView.vue";
 import RunDetailView from "@/views/project/RunDetailView.vue";
 import ReportsView from "@/views/project/ReportsView.vue";
@@ -101,6 +101,11 @@ const router = createRouter({
           component: PromptsSettingsView,
         },
         {
+          path: "settings/security",
+          name: "settings-security",
+          component: SecuritySettingsView,
+        },
+        {
           path: "projects/:projectId/overview",
           name: "project-overview",
           component: OverviewView,
@@ -124,11 +129,6 @@ const router = createRouter({
           path: "projects/:projectId/knowledge/playground",
           name: "project-playground",
           component: PlaygroundView,
-        },
-        {
-          path: "projects/:projectId/research/new",
-          name: "project-new-run",
-          component: NewResearchView,
         },
         {
           path: "projects/:projectId/research/runs",

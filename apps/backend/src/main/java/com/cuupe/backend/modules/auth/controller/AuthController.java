@@ -5,27 +5,27 @@ import com.cuupe.backend.common.exception.ApiException;
 import com.cuupe.backend.modules.auth.dto.request.LoginRequestByPassword;
 import com.cuupe.backend.modules.auth.dto.request.LoginRequestBySms;
 import com.cuupe.backend.modules.auth.dto.request.RegisterRequest;
+import com.cuupe.backend.modules.auth.dto.request.ResetPasswordRequest;
 import com.cuupe.backend.modules.auth.dto.request.UpdatePasswordRequest;
 import com.cuupe.backend.modules.auth.dto.request.UpdatePhoneRequest;
 import com.cuupe.backend.modules.auth.dto.request.UpdatePreferencesRequest;
 import com.cuupe.backend.modules.auth.dto.request.UpdateProfileRequest;
-import com.cuupe.backend.modules.auth.enums.SmsPurpose;
 import com.cuupe.backend.modules.auth.dto.response.LoginResponse;
 import com.cuupe.backend.modules.auth.dto.response.RegisterResponse;
 import com.cuupe.backend.modules.auth.dto.response.SmsResponse;
+import com.cuupe.backend.modules.auth.enums.SmsPurpose;
 import com.cuupe.backend.modules.auth.service.AuthService;
 import com.cuupe.backend.modules.user.entity.User;
 import com.cuupe.backend.modules.user.security.UserLoginByPassword;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.core.Authentication;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
-@Slf4j
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+
 @RestController
 @RequestMapping("/auth")
 @RequiredArgsConstructor
@@ -37,11 +37,8 @@ public class AuthController {
             @Valid @RequestBody LoginRequestByPassword request,
             HttpServletRequest httpRequest,
             HttpServletResponse httpResponse) {
-
-        LoginResponse response =
-                authService.loginByPassword(request, httpRequest, httpResponse);
-
-        return Result.success("SUCCESS", "登录成功", response);
+        return Result.success("SUCCESS", "登录成功",
+                authService.loginByPassword(request, httpRequest, httpResponse));
     }
 
     @PostMapping("/login/sms")
@@ -49,23 +46,25 @@ public class AuthController {
             @Valid @RequestBody LoginRequestBySms request,
             HttpServletRequest httpRequest,
             HttpServletResponse httpResponse) {
-        LoginResponse response =
-                authService.loginBySms(request, httpRequest, httpResponse);
-
-        return Result.success("SUCCESS", "登录成功", response);
+        return Result.success("SUCCESS", "登录成功",
+                authService.loginBySms(request, httpRequest, httpResponse));
     }
 
-    @GetMapping("/sms")
+    /**
+     * Sending a code is a state-changing operation, therefore this is POST
+     * and is protected by the normal CSRF flow for authenticated callers.
+     */
+    @PostMapping("/sms")
     public Result<SmsResponse> getSms(
             @RequestParam String phoneNumber,
             @RequestParam SmsPurpose purpose,
-            Authentication authentication) {
+            @RequestParam(required = false) String captchaId,
+            @RequestParam(required = false) String captcha,
+            Authentication authentication,
+            HttpServletRequest httpRequest) {
         String normalizedPhone = phoneNumber.trim();
         if (purpose == SmsPurpose.PASSWORD_CHANGE || purpose == SmsPurpose.PHONE_CHANGE) {
-            if (!isAuthenticated(authentication)) {
-                throw ApiException.unauthorized(
-                        "AUTHENTICATION_REQUIRED", "请先登录后再获取安全验证码");
-            }
+            requireAuthenticated(authentication);
             if (purpose == SmsPurpose.PASSWORD_CHANGE) {
                 UserLoginByPassword user = (UserLoginByPassword) authentication.getPrincipal();
                 if (!normalizedPhone.equals(user.getPhoneNumber())) {
@@ -73,16 +72,29 @@ public class AuthController {
                             "PHONE_VERIFICATION_MISMATCH", "验证码手机号必须是当前账号绑定的手机号");
                 }
             }
+        } else if (purpose != SmsPurpose.REGISTER
+                && purpose != SmsPurpose.LOGIN
+                && purpose != SmsPurpose.PASSWORD_RESET) {
+            throw ApiException.badRequest("INVALID_SMS_PURPOSE", "验证码用途不正确");
         }
-        return Result.success("SUCCESS", "短信验证码已发送", authService.generateSms(normalizedPhone, purpose));
+
+        return Result.success("SUCCESS", "短信验证码已发送",
+                authService.generateSms(normalizedPhone, purpose, captchaId, captcha, httpRequest));
     }
 
     @PostMapping("/register")
     public Result<RegisterResponse> register(
-            @Valid @RequestBody RegisterRequest request) {
-        RegisterResponse response = authService.register(request);
+            @Valid @RequestBody RegisterRequest request,
+            HttpServletRequest httpRequest) {
+        return Result.success(authService.register(request, httpRequest));
+    }
 
-        return Result.success(response);
+    @PostMapping("/password/reset")
+    public Result<Void> resetPassword(
+            @Valid @RequestBody ResetPasswordRequest request,
+            HttpServletRequest httpRequest) {
+        authService.resetPassword(request, httpRequest);
+        return Result.success();
     }
 
     @GetMapping("/me")
@@ -92,26 +104,40 @@ public class AuthController {
     }
 
     @PatchMapping("/me")
-    public Result<User> updateProfile(@Valid @RequestBody UpdateProfileRequest request, Authentication authentication) {
+    public Result<User> updateProfile(
+            @Valid @RequestBody UpdateProfileRequest request,
+            Authentication authentication) {
         return Result.success(authService.updateProfile(userId(authentication), request));
     }
 
     @PatchMapping("/me/preferences")
-    public Result<User> updatePreferences(@Valid @RequestBody UpdatePreferencesRequest request, Authentication authentication) {
+    public Result<User> updatePreferences(
+            @Valid @RequestBody UpdatePreferencesRequest request,
+            Authentication authentication) {
         return Result.success(authService.updatePreferences(userId(authentication), request));
     }
 
     @PutMapping("/me/password")
-    public Result<Void> updatePassword(@Valid @RequestBody UpdatePasswordRequest request, Authentication authentication) {
-        authService.updatePassword(userId(authentication), request);
+    public Result<Void> updatePassword(
+            @Valid @RequestBody UpdatePasswordRequest request,
+            Authentication authentication,
+            HttpServletRequest httpRequest) {
+        authService.updatePassword(userId(authentication), request, httpRequest);
         return Result.success();
     }
 
     @PutMapping("/me/phone")
     public Result<User> updatePhone(
             @Valid @RequestBody UpdatePhoneRequest request,
-            Authentication authentication) {
-        return Result.success(authService.updatePhoneNumber(userId(authentication), request));
+            Authentication authentication,
+            HttpServletRequest httpRequest) {
+        return Result.success(authService.updatePhoneNumber(userId(authentication), request, httpRequest));
+    }
+
+    private void requireAuthenticated(Authentication authentication) {
+        if (!isAuthenticated(authentication)) {
+            throw ApiException.unauthorized("AUTHENTICATION_REQUIRED", "请先登录后再获取安全验证码");
+        }
     }
 
     private boolean isAuthenticated(Authentication authentication) {

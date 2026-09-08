@@ -41,6 +41,13 @@ export interface RegisterPayload {
   verifyCode: string;
 }
 
+export interface ResetPasswordPayload {
+  phoneNumber: string;
+  verifyCodeId: string;
+  verifyCode: string;
+  newPassword: string;
+}
+
 export interface LoginResponse {
   id: number | string | null;
   phoneNumber: string;
@@ -94,6 +101,7 @@ export interface Workspace {
   id: number | string;
   name: string;
   code?: string;
+  currentRole?: string;
   description?: string;
   plan?: string;
   initials?: string;
@@ -113,6 +121,21 @@ export interface WorkspaceMember {
   title?: string;
   lastActiveAt?: string;
   [key: string]: unknown;
+}
+
+export interface WorkspaceInvitation {
+  id: number | string;
+  workspaceId: number | string;
+  workspaceName?: string;
+  phoneNumber: string;
+  role: string;
+  department?: string;
+  title?: string;
+  inviteNote?: string;
+  invitedBy?: number | string;
+  status: string;
+  expiresAt: string;
+  createdAt: string;
 }
 
 export interface Project {
@@ -292,12 +315,24 @@ export interface AgentSendMessagePayload {
     runId?: number | string;
     mode?: string;
   };
+  config?: AgentRunConfig;
   attachments?: Array<
     Pick<
       AgentAttachment,
       "id" | "name" | "kind" | "mimeType" | "size" | "uploadId"
     >
   >;
+}
+
+export interface AgentRunConfig {
+  allowWebSearch?: boolean;
+  maxResearchRounds?: number;
+  topK?: number;
+  retrievalMode?: "VECTOR" | "KEYWORD" | "HYBRID";
+  useReranker?: boolean;
+  outputLanguage?: string;
+  modelConfigId?: number | string;
+  webSearchToolId?: number | string;
 }
 
 export interface AgentRunAccepted {
@@ -316,15 +351,6 @@ export type AgentStreamEvent =
   | { type: "message.completed"; runId: string; messageId: string }
   | { type: "run.completed"; runId: string; data?: Record<string, unknown> }
   | { type: "run.failed"; runId: string; message: string };
-
-export interface CreateRunPayload {
-  goal: string;
-  allowWebSearch?: boolean;
-  maxResearchRounds?: number;
-  reportTemplate?: string;
-  outputLanguage?: string;
-  [key: string]: unknown;
-}
 
 export type RunStatus =
   "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | string;

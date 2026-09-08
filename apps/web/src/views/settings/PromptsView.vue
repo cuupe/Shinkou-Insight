@@ -57,7 +57,7 @@ onMounted(async () => {
     const remote = await settingsApi.prompts.list(workspaceId.value);
     prompts.value = remote.map((item) => mapPrompt(item));
   } catch {
-    notify("Prompt 配置加载失败");
+    notify("系统提示词配置加载失败");
   }
 });
 const filteredPrompts = computed(() => {
@@ -69,7 +69,7 @@ const filteredPrompts = computed(() => {
   );
 });
 const dialogTitle = computed(() =>
-  editingPromptName.value ? "编辑 Prompt 版本" : "新建 Prompt",
+  editingPromptName.value ? "编辑系统提示词版本" : "新建系统提示词",
 );
 
 function openCreate() {
@@ -100,7 +100,7 @@ async function savePrompt() {
     !promptForm.version.trim() ||
     !promptForm.content.trim()
   ) {
-    notify("请填写 Prompt 名称、版本和内容");
+    notify("请填写系统提示词场景、版本和内容");
     return;
   }
   if (editingPromptName.value) {
@@ -121,7 +121,7 @@ async function savePrompt() {
         },
       );
     } catch {
-      notify("Prompt 保存失败");
+      notify("系统提示词保存失败");
       return;
     }
     Object.assign(prompt, mapPrompt(updated, {
@@ -148,10 +148,10 @@ async function savePrompt() {
         content: promptForm.content.trim(),
       }));
     } catch {
-      notify("Prompt 保存失败");
+      notify("系统提示词保存失败");
       return;
     }
-    notify("Prompt 已创建");
+    notify("系统提示词已创建");
   }
   promptOpen.value = false;
 }
@@ -168,7 +168,7 @@ async function togglePromptStatus(prompt: PromptRecord) {
         systemPrompt: prompt.content,
       });
     } catch {
-      notify("Prompt 状态更新失败");
+      notify("系统提示词状态更新失败");
       return;
     }
   }
@@ -182,17 +182,16 @@ async function togglePromptStatus(prompt: PromptRecord) {
 <template>
   <Layout
     eyebrow="WORKSPACE / SETTINGS"
-    title="Prompt 版本"
-    subtitle="配置工作区的提示词模板、版本状态和发布流程"
+    title="系统提示词"
+    subtitle="配置工作区 Agent 的系统提示词、版本状态和发布流程"
   >
     <div class="settings-section prompt-overview">
       <div class="overview-copy">
         <span class="overview-icon"><Sparkles :size="18" /></span>
         <div>
-          <h2>Prompt 工作台</h2>
+          <h2>系统提示词工作台</h2>
           <p>
-            当前管理 {{ prompts.length }} 个 Agent
-            Prompt，发布前可以在编辑器中校验内容。
+            当前管理 {{ prompts.length }} 个 Agent 系统提示词，发布前可以在编辑器中校验内容。
           </p>
         </div>
       </div>
@@ -201,15 +200,15 @@ async function togglePromptStatus(prompt: PromptRecord) {
         type="button"
         @click="openCreate"
       >
-        <Plus :size="15" />新建 Prompt
+        <Plus :size="15" />新建系统提示词
       </button>
     </div>
     <div class="settings-section">
       <div class="section-intro">
         <div>
-          <h2>Prompt 版本列表</h2>
+          <h2>系统提示词版本列表</h2>
           <p>
-            每个 Prompt 都有独立版本和发布状态，生产版本会被 Agent 默认使用。
+            每个 Agent 场景都有独立版本和发布状态，生产版本会注入对应 Agent 的系统消息。
           </p>
         </div>
       </div>
@@ -218,9 +217,9 @@ async function togglePromptStatus(prompt: PromptRecord) {
           ><Search :size="14" /><input
             v-model="searchQuery"
             type="search"
-            placeholder="搜索 Prompt 名称"
-            aria-label="搜索 Prompt 名称" /></label
-        ><select v-model="statusFilter" aria-label="筛选 Prompt 状态">
+            placeholder="搜索系统提示词场景"
+            aria-label="搜索系统提示词场景" /></label
+        ><select v-model="statusFilter" aria-label="筛选系统提示词状态">
           <option v-for="status in statuses" :key="status">{{ status }}</option>
         </select>
       </div>
@@ -260,7 +259,7 @@ async function togglePromptStatus(prompt: PromptRecord) {
           </button>
         </div>
         <p v-if="!filteredPrompts.length" class="empty-state">
-          {{ prompts.length ? "没有匹配的 Prompt。" : "暂无 Prompt 配置，创建后会显示后端保存的版本。" }}
+          {{ prompts.length ? "没有匹配的系统提示词。" : "暂无系统提示词配置，创建后会显示后端保存的版本。" }}
         </p>
       </div>
     </div>
@@ -285,11 +284,11 @@ async function togglePromptStatus(prompt: PromptRecord) {
         >
         <div class="form-stack">
           <label class="field-label"
-            >Prompt 名称<input
+            >系统提示词场景<input
               v-model="promptForm.name"
               :disabled="Boolean(editingPromptName)"
-              placeholder="例如：research-planner"
-          /></label>
+              placeholder="planner / evidence_evaluation / finding / report / review"
+          /><small class="field-hint">仅支持 planner、evidence_evaluation、finding、report、review。</small></label>
           <div class="form-grid">
             <label class="field-label"
               >版本号<input
@@ -303,11 +302,11 @@ async function togglePromptStatus(prompt: PromptRecord) {
             >
           </div>
           <label class="field-label"
-            >Prompt 内容<textarea
+            >系统提示词<textarea
               v-model="promptForm.content"
               rows="9"
               placeholder="输入系统提示词内容"
-            />
+            /><small class="field-hint">发布后才会注入运行时；未配置的场景继续使用内置系统提示词。</small>
           </label>
         </div>
         <DialogFooter

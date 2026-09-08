@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { onUnmounted, ref, watch } from "vue";
-import { CheckCircle2Icon, EyeIcon, EyeOffIcon } from "@lucide/vue";
+import {
+  CheckCircle2Icon,
+  EyeIcon,
+  EyeOffIcon,
+  MessageCircleMoreIcon,
+} from "@lucide/vue";
 import {
   Alert,
   AlertDescription,
@@ -34,7 +39,8 @@ import ImageCaptcha from "@/components/auth/ImageCaptcha.vue";
 import SubmitButton from "@/components/auth/SubmitButton.vue";
 import { useAuth } from "@/composables/useAuth";
 import { useSmsCode } from "@/composables/useSmsCode";
-import { ApiError, api, getApiErrorMessage } from "@/api";
+import { ApiError, api } from "@/api";
+import { getAuthFeedback } from "@/utils/authFeedback";
 import { useRouter } from "vue-router";
 const router = useRouter();
 const { isPhone, isCode, isCaptcha } = useAuth();
@@ -48,9 +54,11 @@ const captchaId = ref("");
 const agreed = ref(false);
 const isSubmitting = ref(false);
 const errors = ref<Record<string, string>>({});
-const status = ref<{ type: "success" | "error"; message: string } | null>(
-  null,
-);
+const status = ref<{
+  type: "success" | "error" | "info";
+  title: string;
+  message: string;
+} | null>(null);
 const registrationSucceeded = ref(false);
 const showPassword = ref(false);
 const showConfirm = ref(false);
@@ -89,12 +97,15 @@ async function sendSms() {
     return;
   }
   errors.value = {};
+  status.value = null;
   smsSending.value = true;
 
   try {
     const response = await api.auth.sms({
       phoneNumber: phone.value.trim(),
       purpose: "REGISTER",
+      captchaId: captchaId.value,
+      captcha: captcha.value,
     });
     if (!response.smsId) {
       throw new ApiError("短信验证码发送失败，请稍后重试。", "SMS_ID_MISSING");
@@ -102,8 +113,17 @@ async function sendSms() {
     smsCode.value = "";
     startSmsCode(response.smsId);
   } catch (error) {
-    errors.value = {
-      smsCode: getApiErrorMessage(error, "验证码发送失败，请稍后重试。"),
+    const feedback = getAuthFeedback(
+      error,
+      "send-sms",
+      "验证码发送失败，请稍后重试。",
+    );
+    // 接口错误统一展示在顶部提示，避免与字段下方重复显示同一条文案。
+    errors.value = {};
+    status.value = {
+      type: "error",
+      title: feedback.title,
+      message: feedback.message,
     };
   } finally {
     smsSending.value = false;
@@ -119,14 +139,22 @@ async function submit() {
   else if (!isCode(smsCode.value)) next.smsCode = "请输入 6 位手机验证码";
   if (username.value.trim().length < 2)
     next.username = "用户名至少需要 2 个字符";
-  if (password.value.length < 8) next.password = "密码至少需要 8 位字符";
+  if (password.value.length < 12) next.password = "密码至少需要 12 个字符";
   if (password.value !== confirmPassword.value)
     next.confirmPassword = "两次输入的密码不一致";
   if (!isCaptcha(captcha.value)) next.captcha = "请输入图片验证码";
   if (!captchaId.value) next.captcha = "图片验证码已过期，请点击图片刷新";
   if (!agreed.value) next.agreement = "请先同意用户协议和隐私政策";
   errors.value = next;
-  if (Object.keys(next).length) return;
+  if (Object.keys(next).length) {
+    status.value = {
+      type: "error",
+      title: "请检查注册信息",
+      message: "还有信息未填写正确，请根据字段下方的红色提示修改后再提交。",
+    };
+    return;
+  }
+  status.value = null;
   isSubmitting.value = true;
   try {
     await api.auth.register({
@@ -139,18 +167,22 @@ async function submit() {
       verifyCode: smsCode.value,
     });
     registrationSucceeded.value = true;
-    status.value = {
-      type: "success",
-      message: "账号已经创建，请点击下方按钮进入登录页面。",
-    };
   } catch (error) {
-    if (error instanceof ApiError && error.code === "SMS_CODE_INVALID") {
+    const feedback = getAuthFeedback(
+      error,
+      "register",
+      "注册失败，请稍后重试。",
+    );
+    if (feedback.markSmsExpired) {
       markSmsExpired();
       smsCode.value = "";
     }
+    // 接口错误统一展示在顶部提示，避免与字段下方重复显示同一条文案。
+    errors.value = {};
     status.value = {
       type: "error",
-      message: getApiErrorMessage(error, "注册失败，请稍后重试。"),
+      title: feedback.title,
+      message: feedback.message,
     };
   } finally {
     isSubmitting.value = false;
@@ -173,10 +205,12 @@ function openAgreement(type: "terms" | "privacy") {
       ><Alert
         v-if="status"
         class="mb-5"
+        role="alert"
+        aria-live="polite"
         :variant="status.type === 'error' ? 'destructive' : 'default'"
-        ><CheckCircle2Icon v-if="status.type === 'success'" /><AlertTitle>{{
-          status.type === "success" ? "注册成功" : "注册失败"
-        }}</AlertTitle
+        ><CheckCircle2Icon v-if="status.type === 'success'" /><MessageCircleMoreIcon
+          v-else
+        /><AlertTitle>{{ status.title }}</AlertTitle
         ><AlertDescription>{{ status.message }}</AlertDescription></Alert
       ><form
         v-if="!registrationSucceeded"
@@ -217,7 +251,7 @@ function openAgreement(type: "terms" | "privacy") {
                 v-model="password"
                 :type="showPassword ? 'text' : 'password'"
                 autocomplete="new-password"
-                placeholder="至少 8 位字符"
+                placeholder="至少 12 位，且包含多种字符"
                 class="pr-10"
                 :aria-invalid="!!errors.password"
                 @input="clearErrors"

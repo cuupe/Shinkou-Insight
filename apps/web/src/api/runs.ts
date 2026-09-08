@@ -1,20 +1,12 @@
 import { anet, unwrap } from "./core";
 import { projectPath } from "./paths";
-import type { ApiResponse, CreateRunPayload, ResearchRun } from "./types";
+import type { ApiResponse, ResearchRun } from "./types";
 
 export const runsApi = {
   list: (workspaceId: number | string, projectId: number) =>
     unwrap<ResearchRun[]>(
       anet.get<ApiResponse<ResearchRun[]>>(
         `${projectPath(workspaceId, projectId)}/runs`,
-      ),
-    ),
-
-  create: (workspaceId: number | string, projectId: number, payload: CreateRunPayload) =>
-    unwrap<ResearchRun>(
-      anet.post<ApiResponse<ResearchRun>>(
-        `${projectPath(workspaceId, projectId)}/runs`,
-        payload,
       ),
     ),
 

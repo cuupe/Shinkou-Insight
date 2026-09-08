@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { AlertCircle, ArrowRight, CheckCircle2, Clock3, Pause, Play, Plus, RotateCcw, Search, Square } from "@lucide/vue";
+import { AlertCircle, ArrowRight, CheckCircle2, Clock3, Pause, Play, RotateCcw, Search, Square } from "@lucide/vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { runsApi } from "@/api/runs";
@@ -126,7 +126,6 @@ async function cancelQueuedTask(task: QueueTask) {
 
 <template>
   <PageHeader eyebrow="PROJECT / AGENT QUEUE" title="Agent 任务队列" :subtitle="`${selectedProject?.name || '暂无项目'} · 统一查看 Agent 的等待、执行和结果状态`">
-    <template #action><button class="button button-primary" type="button" @click="router.push(routeTo('project-new-run'))"><Plus :size="17" />创建调研任务</button></template>
   </PageHeader>
 
   <div class="queue-summary">
@@ -150,7 +149,7 @@ async function cancelQueuedTask(task: QueueTask) {
         <span class="queue-time">{{ task.time }}<small>{{ task.duration }} · {{ task.tokens }} tokens</small></span>
         <div class="queue-actions"><button v-if="['failed','cancelled'].includes(task.status)" class="icon-button small" type="button" aria-label="重试任务" @click.stop="retryTask(task)"><RotateCcw :size="14" /></button><button v-if="['queued','running'].includes(task.status)" class="icon-button small queue-cancel-button" type="button" aria-label="取消任务" @click.stop="cancelQueuedTask(task)"><Square :size="13" /></button><button class="icon-button small" type="button" aria-label="查看任务详情" @click.stop="openTask(task)"><ArrowRight :size="14" /></button></div>
       </div>
-      <div v-if="!filteredTasks.length" class="queue-empty"><Clock3 :size="18" /><strong>没有匹配的任务</strong><span>调整筛选条件或创建一个新的调研任务。</span></div>
+      <div v-if="!filteredTasks.length" class="queue-empty"><Clock3 :size="18" /><strong>没有匹配的任务</strong><span>请更换搜索或筛选条件。</span></div>
     </div>
   </section>
 

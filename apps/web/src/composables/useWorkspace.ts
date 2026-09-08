@@ -1,4 +1,4 @@
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   Activity,
@@ -15,6 +15,7 @@ import {
   Search,
   Settings2,
   SlidersHorizontal,
+  ShieldCheck,
   UserRound,
   Users,
 } from "@lucide/vue";
@@ -34,6 +35,7 @@ import type {
   Project,
   ResearchRun,
   StatisticsResponse,
+  Workspace,
 } from "@/api";
 
 /* 侧边栏开关状态：true = 展开，false = 收起（默认展开） */
@@ -109,11 +111,13 @@ const currentUser = ref<AuthUser | null>(null);
 const workspace = reactive({
   name: "",
   slug: "",
+  currentRole: "",
   description: "",
   plan: "",
   initials: "",
   usagePercent: "",
 });
+const availableWorkspaces = reactive<Workspace[]>([]);
 const searchQuery = ref("");
 const assetTab = ref("全部");
 const uploadInput = ref<HTMLInputElement | null>(null);
@@ -122,10 +126,8 @@ const playgroundQuery = ref("");
 const retrievalMode = ref("HYBRID");
 const topK = ref(5);
 const rerank = ref(true);
-const newRunGoal = ref("");
 const allowWeb = ref(false);
-const maxRounds = ref(5);
-const runStarted = ref(false);
+const outputLanguage = ref("zh-CN");
 const copied = ref(false);
 let toastTimer: number | undefined;
 
@@ -150,6 +152,7 @@ const settingsNav = [
   { label: "模型配置", icon: Cpu, name: "settings-models" },
   { label: "工具与连接器", icon: Network, name: "settings-tools" },
   { label: "Prompt 版本", icon: SlidersHorizontal, name: "settings-prompts" },
+  { label: "安全审计", icon: ShieldCheck, name: "settings-security" },
 ];
 
 /* 后端 KnowledgeAsset → 页面展示结构 */
@@ -353,12 +356,12 @@ export function useWorkspace() {
           "settings-models": "模型配置",
           "settings-tools": "工具与连接器",
           "settings-prompts": "Prompt 版本",
+          "settings-security": "安全审计",
           "project-overview": "项目概览",
           "project-agent-chat": "Agent 对话",
           "project-assets": "知识库",
           "project-asset-detail": "知识库详情",
           "project-playground": "检索 Playground",
-          "project-new-run": "创建调研",
           "project-runs": "Agent 任务队列",
           "project-run-detail": "运行工作台",
           "project-reports": "报告",
@@ -368,7 +371,7 @@ export function useWorkspace() {
       )[currentName.value] || "工作台",
   );
 
-  onMounted(async () => {
+  async function loadWorkspaceData() {
     if (!workspaceId.value) return;
 
     try {
@@ -376,10 +379,11 @@ export function useWorkspace() {
         projectId.value > 0
           ? statisticsApi.project(workspaceId.value, projectId.value)
           : statisticsApi.workspace(workspaceId.value);
-      const [me, remoteWorkspace, remoteProjects, remoteEvaluations, remoteStatistics] =
+      const [me, remoteWorkspace, remoteWorkspaces, remoteProjects, remoteEvaluations, remoteStatistics] =
         await Promise.all([
           authApi.me(),
           workspaceApi.detail(workspaceId.value),
+          workspaceApi.list(),
           projectApi.list(workspaceId.value),
           evaluationApi.list(workspaceId.value),
           statisticsRequest,
@@ -387,9 +391,15 @@ export function useWorkspace() {
 
       currentUser.value = me;
       statistics.value = remoteStatistics;
+      availableWorkspaces.splice(
+        0,
+        availableWorkspaces.length,
+        ...remoteWorkspaces,
+      );
       workspace.name = String(remoteWorkspace.name || "");
       workspace.description = String(remoteWorkspace.description || "");
       workspace.slug = String(remoteWorkspace.code || "");
+      workspace.currentRole = String(remoteWorkspace.currentRole || "").toUpperCase();
       workspace.plan = String(remoteWorkspace.plan || "");
       workspace.initials =
         String(remoteWorkspace.initials || "").trim() ||
@@ -478,6 +488,11 @@ export function useWorkspace() {
     } catch {
       /* 后端无数据或请求失败时保留空集合，由页面展示对应空状态。 */
     }
+  }
+
+  onMounted(loadWorkspaceData);
+  watch(workspaceId, (next, previous) => {
+    if (next && next !== previous) void loadWorkspaceData();
   });
 
   function routeTo(name: string) {
@@ -547,32 +562,6 @@ export function useWorkspace() {
       copied.value = false;
     }, 1800);
   }
-  async function startRun() {
-    if (projectId.value <= 0) {
-      notify("请先选择一个项目");
-      return;
-    }
-    const goal = newRunGoal.value.trim();
-    if (!goal) {
-      notify("请先填写调研目标");
-      return;
-    }
-    try {
-      const run = await runsApi.create(workspaceId.value, projectId.value, {
-        goal,
-        allowWebSearch: allowWeb.value,
-        maxResearchRounds: maxRounds.value,
-      });
-      recentRuns.unshift({
-        ...mapRemoteRun(run),
-        project: selectedProject.value?.name || "",
-      });
-      runStarted.value = true;
-      notify("调研任务已创建，正在运行");
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "调研任务创建失败");
-    }
-  }
   function statusLabel(status: string) {
     return statusLabelMap[status] || status;
   }
@@ -634,16 +623,43 @@ export function useWorkspace() {
       currentUser.value?.phoneNumber ||
       "当前用户",
   );
+  const currentWorkspaceRole = computed(
+    () =>
+      String(
+        availableWorkspaces.find(
+          (item) => String(item.id) === workspaceId.value,
+        )?.currentRole ||
+          workspace.currentRole ||
+          "MEMBER",
+      ).toUpperCase(),
+  );
+  const isWorkspaceAdmin = computed(() =>
+    ["OWNER", "ADMIN"].includes(currentWorkspaceRole.value),
+  );
   const roleLabel = computed(() => {
-    const role = currentUser.value?.roles?.[0];
+    const role = currentWorkspaceRole.value;
     if (role === "OWNER") return "工作区所有者";
     if (role === "ADMIN") return "工作区管理员";
     return "工作区成员";
   });
 
+  function switchWorkspace(targetId: number | string) {
+    const nextWorkspaceId = String(targetId).trim();
+    if (!/^\d+$/.test(nextWorkspaceId) || nextWorkspaceId === workspaceId.value) {
+      return;
+    }
+    void router.push({
+      name: "workspace-dashboard",
+      params: { workspaceId: nextWorkspaceId },
+    });
+  }
+
   return {
     workspace,
+    availableWorkspaces,
     currentUser,
+    currentWorkspaceRole,
+    isWorkspaceAdmin,
     displayName,
     roleLabel,
     router,
@@ -668,10 +684,8 @@ export function useWorkspace() {
     retrievalMode,
     topK,
     rerank,
-    newRunGoal,
     allowWeb,
-    maxRounds,
-    runStarted,
+    outputLanguage,
     copied,
     stats,
     statistics,
@@ -687,9 +701,9 @@ export function useWorkspace() {
     onFilesSelected,
     retryAsset,
     copyEvidence,
-    startRun,
     statusLabel,
     statusClass,
     iconForStat,
+    switchWorkspace,
   };
 }

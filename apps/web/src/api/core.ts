@@ -26,7 +26,34 @@ export class ApiError extends Error {
   }
 }
 
+type ApiErrorPayload = {
+  code?: unknown;
+  message?: unknown;
+};
+
+function getErrorPayload(error: unknown): ApiErrorPayload | undefined {
+  if (!isAxiosError(error) || !error.response?.data) return undefined;
+  const payload = error.response.data;
+  return typeof payload === "object" ? (payload as ApiErrorPayload) : undefined;
+}
+
+export function getApiErrorCode(error: unknown) {
+  if (error instanceof ApiError) return error.code;
+  const code = getErrorPayload(error)?.code;
+  return typeof code === "string" && code.trim() ? code : undefined;
+}
+
+export function getApiErrorStatus(error: unknown) {
+  return isAxiosError(error) ? error.response?.status : undefined;
+}
+
+export function isApiUnavailable(error: unknown) {
+  if (!isAxiosError(error)) return false;
+  return !error.response || [502, 503, 504].includes(error.response.status);
+}
+
 function getResponseMessage(data: unknown) {
+  if (typeof data === "string" && data.trim()) return data.trim();
   if (!data || typeof data !== "object") return undefined;
 
   const message = (data as { message?: unknown }).message;

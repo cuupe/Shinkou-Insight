@@ -1,6 +1,7 @@
 package com.cuupe.backend.modules.agent.controller;
 
 import com.cuupe.backend.common.Result;
+import com.cuupe.backend.modules.audit.service.AuditLogService;
 import com.cuupe.backend.modules.agent.dto.AgentAttachmentResponse;
 import com.cuupe.backend.modules.agent.dto.AgentMessageRequest;
 import com.cuupe.backend.modules.agent.dto.AgentRunAccepted;
@@ -25,12 +26,14 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/workspaces/{workspaceId}/projects/{projectId}/agent")
 @RequiredArgsConstructor
 public class AgentController {
     private final AgentService agentService;
+    private final AuditLogService auditLogService;
 
     @PostMapping("/messages")
     public Result<AgentRunAccepted> sendMessage(
@@ -39,7 +42,10 @@ public class AgentController {
             @RequestBody AgentMessageRequest request,
             Authentication authentication
     ) {
-        return Result.success(agentService.accept(workspaceId, projectId, userId(authentication), request));
+        Long userId = userId(authentication);
+        AgentRunAccepted accepted = agentService.accept(workspaceId, projectId, userId, request);
+        auditLogService.record(workspaceId, projectId, userId, "AGENT_RUN_CREATED", "AGENT_RUN", accepted.getRunId());
+        return Result.success(accepted);
     }
 
     @GetMapping(value = "/runs/{runId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -53,6 +59,19 @@ public class AgentController {
         return agentService.subscribe(workspaceId, projectId, userId(authentication), runId, parseEventId(lastEventId));
     }
 
+    @PostMapping("/runs/{runId}/cancel")
+    public Result<Void> cancel(
+            @PathVariable Long workspaceId,
+            @PathVariable Long projectId,
+            @PathVariable String runId,
+            Authentication authentication
+    ) {
+        Long userId = userId(authentication);
+        agentService.cancel(workspaceId, projectId, userId, runId);
+        auditLogService.record(workspaceId, projectId, userId, "AGENT_RUN_CANCELLED", "AGENT_RUN", runId);
+        return Result.success();
+    }
+
     @PostMapping(value = "/attachments", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Result<AgentAttachmentResponse> uploadAttachment(
             @PathVariable Long workspaceId,
@@ -60,7 +79,10 @@ public class AgentController {
             @RequestPart("file") MultipartFile file,
             Authentication authentication
     ) throws Exception {
-        return Result.success(agentService.uploadAttachment(workspaceId, projectId, userId(authentication), file));
+        Long userId = userId(authentication);
+        AgentAttachmentResponse response = agentService.uploadAttachment(workspaceId, projectId, userId, file);
+        auditLogService.record(workspaceId, projectId, userId, "AGENT_ATTACHMENT_UPLOADED", "AGENT_ATTACHMENT", null, Map.of("fileName", file.getOriginalFilename() == null ? "" : file.getOriginalFilename()));
+        return Result.success(response);
     }
 
     @GetMapping("/attachments/{attachmentId}/content")

@@ -1,6 +1,6 @@
 import { anet, unwrap } from "./core";
 import { workspacePath } from "./paths";
-import type { ApiResponse, Workspace, WorkspaceMember } from "./types";
+import type { ApiResponse, Workspace, WorkspaceInvitation, WorkspaceMember } from "./types";
 
 export const workspaceApi = {
   list: () =>
@@ -25,6 +25,11 @@ export const workspaceApi = {
       anet.patch<ApiResponse<Workspace>>(workspacePath(workspaceId), payload),
     ),
 
+  remove: (workspaceId: number | string) =>
+    unwrap<void>(
+      anet.delete<ApiResponse<void>>(workspacePath(workspaceId)),
+    ),
+
   members: (workspaceId: number | string) =>
     unwrap<WorkspaceMember[]>(
       anet.get<ApiResponse<WorkspaceMember[]>>(
@@ -42,10 +47,34 @@ export const workspaceApi = {
       inviteNote?: string;
     },
   ) =>
-    unwrap<Record<string, string>>(
-      anet.post<ApiResponse<Record<string, string>>>(
+    unwrap<Record<string, unknown>>(
+      anet.post<ApiResponse<Record<string, unknown>>>(
         `${workspacePath(workspaceId)}/invitations`,
         payload,
+      ),
+    ),
+
+  myInvitations: () =>
+    unwrap<WorkspaceInvitation[]>(
+      anet.get<ApiResponse<WorkspaceInvitation[]>>("/workspace-invitations/me"),
+    ),
+
+  acceptInvitation: (invitationId: number | string) =>
+    unwrap<{ workspaceId: number | string; status: string }>(
+      anet.post<ApiResponse<{ workspaceId: number | string; status: string }>>(
+        `/workspace-invitations/${invitationId}/accept`,
+      ),
+    ),
+
+  declineInvitation: (invitationId: number | string) =>
+    unwrap<void>(
+      anet.post<ApiResponse<void>>(`/workspace-invitations/${invitationId}/decline`),
+    ),
+
+  revokeInvitation: (workspaceId: number | string, invitationId: number | string) =>
+    unwrap<void>(
+      anet.delete<ApiResponse<void>>(
+        `${workspacePath(workspaceId)}/invitations/${invitationId}`,
       ),
     ),
 

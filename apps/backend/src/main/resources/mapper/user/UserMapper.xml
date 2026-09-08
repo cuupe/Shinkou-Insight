@@ -50,7 +50,9 @@
     </update>
 
     <update id="updatePassword">
-        UPDATE users SET password = #{password} WHERE id = #{id}
+        UPDATE users
+        SET password = #{password}, password_changed_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
     </update>
 
     <update id="updatePhoneNumber">

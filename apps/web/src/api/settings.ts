@@ -13,6 +13,7 @@ export interface ProjectModelConfig {
   hasCredential: boolean;
   config?: string;
   enabled: boolean;
+  scope?: "PERSONAL" | "TEAM" | string;
 }
 
 export interface ProjectToolConfig {
@@ -25,6 +26,7 @@ export interface ProjectToolConfig {
   hasCredential: boolean;
   config?: string;
   enabled: boolean;
+  scope?: "PERSONAL" | "TEAM" | string;
 }
 
 const settingsPath = (workspaceId: number | string, projectId: number) =>
@@ -91,6 +93,18 @@ export const settingsApi = {
       unwrap<void>(
         anet.delete<ApiResponse<void>>(
           `${settingsPath(workspaceId, projectId)}/models/${id}`,
+        ),
+      ),
+    test: (workspaceId: number | string, projectId: number, id: number | string) =>
+      unwrap<{ status: string; model?: string; latencyMs?: number }>(
+        anet.post<ApiResponse<{ status: string; model?: string; latencyMs?: number }>>(
+          `${settingsPath(workspaceId, projectId)}/models/${id}/test`,
+        ),
+      ),
+    testEmbedding: (workspaceId: number | string, projectId: number, id: number | string) =>
+      unwrap<{ status: string; model?: string; dimension?: number; latencyMs?: number }>(
+        anet.post<ApiResponse<{ status: string; model?: string; dimension?: number; latencyMs?: number }>>(
+          `${settingsPath(workspaceId, projectId)}/models/${id}/test-embedding`,
         ),
       ),
   },

@@ -62,14 +62,14 @@ const articles: HelpArticle[] = [
   {
     id: "start-here",
     category: "快速开始",
-    title: "从零开始完成第一次调研",
-    description: "了解从创建项目、上传资料到生成报告的完整工作流。",
+    title: "从零开始查看调研结果",
+    description: "了解从准备资料、查看运行到沉淀报告的完整工作流。",
     readTime: "3 分钟",
     icon: Sparkles,
     tags: ["入门", "工作流"],
     content: [
-      "Shinkou Insight 的核心流程是：准备知识库 → 创建调研 → 查看 Agent 过程 → 验证结论 → 沉淀报告。建议第一次使用时沿着项目概览页的快捷操作依次完成。",
-      "先在项目中上传 PDF、Markdown 或 TXT 资料。资料完成索引后，可以前往检索 Playground 验证召回结果，再创建一项调研任务。",
+      "Shinkou Insight 的核心流程是：准备知识库 → 查看调研运行 → 验证结论 → 沉淀报告。建议先从项目概览页查看当前项目状态。",
+      "先在项目中上传 PDF、Markdown 或 TXT 资料。资料完成索引后，可以前往检索 Playground 验证召回结果，再到 Agent 任务队列查看已有运行。",
       "调研完成后，报告会出现在报告页面。你可以编辑摘要、发布报告，并从报告中继续创建行动项。",
     ],
   },
@@ -90,14 +90,14 @@ const articles: HelpArticle[] = [
   {
     id: "agent-research",
     category: "Agent 调研",
-    title: "创建调研任务与查看运行过程",
-    description: "配置调研目标、控制 Agent 轮次，并理解任务状态。",
+    title: "查看调研任务与运行过程",
+    description: "理解 Agent 任务状态、运行过程和结果入口。",
     readTime: "5 分钟",
     icon: MessageCircle,
     tags: ["Agent", "任务队列"],
     content: [
-      "调研目标越具体，Agent 越容易判断需要检索哪些资料以及如何组织结论。建议在目标中写明对象、范围和最终需要回答的问题。",
-      "创建任务时可以选择是否允许联网和最大推理轮次。任务进入队列后，可在 Agent 任务队列查看状态与运行详情。",
+      "任务进入队列后，可在 Agent 任务队列查看状态与运行详情。运行记录会保留任务的处理进度和结果入口。",
+      "如果需要验证知识库效果，可以先在 Playground 中检查召回结果，再回到任务队列查看已有运行。",
       "运行中的任务会持续记录检索证据和关键事件。完成后可以从运行详情跳转到报告或继续追问。",
     ],
   },
@@ -273,13 +273,13 @@ function submitFeedback(value: "helpful" | "not-helpful") {
         <p>搜索产品指南、使用技巧和常见问题，快速找到下一步。</p>
         <label class="help-search">
           <Search :size="18" />
-          <input ref="searchInput" v-model="searchQuery" type="search" placeholder="搜索帮助主题，例如：如何创建调研…" aria-label="搜索帮助内容" />
+          <input ref="searchInput" v-model="searchQuery" type="search" placeholder="搜索帮助主题，例如：如何查看调研运行…" aria-label="搜索帮助内容" />
           <button v-if="searchQuery" class="help-search-clear" type="button" aria-label="清除搜索" @click="searchQuery = ''"><X :size="14" /></button>
           <kbd v-else>Ctrl K</kbd>
         </label>
         <div class="help-search-suggestions">
           <span>热门搜索</span>
-          <button v-for="term in ['上传资料', '创建调研', '成员权限']" :key="term" type="button" @click="searchQuery = term">{{ term }}</button>
+          <button v-for="term in ['上传资料', '查看调研运行', '成员权限']" :key="term" type="button" @click="searchQuery = term">{{ term }}</button>
         </div>
       </div>
       <div class="help-hero-visual" aria-hidden="true">

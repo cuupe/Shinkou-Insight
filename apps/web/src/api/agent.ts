@@ -42,6 +42,13 @@ export const agentApi = {
     );
   },
 
+  cancelRun: (workspaceId: number | string, projectId: number, runId: number | string) =>
+    unwrap<void>(
+      anet.post<ApiResponse<void>>(
+        `${projectPath(workspaceId, projectId)}/agent/runs/${runId}/cancel`,
+      ),
+    ),
+
   eventsUrl: (workspaceId: number | string, projectId: number, runId: number | string) =>
     `/api${projectPath(workspaceId, projectId)}/agent/runs/${runId}/events`,
 

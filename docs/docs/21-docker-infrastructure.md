@@ -1,6 +1,6 @@
 # Docker 基础设施
 
-前后端继续在宿主机运行，Docker 只管理基础设施：PostgreSQL、Redis、Neo4j 和 MinIO。
+前后端继续在宿主机运行，Docker 只管理基础设施：PostgreSQL、Milvus（含 etcd 和独立 MinIO）、Redis、Neo4j 和 MinIO 文件存储。
 
 ## 启动
 
@@ -13,13 +13,15 @@ docker compose ps
 宿主机端口：
 
 - PostgreSQL：`localhost:15432`
+- Milvus：`localhost:19530`
+- Milvus Web UI：`http://localhost:19091/webui/`
 - Redis：`localhost:16379`
 - Neo4j Browser：`http://localhost:7474`
 - Neo4j Bolt：`bolt://localhost:7687`
 - MinIO API：`http://localhost:9000`
 - MinIO Console：`http://localhost:9001`
 
-PostgreSQL 和 Redis 使用高位宿主端口，是为了避开开发机上已有的本地服务；容器内部仍使用标准端口。
+PostgreSQL、Milvus 和 Redis 使用高位宿主端口，是为了避开开发机上已有的本地服务；容器内部仍使用标准端口。
 
 ## 宿主机后端配置
 
@@ -39,4 +41,4 @@ docker compose stop
 docker compose start
 ```
 
-数据保存在 Docker named volumes 中。不要使用 `docker compose down -v`，除非确认要删除 PostgreSQL、Neo4j、Redis 和 MinIO 的全部数据。
+数据保存在 Docker named volumes 中。不要使用 `docker compose down -v`，除非确认要删除 PostgreSQL、Milvus、Neo4j、Redis 和 MinIO 的全部数据。

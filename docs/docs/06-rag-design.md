@@ -30,7 +30,7 @@ RAG 的任务不是替代模型，而是为模型提供可验证的项目资料�
 → Chunk 切分
 → Chunk 元数据
 → Embedding
-→ PostgreSQL + pgvector
+→ PostgreSQL Chunk 元数据 + Milvus 向量索引
 → 索引状态更新
 ```
 
@@ -101,14 +101,13 @@ class EmbeddingProvider(Protocol):
 
 ### 5.1 Vector Search
 
-使用余弦距离或与模型推荐一致的度量。
-
-SQL 必须包含：
+使用余弦距离或与模型推荐一致的度量。Milvus filter 必须包含：
 
 ```sql
-WHERE workspace_id = :workspaceId
-  AND project_id = :projectId
+workspace_id == :workspaceId and project_id == :projectId
 ```
+
+Milvus 只返回 `chunk_id` 和相似度；AI 服务使用 `chunk_id` 回查 PostgreSQL，补齐原文、文件名、页码和标题。这样向量库不会成为引用事实源。
 
 ### 5.2 Keyword Search
 

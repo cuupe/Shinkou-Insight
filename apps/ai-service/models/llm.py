@@ -1,0 +1,777 @@
+import json
+import time
+from collections.abc import Sequence
+from typing import Any, Protocol, TypeVar
+
+import httpx
+from pydantic import BaseModel, ValidationError
+
+from models.schemas import (
+    ModelChatResult,
+    ModelGenerationConfig,
+    TokenUsage,
+)
+
+T = TypeVar(
+    "T",
+    bound=BaseModel,
+)
+
+
+# =========================================================
+# Exceptions
+# =========================================================
+
+
+class ModelGatewayError(Exception):
+    """
+    所有模型错误的父类。
+    """
+
+    pass
+
+
+class ModelTimeoutError(ModelGatewayError):
+    """
+    模型请求超时。
+    """
+
+    pass
+
+
+class ModelAuthError(ModelGatewayError):
+    """
+    API Key 错误、没有权限等。
+    """
+
+    pass
+
+
+class ModelRateLimitError(ModelGatewayError):
+    """
+    请求太频繁或者额度限制。
+    """
+
+    pass
+
+
+class ModelServerError(ModelGatewayError):
+    """
+    模型供应商服务器错误。
+    """
+
+    pass
+
+
+class ModelRequestError(ModelGatewayError):
+    """
+    HTTP / 网络层错误。
+    """
+
+    pass
+
+
+class ModelResponseError(ModelGatewayError):
+    """
+    模型返回格式不符合预期。
+    """
+
+    pass
+
+
+# =========================================================
+# Interface
+# =========================================================
+
+
+class ModelGateway(Protocol):
+    """
+    业务层只依赖这个接口。
+    """
+
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float | None = None,
+    ) -> ModelChatResult: ...
+
+    async def structured(
+        self,
+        messages: list[dict[str, str]],
+        schema: type[T],
+        *,
+        temperature: float | None = None,
+    ) -> tuple[T, ModelChatResult]: ...
+
+
+class UnavailableModelGateway:
+    """进程级模型未配置时的显式占位实现。
+
+    项目级模型由 Java 从数据库解析后注入单次运行；未选择项目模型时才会触发这里。
+    """
+
+    async def chat(self, messages: list[dict[str, str]], *, temperature: float | None = None) -> ModelChatResult:
+        raise ModelGatewayError("no default LLM configured; select a project model configuration")
+
+
+    async def structured(
+        self,
+        messages: list[dict[str, str]],
+        schema: type[T],
+        *,
+        temperature: float | None = None,
+    ) -> tuple[T, ModelChatResult]:
+        raise ModelGatewayError("no default LLM configured; select a project model configuration")
+
+
+class LangChainModelGateway:
+    """LangChain adapter for OpenAI-compatible chat models.
+
+    The application depends on the small ``ModelGateway`` contract instead of
+    exposing LangChain runnables to every agent. This keeps provider details in
+    one place while still using LangChain's message conversion and structured
+    output support consistently.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        model: str,
+        timeout_seconds: float = 60,
+        max_retries: int = 2,
+        client: httpx.AsyncClient | None = None,
+        structured_output_method: str = "json_schema",
+        generation: ModelGenerationConfig | None = None,
+    ) -> None:
+        if not base_url:
+            raise ValueError("runtime model base URL is required")
+        if not api_key:
+            raise ValueError("runtime model API key is required")
+        if not model:
+            raise ValueError("runtime model id is required")
+        if structured_output_method not in {"json_schema", "function_calling", "json_mode"}:
+            raise ValueError("structured output method must be json_schema, function_calling, or json_mode")
+
+        try:
+            from langchain_openai import ChatOpenAI
+        except ImportError as exc:  # pragma: no cover - dependency is required in production
+            raise RuntimeError("langchain-openai is required for the LangChain model gateway") from exc
+
+        self.client = client or httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds))
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.model = model
+        self.timeout_seconds = timeout_seconds
+        self.max_retries = max_retries
+        self.structured_output_method = structured_output_method
+        self.generation = generation or ModelGenerationConfig()
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "api_key": api_key,
+            "base_url": self.base_url,
+            "timeout": timeout_seconds,
+            "max_retries": max_retries,
+        }
+        if client is not None:
+            kwargs["http_async_client"] = client
+        self._chat_model = ChatOpenAI(**kwargs)
+
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float | None = None,
+    ) -> ModelChatResult:
+        started_at = time.perf_counter()
+        try:
+            response = await self._chat_model.ainvoke(
+                _to_langchain_messages(messages),
+                **self._invoke_kwargs(temperature),
+            )
+        except Exception as exc:
+            raise _translate_langchain_error(exc) from exc
+        return _model_chat_result(
+            response,
+            fallback_model=self.model,
+            latency_ms=int((time.perf_counter() - started_at) * 1000),
+        )
+
+    async def structured(
+        self,
+        messages: list[dict[str, str]],
+        schema: type[T],
+        *,
+        temperature: float | None = None,
+    ) -> tuple[T, ModelChatResult]:
+        started_at = time.perf_counter()
+        runnable = self._chat_model.with_structured_output(
+            schema,
+            method=self.structured_output_method,
+            include_raw=True,
+        )
+        try:
+            response = await runnable.ainvoke(
+                _to_langchain_messages(messages),
+                **self._invoke_kwargs(temperature, run_name=f"shinkou.llm.structured.{schema.__name__}"),
+            )
+        except Exception as exc:
+            raise _translate_langchain_error(exc) from exc
+
+        if not isinstance(response, dict):
+            raise ModelResponseError("LangChain structured output returned an unexpected value")
+        parsing_error = response.get("parsing_error")
+        if parsing_error:
+            raise ModelResponseError(f"LLM structured output could not be parsed: {parsing_error}")
+        parsed = response.get("parsed")
+        if parsed is None:
+            raise ModelResponseError("LLM structured output is empty")
+        try:
+            value = parsed if isinstance(parsed, schema) else schema.model_validate(parsed)
+        except Exception as exc:
+            raise ModelResponseError(f"LLM structured output does not match {schema.__name__}") from exc
+
+        raw = response.get("raw")
+        if raw is None:
+            result = ModelChatResult(
+                content=json.dumps(value.model_dump(), ensure_ascii=False),
+                model=self.model,
+                latency_ms=int((time.perf_counter() - started_at) * 1000),
+            )
+        else:
+            result = _model_chat_result(
+                raw,
+                fallback_model=self.model,
+                latency_ms=int((time.perf_counter() - started_at) * 1000),
+            )
+        return value, result
+
+    def _invoke_kwargs(self, temperature: float | None, *, run_name: str = "shinkou.llm.chat") -> dict[str, Any]:
+        generation = self.generation
+        kwargs: dict[str, Any] = {
+            "temperature": generation.temperature if temperature is None else temperature,
+            "top_p": generation.top_p,
+            "max_tokens": generation.max_tokens,
+            "frequency_penalty": generation.frequency_penalty,
+            "presence_penalty": generation.presence_penalty,
+            "config": {"run_name": run_name},
+        }
+        if generation.seed is not None:
+            kwargs["seed"] = generation.seed
+        if generation.stop:
+            kwargs["stop"] = generation.stop
+        if generation.reasoning_effort and generation.reasoning_effort != "none":
+            kwargs["reasoning_effort"] = generation.reasoning_effort
+        extra_body = dict(generation.extra_body)
+        if generation.top_k is not None:
+            extra_body.setdefault("top_k", generation.top_k)
+        if extra_body:
+            kwargs["extra_body"] = extra_body
+        return kwargs
+
+
+def _to_langchain_messages(messages: Sequence[dict[str, str]]) -> list[Any]:
+    """Convert the transport-neutral message shape into LangChain messages."""
+
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+
+    converted: list[Any] = []
+    for message in messages:
+        role = message.get("role", "user")
+        content = message.get("content", "")
+        if role == "system":
+            converted.append(SystemMessage(content=content))
+        elif role == "assistant":
+            converted.append(AIMessage(content=content))
+        elif role == "tool":
+            converted.append(ToolMessage(content=content, tool_call_id=message.get("tool_call_id", "runtime")))
+        else:
+            converted.append(HumanMessage(content=content))
+    return converted
+
+
+def _message_content(message: Any) -> str:
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                value = block.get("text") or block.get("content")
+                if value:
+                    parts.append(str(value))
+        return "".join(parts)
+    return str(content or "")
+
+
+def _model_chat_result(message: Any, *, fallback_model: str, latency_ms: int) -> ModelChatResult:
+    """Normalize an AIMessage without leaking provider-specific metadata."""
+
+    response_metadata = getattr(message, "response_metadata", None) or {}
+    usage_metadata = getattr(message, "usage_metadata", None) or {}
+    token_usage = response_metadata.get("token_usage") or response_metadata.get("usage") or {}
+    input_tokens = int(usage_metadata.get("input_tokens", token_usage.get("prompt_tokens", 0)) or 0)
+    output_tokens = int(usage_metadata.get("output_tokens", token_usage.get("completion_tokens", 0)) or 0)
+    total_tokens = int(usage_metadata.get("total_tokens", token_usage.get("total_tokens", input_tokens + output_tokens)) or 0)
+    content = _message_content(message)
+    if not content.strip():
+        raise ModelResponseError("LLM returned empty content")
+    return ModelChatResult(
+        content=content,
+        model=str(response_metadata.get("model_name") or response_metadata.get("model") or fallback_model),
+        usage=TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens),
+        latency_ms=latency_ms,
+        request_id=(response_metadata.get("id") or response_metadata.get("request_id")),
+    )
+
+
+def _translate_langchain_error(error: Exception) -> ModelGatewayError:
+    """Map provider exceptions to the stable application error taxonomy."""
+
+    if isinstance(error, (TimeoutError, httpx.TimeoutException)):
+        return ModelTimeoutError("LLM request timed out")
+    status_code = getattr(error, "status_code", None)
+    if status_code is None:
+        response = getattr(error, "response", None)
+        status_code = getattr(response, "status_code", None)
+    if status_code in {401, 403}:
+        return ModelAuthError("LLM authentication failed")
+    if status_code == 429:
+        return ModelRateLimitError("LLM rate limit exceeded")
+    if isinstance(status_code, int) and status_code >= 500:
+        return ModelServerError(f"LLM provider server error (status={status_code})")
+    return ModelRequestError(f"LLM request failed: {type(error).__name__}")
+
+    async def structured(self, messages: list[dict[str, str]], schema: type[T], *, temperature: float | None = None) -> tuple[T, ModelChatResult]:
+        raise ModelGatewayError("no default LLM configured; select a project model configuration")
+
+
+# =========================================================
+# HTTP implementation
+# =========================================================
+
+
+class HttpModelGateway:
+    """
+    使用 OpenAI-compatible Chat Completions 风格 HTTP API。
+
+    即：
+
+    POST {base_url}/chat/completions
+
+    Request:
+
+    {
+        "model": "...",
+        "messages": [...],
+        "temperature": 0.2
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        base_url: str,
+        api_key: str,
+        model: str,
+        timeout_seconds: float = 60,
+        max_retries: int = 2,
+        generation: ModelGenerationConfig | None = None,
+    ):
+        if not base_url:
+            raise ValueError("runtime model base URL is required")
+
+        if not api_key:
+            raise ValueError("runtime model API key is required")
+
+        if not model:
+            raise ValueError("runtime model id is required")
+
+        self.client = client
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.model = model
+        self.timeout_seconds = timeout_seconds
+        self.max_retries = max_retries
+        self.generation = generation or ModelGenerationConfig()
+
+    # =====================================================
+    # 普通聊天
+    # =====================================================
+
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float | None = None,
+    ) -> ModelChatResult:
+
+        url = f"{self.base_url}" "/chat/completions"
+
+        headers = {
+            "Authorization": (f"Bearer {self.api_key}"),
+            "Content-Type": "application/json",
+        }
+
+        generation = self.generation
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": generation.temperature if temperature is None else temperature,
+            "top_p": generation.top_p,
+            "max_tokens": generation.max_tokens,
+            "frequency_penalty": generation.frequency_penalty,
+            "presence_penalty": generation.presence_penalty,
+        }
+        if generation.top_k is not None:
+            payload["top_k"] = generation.top_k
+        if generation.seed is not None:
+            payload["seed"] = generation.seed
+        if generation.stop:
+            payload["stop"] = generation.stop
+        if generation.reasoning_effort and generation.reasoning_effort != "none":
+            payload["reasoning_effort"] = generation.reasoning_effort
+        payload.update(generation.extra_body)
+
+        started_at = time.perf_counter()
+
+        try:
+            response = await self.client.post(
+                url,
+                headers=headers,
+                json=payload,
+            )
+
+        except httpx.TimeoutException as exc:
+
+            raise ModelTimeoutError("LLM request timed out") from exc
+
+        except httpx.RequestError as exc:
+
+            raise ModelRequestError(f"LLM network request failed: {exc}") from exc
+
+        latency_ms = int((time.perf_counter() - started_at) * 1000)
+
+        self._raise_for_status(response)
+
+        try:
+            data = response.json()
+
+        except ValueError as exc:
+
+            raise ModelResponseError("LLM response is not valid JSON") from exc
+
+        content = self._extract_content(data)
+
+        usage = self._extract_usage(data)
+
+        model_name = data.get(
+            "model",
+            self.model,
+        )
+
+        request_id = response.headers.get("x-request-id") or response.headers.get(
+            "request-id"
+        )
+
+        return ModelChatResult(
+            content=content,
+            model=model_name,
+            usage=usage,
+            latency_ms=latency_ms,
+            request_id=request_id,
+        )
+
+    # =====================================================
+    # JSON / Structured Output
+    # =====================================================
+
+    async def structured(
+        self,
+        messages: list[dict[str, str]],
+        schema: type[T],
+        *,
+        temperature: float | None = None,
+    ) -> tuple[T, ModelChatResult]:
+
+        schema_json = json.dumps(
+            schema.model_json_schema(),
+            ensure_ascii=False,
+        )
+
+        structure_instruction = {
+            "role": "system",
+            "content": (
+                "你必须只返回一个合法 JSON 对象。"
+                "不要返回 Markdown。"
+                "不要返回 ```json 代码块。"
+                "不要添加任何解释文字。"
+                "返回结果必须满足以下 JSON Schema：\n"
+                f"{schema_json}"
+            ),
+        }
+
+        structured_messages = [
+            structure_instruction,
+            *messages,
+        ]
+
+        result = await self.chat(
+            structured_messages,
+            temperature=temperature,
+        )
+
+        raw_content = result.content.strip()
+
+        cleaned_content = self._clean_json_text(raw_content)
+
+        try:
+            json_data = json.loads(cleaned_content)
+
+        except json.JSONDecodeError as exc:
+
+            raise ModelResponseError(
+                "Model did not return valid JSON. " f"Raw content: {raw_content[:500]}"
+            ) from exc
+
+        try:
+            parsed = schema.model_validate(json_data)
+
+        except ValidationError as exc:
+
+            raise ModelResponseError(
+                "Model JSON does not match schema. " f"Errors: {exc.errors()}"
+            ) from exc
+
+        return (
+            parsed,
+            result,
+        )
+
+    # =====================================================
+    # HTTP status
+    # =====================================================
+
+    def _raise_for_status(
+        self,
+        response: httpx.Response,
+    ) -> None:
+
+        status_code = response.status_code
+
+        if 200 <= status_code < 300:
+            return
+
+        body = response.text[:1000]
+
+        if status_code in {
+            401,
+            403,
+        }:
+            raise ModelAuthError(
+                "LLM authentication failed. "
+                f"status={status_code}, "
+                f"response={body}"
+            )
+
+        if status_code == 429:
+            raise ModelRateLimitError("LLM rate limit exceeded. " f"response={body}")
+
+        if status_code >= 500:
+            raise ModelServerError(
+                "LLM provider server error. "
+                f"status={status_code}, "
+                f"response={body}"
+            )
+
+        raise ModelRequestError(
+            "LLM request failed. " f"status={status_code}, " f"response={body}"
+        )
+
+    # =====================================================
+    # Content parser
+    # =====================================================
+
+    def _extract_content(
+        self,
+        data: dict[str, Any],
+    ) -> str:
+
+        try:
+            content = data["choices"][0]["message"]["content"]
+
+        except (
+            KeyError,
+            IndexError,
+            TypeError,
+        ) as exc:
+
+            raise ModelResponseError("Unexpected LLM response structure") from exc
+
+        if not isinstance(
+            content,
+            str,
+        ):
+            raise ModelResponseError("LLM content is not a string")
+
+        if not content.strip():
+            raise ModelResponseError("LLM returned empty content")
+
+        return content
+
+    # =====================================================
+    # Token parser
+    # =====================================================
+
+    def _extract_usage(
+        self,
+        data: dict[str, Any],
+    ) -> TokenUsage:
+
+        raw_usage = data.get("usage") or {}
+
+        input_tokens = int(
+            raw_usage.get(
+                "prompt_tokens",
+                raw_usage.get(
+                    "input_tokens",
+                    0,
+                ),
+            )
+            or 0
+        )
+
+        output_tokens = int(
+            raw_usage.get(
+                "completion_tokens",
+                raw_usage.get(
+                    "output_tokens",
+                    0,
+                ),
+            )
+            or 0
+        )
+
+        total_tokens = int(
+            raw_usage.get(
+                "total_tokens",
+                input_tokens + output_tokens,
+            )
+            or 0
+        )
+
+        return TokenUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+        )
+
+    # =====================================================
+    # JSON cleaner
+    # =====================================================
+
+    def _clean_json_text(
+        self,
+        text: str,
+    ) -> str:
+
+        text = text.strip()
+
+        if not text.startswith("```"):
+            return text
+
+        lines = text.splitlines()
+
+        if lines:
+            lines = lines[1:]
+
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+
+        return "\n".join(lines).strip()
+
+
+class MockModelGateway:
+    """Deterministic provider for local development and CI."""
+
+    model = "mock-agent"
+
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float | None = None,
+    ) -> ModelChatResult:
+        user_text = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+        content = f"基于当前项目证据处理：{user_text[:500]}"
+        return ModelChatResult(
+            content=content,
+            model=self.model,
+            usage=TokenUsage(input_tokens=len(str(messages)) // 4, output_tokens=len(content) // 2),
+            request_id="mock",
+        )
+
+    async def structured(
+        self,
+        messages: list[dict[str, str]],
+        schema: type[T],
+        *,
+        temperature: float | None = None,
+    ) -> tuple[T, ModelChatResult]:
+        from models.schemas import EvidenceEvaluation, Finding, PlanItem, ReportDraft, ReviewResult
+
+        goal = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "研究目标")
+        if schema is PlanItem:
+            value: Any = {"id": "Q1", "question": goal[:500], "source": "BOTH", "rationale": "先核对项目资料，再补充外部信息"}
+        elif schema is EvidenceEvaluation:
+            has_evidence = "证据数量=0" not in goal and "没有可用证据" not in goal
+            value = {"sufficient": has_evidence, "next_action": "ENOUGH" if has_evidence else "MORE_INTERNAL", "missing": [] if has_evidence else ["需要更多项目证据"], "conflicts": []}
+        elif schema is Finding:
+            value = {"id": "F1", "kind": "fact", "statement": "项目资料已提供与研究目标相关的可追溯证据。", "evidence_ids": ["E1"], "confidence": 0.72}
+        elif schema is ReportDraft:
+            value = {"title": "研究报告", "executive_summary": "以下结论仅基于已检索且可追溯的项目证据。", "sections": [{"heading": "结论", "content": "已完成证据整理。", "evidence_ids": ["E1"]}], "recommendations": ["对关键结论进行人工复核"], "limitations": ["当前结果受可用资料范围限制"], "evidence_ids": ["E1"]}
+        elif schema is ReviewResult:
+            value = {"approved": True, "issues": [], "missing_citations": [], "rewrite_instructions": []}
+        else:
+            value = {}
+        raw = ModelChatResult(content=json.dumps(value, ensure_ascii=False), model=self.model)
+        return schema.model_validate(value), raw
+
+
+def build_model_gateway(
+    *,
+    mode: str,
+    base_url: str | None,
+    api_key: str | None,
+    model: str | None,
+    timeout_seconds: float = 60,
+    max_retries: int = 2,
+    client: httpx.AsyncClient | None = None,
+    structured_output_method: str = "json_schema",
+    generation: ModelGenerationConfig | None = None,
+) -> ModelGateway:
+    """Build the configured model adapter used by HTTP and Agent execution."""
+
+    normalized_mode = mode.casefold()
+    if normalized_mode == "mock":
+        return MockModelGateway()
+    if normalized_mode not in {"http", "openai", "compatible", "langchain"}:
+        raise ValueError("LLM_MODE must be http, openai, compatible, langchain, or mock")
+    if not base_url or not api_key or not model:
+        return UnavailableModelGateway()
+    return LangChainModelGateway(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        timeout_seconds=timeout_seconds,
+        max_retries=max_retries,
+        client=client,
+        structured_output_method=structured_output_method,
+        generation=generation,
+    )

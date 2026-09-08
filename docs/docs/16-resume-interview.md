@@ -6,7 +6,7 @@
 
 ## 2. 一句话介绍
 
-基于 Spring Boot、Vue、FastAPI、PostgreSQL/pgvector 和 LangGraph 构建的多工作区企业知识调研平台，支持文档 RAG、工具调用、可恢复 Agent 工作流、引用溯源、实时执行轨迹和离线评估。
+基于 Spring Boot、Vue、FastAPI、PostgreSQL、Milvus 和 LangGraph 构建的多工作区企业知识调研平台，支持文档 RAG、工具调用、可恢复 Agent 工作流、引用溯源、实时执行轨迹和离线评估。
 
 ## 3. 简历项目描述示例
 
@@ -18,7 +18,7 @@
 
 ### 版本 B：AI Agent / 大模型应用岗位
 
-- 实现 PDF/Markdown/TXT 解析、结构化切片、Embedding、pgvector 向量检索、PostgreSQL 关键词检索、RRF 融合与可选 Rerank，支持可点击 Chunk 引用和资料不足拒答。
+- 实现 PDF/Markdown/TXT 解析、结构化切片、Embedding、Milvus 向量检索、PostgreSQL 关键词检索、RRF 融合与可选 Rerank，支持可点击 Chunk 引用和资料不足拒答。
 - 使用 LangGraph 编排计划、内部检索、证据评估、查询改写、外部搜索、报告生成和引用审核节点，通过最大轮次和工具白名单控制 Agent 成本与行为。
 - 建立 Prompt 版本、Pydantic 结构化输出和离线评估数据集，跟踪 Recall@K、引用正确率、JSON 成功率、Token、延迟和工具失败率。
 - 设计基于真实运行反馈的证据判定 QLoRA 实验，以 Prompt 优化模型为基线对比 Macro-F1 和冲突召回率；该模块作为后期增强而非 MVP 依赖。
@@ -59,10 +59,10 @@ RAG 负责从资料中找到真实证据；LangGraph 负责何时检索、是否
 - 资料不足时拒答。
 - 评估无证据事实率。
 
-### 4.6 为什么 pgvector
+### 4.6 为什么 Milvus
 
 ```text
-个人项目数据量和部署规模下，复用 PostgreSQL 能减少系统复杂度，同时保留向量、全文检索、事务和租户字段。只有规模和性能证明需要时再拆独立检索系统。
+将向量索引独立到 Milvus，可以让 PostgreSQL 专注事务、元数据、全文检索和审计；Milvus 负责 ANN、标量过滤和后续独立扩展。两边通过 PostgreSQL Chunk ID 关联，并在应用层做一致的租户过滤和 RRF 融合。
 ```
 
 ## 5. 可被追问的问题

@@ -20,7 +20,7 @@ Shinkou Insight 是由原 Shinkou“需求变更影响分析平台”重构而�
 
 - Spring Boot 企业业务控制面：认证、权限、工作区、项目、报告、审计。
 - Python Agent Runtime：RAG、模型适配、工具调用、LangGraph 工作流。
-- PostgreSQL + pgvector：业务数据、文档切片、向量检索、运行记录。
+- PostgreSQL + Milvus：PostgreSQL 保存业务数据、文档切片和运行记录，Milvus 保存向量索引。
 - Vue 3 工作台：知识库、检索测试、Agent 实时轨迹、证据和报告。
 - Prompt 工程：结构化输出、版本管理、离线评估、回归测试。
 - 可观测性：节点耗时、工具成功率、Token、成本、引用正确率。
@@ -59,7 +59,7 @@ Spring Boot / Spring Security / MyBatis-Plus
                     │
         ┌───────────┴───────────┐
         ▼                       ▼
-PostgreSQL + pgvector          Redis
+PostgreSQL + Milvus            Redis
         │
         ▼
 FastAPI / Pydantic / LangGraph / LangChain Core
@@ -99,7 +99,7 @@ Cookie 认证与多工作区权限
 调研项目管理
 PDF / Markdown / TXT 上传与解析
 文档切片和 Embedding
-pgvector 向量检索 + PostgreSQL 关键词检索
+Milvus 向量检索 + PostgreSQL 关键词检索
 普通 RAG 带引用回答
 LangGraph 多阶段调研工作流
 SSE 实时运行轨迹
@@ -118,7 +118,7 @@ MVP 明确不做：
 模型全量微调
 复杂审批流
 通用低代码 Agent 编排平台
-Elasticsearch、Milvus、pgvector 同时部署
+Elasticsearch、Milvus 同时部署
 ```
 
 ## 6. 开发原则

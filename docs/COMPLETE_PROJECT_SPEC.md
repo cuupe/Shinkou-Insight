@@ -26,7 +26,7 @@ Shinkou Insight 是由原 Shinkou“需求变更影响分析平台”重构而�
 
 - Spring Boot 企业业务控制面：认证、权限、工作区、项目、报告、审计。
 - Python Agent Runtime：RAG、模型适配、工具调用、LangGraph 工作流。
-- PostgreSQL + pgvector：业务数据、文档切片、向量检索、运行记录。
+- PostgreSQL + Milvus：PostgreSQL 保存业务数据、文档切片和运行记录，Milvus 保存向量索引。
 - Vue 3 工作台：知识库、检索测试、Agent 实时轨迹、证据和报告。
 - Prompt 工程：结构化输出、版本管理、离线评估、回归测试。
 - 可观测性：节点耗时、工具成功率、Token、成本、引用正确率。
@@ -65,7 +65,7 @@ Spring Boot / Spring Security / MyBatis-Plus
                     │
         ┌───────────┴───────────┐
         ▼                       ▼
-PostgreSQL + pgvector          Redis
+PostgreSQL + Milvus            Redis
         │
         ▼
 FastAPI / Pydantic / LangGraph / LangChain Core
@@ -105,7 +105,7 @@ Cookie 认证与多工作区权限
 调研项目管理
 PDF / Markdown / TXT 上传与解析
 文档切片和 Embedding
-pgvector 向量检索 + PostgreSQL 关键词检索
+Milvus 向量检索 + PostgreSQL 关键词检索
 普通 RAG 带引用回答
 LangGraph 多阶段调研工作流
 SSE 实时运行轨迹
@@ -124,7 +124,7 @@ MVP 明确不做：
 模型全量微调
 复杂审批流
 通用低代码 Agent 编排平台
-Elasticsearch、Milvus、pgvector 同时部署
+Elasticsearch、Milvus 同时部署
 ```
 
 ## 6. 开发原则
@@ -351,7 +351,6 @@ MVP：
 
 | 角色 | 权限 |
 |---|---|
-| `VIEWER` | 只读查看项目和报告 |
 | `AUDITOR` | 查看运行轨迹、引用、审计和模型版本 |
 
 ## 5. 核心业务概念
@@ -666,7 +665,7 @@ Agent 工作流可恢复、可取消、可观察
                 │                  │ internal HTTP
                 ▼                  ▼
 ┌────────────────────────┐   ┌─────────────────────────────┐
-│ PostgreSQL + pgvector  │   │ Python FastAPI AI Runtime   │
+│ PostgreSQL + Milvus    │   │ Python FastAPI AI Runtime   │
 │ Business + Chunks      │   │ Parser / RAG / LangGraph    │
 │ Runs + Evidence        │   │ Models / Tools / Evaluation │
 └───────────────┬────────┘   └──────────────┬──────────────┘
@@ -733,7 +732,7 @@ Prompt 渲染和结构化输出
 
 Python 不负责用户登录、工作区成员 CRUD 和普通后台分页。
 
-### 3.4 PostgreSQL + pgvector
+### 3.4 PostgreSQL + Milvus
 
 保存：
 
@@ -883,7 +882,10 @@ MVP Docker Compose：
 frontend
 backend
 ai-service
-postgres-pgvector
+postgres
+milvus-etcd
+milvus-minio
+milvus
 redis
 ```
 
@@ -899,7 +901,7 @@ redis
 
 | 决策 | 选择 | 原因 |
 |---|---|---|
-| 向量数据库 | pgvector | 复用 PostgreSQL，个人项目部署简单 |
+| 向量数据库 | Milvus | 向量索引与业务事务解耦，支持标量过滤和独立扩展 |
 | Agent 编排 | LangGraph | 需要分支、循环、状态、Streaming 和恢复 |
 | LangChain | 只用 Core/适配组件 | 避免业务被黑盒 Chain 绑定 |
 | 外部 API 入口 | Spring Boot | 保留传统后端优势和安全控制 |
@@ -1128,13 +1130,13 @@ HumanFeedback
 
 ## 13. 权限矩阵
 
-| 操作 | OWNER | ADMIN | MEMBER | VIEWER |
-|---|:---:|:---:|:---:|:---:|
-| 查看项目 | 是 | 是 | 是 | 是 |
-| 上传资产 | 是 | 是 | 是 | 否 |
-| 删除资产 | 是 | 是 | 自己上传可选 | 否 |
-| 发起 Run | 是 | 是 | 是 | 否 |
-| 查看全部 Run | 是 | 是 | 可查看项目内 | 可选 |
+| 操作 | OWNER | ADMIN | MEMBER |
+|---|:---:|:---:|:---:|
+| 查看项目 | 是 | 是 | 是 |
+| 上传资产 | 是 | 是 | 是 |
+| 删除资产 | 是 | 是 | 自己上传可选 |
+| 发起 Run | 是 | 是 | 是 |
+| 查看全部 Run | 是 | 是 | 可查看项目内 |
 | 修改模型配置 | 是 | 可选 | 否 | 否 |
 | 邀请成员 | 是 | 是 | 否 | 否 |
 | 导出报告 | 是 | 是 | 是 | 是 |
@@ -1148,7 +1150,7 @@ HumanFeedback
 ## 1. 设计原则
 
 - PostgreSQL 保存业务数据和 AI 运行数据。
-- pgvector 保存 Embedding。
+- Milvus 保存 Embedding；PostgreSQL 只保存 Chunk 原文、元数据和关键词检索索引。
 - 所有项目级表包含 `workspace_id` 和 `project_id`。
 - 核心业务使用外键；高频 Trace 表可根据清理策略决定是否使用强外键。
 - JSONB 只保存可变结构，不替代核心关系字段。
@@ -1157,7 +1159,6 @@ HumanFeedback
 ## 2. 扩展
 
 ```sql
-CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 ```
 
@@ -1243,7 +1244,6 @@ CREATE TABLE document_chunks (
     end_offset INTEGER,
     token_count INTEGER,
 
-    embedding VECTOR(1024),
     metadata JSONB,
     checksum VARCHAR(128),
 
@@ -1265,9 +1265,7 @@ ON document_chunks(asset_id);
 CREATE INDEX idx_chunks_fts
 ON document_chunks USING GIN(content_tsv);
 
--- 数据量达到需要近似检索后再创建
-CREATE INDEX idx_chunks_embedding_hnsw
-ON document_chunks USING hnsw (embedding vector_cosine_ops);
+-- 向量字段和 ANN 索引由 Milvus collection 管理。
 ```
 
 开发早期数据量少时可以先使用精确检索，避免过早调参。
@@ -1959,7 +1957,7 @@ RAG 的任务不是替代模型，而是为模型提供可验证的项目资料�
 → Chunk 切分
 → Chunk 元数据
 → Embedding
-→ PostgreSQL + pgvector
+→ PostgreSQL Chunk 元数据 + Milvus 向量索引
 → 索引状态更新
 ```
 
@@ -3599,9 +3597,9 @@ FinalReportPayload
 
 ## 6. PostgreSQL 集成测试
 
-使用带 pgvector 的 Testcontainer，验证：
+使用 PostgreSQL 和 Milvus Testcontainer/Compose 依赖，验证：
 
-- 向量列读写。
+- Milvus 向量写入和相似度召回。
 - 租户过滤。
 - 全文检索。
 - Hybrid 候选合并。
@@ -3703,7 +3701,7 @@ Node.js 20+
 Java 21
 Maven 3.9+
 Python 3.11+
-PostgreSQL 16 + pgvector
+PostgreSQL 16 + Milvus 2.4.x
 Redis 7
 Docker / Docker Compose
 ```
@@ -3781,13 +3779,12 @@ AI_SERVICE_BASE_URL
 INTERNAL_SERVICE_TOKEN
 FILE_STORAGE_ROOT
 MAX_UPLOAD_SIZE_MB
-LLM_PROVIDER
-LLM_MODEL
-LLM_API_KEY
+# LLM provider endpoint, model id and API keys are configured in the web UI.
+LLM_MODE
 EMBEDDING_MODEL
 EMBEDDING_DIMENSION
 RERANKER_MODEL
-WEB_SEARCH_API_KEY
+# Web search API keys are configured in project settings.
 OTEL_EXPORTER_ENDPOINT
 ```
 
@@ -3952,7 +3949,7 @@ feature branch
 ## Phase 2：RAG 检索
 
 - Embedding Provider。
-- pgvector。
+- Milvus collection 和向量索引。
 - Keyword Search。
 - Hybrid Fusion。
 - Retrieval Playground。
@@ -4040,7 +4037,7 @@ feature branch
 
 ## 2. 一句话介绍
 
-基于 Spring Boot、Vue、FastAPI、PostgreSQL/pgvector 和 LangGraph 构建的多工作区企业知识调研平台，支持文档 RAG、工具调用、可恢复 Agent 工作流、引用溯源、实时执行轨迹和离线评估。
+基于 Spring Boot、Vue、FastAPI、PostgreSQL、Milvus 和 LangGraph 构建的多工作区企业知识调研平台，支持文档 RAG、工具调用、可恢复 Agent 工作流、引用溯源、实时执行轨迹和离线评估。
 
 ## 3. 简历项目描述示例
 
@@ -4052,7 +4049,7 @@ feature branch
 
 ### 版本 B：AI Agent / 大模型应用岗位
 
-- 实现 PDF/Markdown/TXT 解析、结构化切片、Embedding、pgvector 向量检索、PostgreSQL 关键词检索、RRF 融合与可选 Rerank，支持可点击 Chunk 引用和资料不足拒答。
+- 实现 PDF/Markdown/TXT 解析、结构化切片、Embedding、Milvus 向量检索、PostgreSQL 关键词检索、RRF 融合与可选 Rerank，支持可点击 Chunk 引用和资料不足拒答。
 - 使用 LangGraph 编排计划、内部检索、证据评估、查询改写、外部搜索、报告生成和引用审核节点，通过最大轮次和工具白名单控制 Agent 成本与行为。
 - 建立 Prompt 版本、Pydantic 结构化输出和离线评估数据集，跟踪 Recall@K、引用正确率、JSON 成功率、Token、延迟和工具失败率。
 - 设计基于真实运行反馈的证据判定 QLoRA 实验，以 Prompt 优化模型为基线对比 Macro-F1 和冲突召回率；该模块作为后期增强而非 MVP 依赖。
@@ -4093,10 +4090,10 @@ RAG 负责从资料中找到真实证据；LangGraph 负责何时检索、是否
 - 资料不足时拒答。
 - 评估无证据事实率。
 
-### 4.6 为什么 pgvector
+### 4.6 为什么 Milvus
 
 ```text
-个人项目数据量和部署规模下，复用 PostgreSQL 能减少系统复杂度，同时保留向量、全文检索、事务和租户字段。只有规模和性能证明需要时再拆独立检索系统。
+将向量索引独立到 Milvus，可以让 PostgreSQL 专注事务、元数据、全文检索和审计；Milvus 负责 ANN、标量过滤和后续独立扩展。两边通过 PostgreSQL Chunk ID 关联，并在应用层做一致的租户过滤和 RRF 融合。
 ```
 
 ## 5. 可被追问的问题
@@ -4312,7 +4309,7 @@ Architecture Diagram
 
 | Issue | 优先级 | 估时 |
 |---|---|---:|
-| pgvector setup | P0 | 0.5d |
+| Milvus setup | P0 | 0.5d |
 | Embedding Provider | P0 | 1d |
 | Batch indexing | P0 | 1.5d |
 | Vector search | P0 | 1d |

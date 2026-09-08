@@ -98,7 +98,7 @@ const { mobileOpen } = useWorkspace();
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  padding: 2.375rem clamp(1.25rem, 3vw, 2.625rem) 4.375rem;
+  padding: 1.25rem clamp(1rem, 2vw, 2rem) 2rem;
 }
 
 @media (max-width: 47.5rem) {
@@ -116,9 +116,10 @@ const { mobileOpen } = useWorkspace();
   .page-content {
     height: 100%;
     overflow: hidden;
-    padding: 1.5625rem 1rem 2.8125rem;
+    padding: 1rem 0.75rem 1.5rem;
   }
 }
+
 </style>
 <style>
 @media (max-width: 68.75rem) {
@@ -130,7 +131,7 @@ const { mobileOpen } = useWorkspace();
     padding: 0 1.4375rem;
   }
   .page-content {
-    padding: 1.875rem 1.5625rem 3.4375rem;
+    padding: 1.25rem 1.25rem 2rem;
   }
   .research-workspace {
     grid-template-columns: 1fr 1fr;
@@ -172,7 +173,7 @@ const { mobileOpen } = useWorkspace();
   grid-template-columns: repeat(2, 1fr);
 }
 .stat-card {
-  padding: 1rem;
+  padding: 0.875rem 1rem;
 }
 .stat-card > strong {
   font-size: 1.375rem;
@@ -552,6 +553,108 @@ const { mobileOpen } = useWorkspace();
 </style>
 
 <style>
+/* Workspace density -----------------------------------------------------
+   Keep the first viewport focused on the actual work. These shared rules
+   tighten repeated card and list patterns without changing control targets. */
+.app-shell .panel-heading {
+  padding: 1.125rem 1.25rem 0.875rem !important;
+}
+
+.app-shell .table-row {
+  min-height: 3.25rem !important;
+  gap: 0.75rem;
+  padding-inline: 1.25rem !important;
+}
+
+.app-shell .stat-card,
+.app-shell .metric-card,
+.app-shell .action-card,
+.app-shell .report-metric,
+.app-shell .queue-summary-card,
+.app-shell .notifications-summary-card,
+.app-shell .health-card {
+  padding: 0.875rem 1rem !important;
+}
+
+.app-shell .project-card {
+  height: 11.75rem !important;
+  padding: 1.125rem !important;
+}
+
+.app-shell .model-form-section,
+.app-shell .connector-form-section {
+  padding: 0.875rem !important;
+}
+
+.app-shell .queue-table-row {
+  min-height: 4rem !important;
+}
+
+.app-shell .queue-table,
+.app-shell .notifications-feed-item {
+  padding-inline: 1rem !important;
+}
+
+.app-shell .notifications-summary-card {
+  min-height: 6rem !important;
+}
+
+.app-shell .help-featured-card {
+  min-height: 8.75rem !important;
+  padding: 0.875rem !important;
+}
+
+.app-shell .help-category-panel {
+  padding: 0.75rem !important;
+}
+
+.app-shell .help-articles-heading,
+.app-shell .help-faq-panel .help-section-heading {
+  padding: 0.875rem 1rem 0.75rem !important;
+}
+
+.app-shell .help-article-list,
+.app-shell .help-faq-list {
+  padding-inline: 1rem !important;
+}
+
+.app-shell .help-article-row,
+.app-shell .help-faq-item button {
+  padding-block: 0.625rem !important;
+}
+
+.app-shell .help-shortcut-card {
+  padding: 0.625rem !important;
+}
+
+.app-shell .reader-toolbar {
+  padding: 0.75rem 1.25rem !important;
+}
+
+.app-shell .markdown-body {
+  padding: 1.75rem 2.5rem 2rem !important;
+}
+
+@media (max-width: 47.5rem) {
+  .app-shell .panel-heading {
+    padding-inline: 1rem !important;
+  }
+
+  .app-shell .table-row {
+    padding-inline: 1rem !important;
+  }
+
+  .app-shell .project-card {
+    height: auto !important;
+    min-height: 10.75rem !important;
+    padding: 1rem !important;
+  }
+
+  .app-shell .markdown-body {
+    padding: 1.25rem 1rem 1.75rem !important;
+  }
+}
+
 /* The viewport belongs to the shell. Every page-level child owns its own
    overflow so a long table or reader cannot move the navigation with it. */
 .app-shell,
@@ -567,12 +670,12 @@ const { mobileOpen } = useWorkspace();
 .page-content {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.75rem;
 }
 
 .page-content:has(> .agent-page) {
   gap: 0;
-  padding: 1rem clamp(0.75rem, 1.25vw, 1.125rem) 0.75rem;
+  padding: 0.75rem clamp(0.625rem, 1vw, 1rem) 0.625rem;
 }
 
 .page-content > * {
@@ -624,6 +727,16 @@ const { mobileOpen } = useWorkspace();
 }
 
 .app-shell .page-content:has(> .dashboard-grid) > * {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+/* 项目概览页按内容自然展开，由整页承载滚动，避免卡片内容被压缩 */
+.app-shell .page-content:has(> .project-statistics-panel) {
+  overflow-y: auto;
+}
+
+.app-shell .page-content:has(> .project-statistics-panel) > * {
   flex: 0 0 auto;
   overflow: visible;
 }
@@ -1100,12 +1213,12 @@ const { mobileOpen } = useWorkspace();
 
 @media (max-width: 47.5rem) {
   .page-content {
-    gap: 0.75rem;
+    gap: 0.625rem;
   }
 
   .page-content:has(> .agent-page) {
     gap: 0;
-    padding: 0.625rem 0.625rem 0.5rem;
+    padding: 0.5rem 0.5rem 0.375rem;
   }
 
   .page-content > .agent-workspace,

@@ -1,7 +1,6 @@
 package com.cuupe.backend.modules.agent.mapper;
 
 import com.cuupe.backend.modules.agent.entity.AgentAttachment;
-import com.cuupe.backend.modules.agent.entity.AgentChunk;
 import com.cuupe.backend.modules.agent.entity.AgentMessage;
 import com.cuupe.backend.modules.agent.entity.AgentRun;
 import com.cuupe.backend.modules.agent.entity.AgentRunEvent;
@@ -25,7 +24,6 @@ public interface AgentMapper {
     int updateRun(@Param("id") Long id, @Param("status") String status, @Param("errorMessage") String errorMessage);
     int insertEvent(AgentRunEvent event);
     List<AgentRunEvent> findEvents(@Param("runKey") String runKey, @Param("afterId") Long afterId);
-    List<AgentChunk> findProjectChunks(@Param("workspaceId") Long workspaceId, @Param("projectId") Long projectId, @Param("userId") Long userId);
     int insertAttachment(AgentAttachment attachment);
     boolean hasAttachmentAccess(@Param("id") Long id, @Param("workspaceId") Long workspaceId, @Param("projectId") Long projectId, @Param("userId") Long userId);
     AgentAttachment findAttachment(@Param("id") Long id, @Param("workspaceId") Long workspaceId, @Param("projectId") Long projectId, @Param("userId") Long userId);

@@ -8,12 +8,14 @@ import type {
   AgentEvent,
   AgentMedia,
   AgentMessage,
+  AgentRunConfig,
   AgentRunAccepted,
   AgentStreamEvent,
   AgentThreadSummary,
 } from "@/api/types";
 
 type AgentRunCallbacks = {
+  onAccepted?: (runId: string | number) => void;
   onEvent: (event: AgentEvent) => void;
   onDelta: (messageId: string, delta: string) => void;
   onCitation: (citation: AgentCitation) => void;
@@ -30,6 +32,7 @@ type AgentTransport = {
     messageId: string;
     content: string;
     attachments?: AgentAttachment[];
+    config?: AgentRunConfig;
   }, callbacks: AgentRunCallbacks) => Promise<AgentRunAccepted>;
 };
 
@@ -69,8 +72,10 @@ function createHttpTransport(): AgentTransport {
         threadId: context.threadId,
         messageId: context.messageId,
         content: context.content,
+        ...(context.config || {}),
         attachments: context.attachments?.map(({ url, previewUrl, file, ...attachment }) => attachment),
       });
+      callbacks.onAccepted?.(accepted.runId);
       const eventSource = new EventSource(
         accepted.eventsUrl || agentApi.eventsUrl(context.workspaceId, context.projectId, accepted.runId),
         { withCredentials: true },
@@ -183,7 +188,7 @@ export function useAgentWorkspace() {
     else current.push(nextEvent);
   }
 
-  async function sendMessage(value = draft.value, attachments: AgentAttachment[] = []) {
+  async function sendMessage(value = draft.value, attachments: AgentAttachment[] = [], config?: AgentRunConfig) {
     const content = value.trim();
     if (!content || isRunning.value) {
       if (!content) composerError.value = "先输入你希望 Agent 处理的问题";
@@ -240,8 +245,12 @@ export function useAgentWorkspace() {
           messageId,
           content,
           attachments,
+          config,
         },
         {
+          onAccepted: (acceptedRunId) => {
+            if (token === activeRunToken) thread.runId = String(acceptedRunId);
+          },
           onEvent: (event) => {
             if (token === activeRunToken) {
               updateEvent(event);
@@ -307,9 +316,18 @@ export function useAgentWorkspace() {
     }
   }
 
-  function stopRun() {
+  async function stopRun() {
     if (!isRunning.value) return;
     cancelling.value = true;
+    if (activeThread.value.runId) {
+      try {
+        await agentApi.cancelRun(workspaceId.value, projectId.value, activeThread.value.runId);
+      } catch (error) {
+        cancelling.value = false;
+        composerError.value = error instanceof Error ? error.message : "Agent 运行取消失败";
+        return;
+      }
+    }
     activeRunToken += 1;
     activeThread.value.status = "completed";
     if (activeThread.value.queueTaskId) pauseTask(activeThread.value.queueTaskId);

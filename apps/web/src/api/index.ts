@@ -17,6 +17,7 @@ import { workspaceApi } from "./workspace";
 import { settingsApi } from "./settings";
 import { notificationsApi } from "./notifications";
 import { statisticsApi } from "./statistics";
+import { securityApi } from "./security";
 
 export * from "./core";
 export * from "./types";
@@ -35,4 +36,5 @@ export const api = {
   settings: settingsApi,
   notifications: notificationsApi,
   statistics: statisticsApi,
+  security: securityApi,
 };

@@ -1,12 +1,15 @@
 package com.cuupe.backend.config.security;
 
 import com.cuupe.backend.common.Result;
+import com.cuupe.backend.modules.audit.service.AuditLogService;
+import com.cuupe.backend.modules.user.security.UserLoginByPassword;
 import tools.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,6 +28,9 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.core.session.SessionRegistry;
+import org.springframework.security.core.session.SessionRegistryImpl;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -36,9 +42,58 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 @RequiredArgsConstructor
 public class SecurityConfig {
     private final ObjectMapper objectMapper;
+    private final AuditLogService auditLogService;
+    private final SessionRegistry sessionRegistry;
+    private final AuthSecurityProperties authSecurityProperties;
 
-    @Value("${shinkou.security.allowed-origins:http://localhost:4173,http://127.0.0.1:4173}")
+    @Value("${shinkou.security.allowed-origins:http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:4173,http://127.0.0.1:4173,http://localhost:4174,http://127.0.0.1:4174,http://localhost:4175,http://127.0.0.1:4175}")
     private String allowedOrigins;
+
+    @Value("${shinkou.security.environment:development}")
+    private String environment;
+
+    @Value("${server.servlet.session.cookie.secure:false}")
+    private boolean secureCookies;
+
+    @Value("${shinkou.ai.internal-api-key:}")
+    private String internalApiKey;
+
+    @Value("${spring.datasource.password:}")
+    private String databasePassword;
+
+    @Value("${spring.data.redis.password:}")
+    private String redisPassword;
+
+    @Value("${shinkou.storage.minio.secret-key:}")
+    private String minioSecretKey;
+
+    @Value("${shinkou.graph.neo4j.password:}")
+    private String graphPassword;
+
+    @PostConstruct
+    void validateProductionConfiguration() {
+        if (!"production".equalsIgnoreCase(environment)) return;
+        if (!secureCookies) {
+            throw new IllegalStateException("生产环境必须启用 Secure 会话 Cookie");
+        }
+        if (internalApiKey == null || internalApiKey.isBlank() || "local-dev-key".equals(internalApiKey)) {
+            throw new IllegalStateException("生产环境必须配置非默认的 AI 内部 API 密钥");
+        }
+        if (isDevelopmentSecret(databasePassword, "shinkou_dev_password")
+                || isDevelopmentSecret(redisPassword, "shinkou_redis_password")
+                || isDevelopmentSecret(minioSecretKey, "shinkou_minio_password")
+                || isDevelopmentSecret(graphPassword, "shinkou_graph_password")) {
+            throw new IllegalStateException("生产环境不能使用默认基础设施密码");
+        }
+        if (allowedOrigins.contains("localhost") || allowedOrigins.contains("127.0.0.1")
+                || allowedOrigins.contains("*")) {
+            throw new IllegalStateException("生产环境不能允许本地开发 Origin 或通配 Origin");
+        }
+    }
+
+    private boolean isDevelopmentSecret(String value, String developmentValue) {
+        return value == null || value.isBlank() || developmentValue.equals(value);
+    }
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
@@ -66,12 +121,18 @@ public class SecurityConfig {
     ) throws Exception {
         CookieCsrfTokenRepository csrfTokenRepository =
                 CookieCsrfTokenRepository.withHttpOnlyFalse();
+        csrfTokenRepository.setCookieCustomizer(cookie -> cookie
+                .path("/")
+                .httpOnly(false)
+                .sameSite("Lax")
+                .secure(secureCookies));
 
         http
                 .cors(Customizer.withDefaults())
                 // SPA 前端通过 XSRF-TOKEN Cookie + X-XSRF-TOKEN 请求头提交 CSRF token。
                 .csrf(csrf -> csrf
                         .csrfTokenRepository(csrfTokenRepository)
+                        .ignoringRequestMatchers("/internal/ai/**")
                         .spa())
                 .securityContext(
                         sc -> sc.securityContextRepository(securityContextRepository()))
@@ -80,8 +141,16 @@ public class SecurityConfig {
                                 SessionCreationPolicy.IF_REQUIRED
                         ).sessionFixation(sessionFixation ->
                                 sessionFixation.migrateSession()
-                        )
+                        ).maximumSessions(authSecurityProperties.getMaxActiveSessionsPerUser())
+                        .maxSessionsPreventsLogin(false)
+                        .sessionRegistry(sessionRegistry)
                 )
+                .headers(headers -> headers
+                        .frameOptions(frame -> frame.deny())
+                        .contentTypeOptions(Customizer.withDefaults())
+                        .cacheControl(Customizer.withDefaults())
+                        .referrerPolicy(referrer -> referrer.policy(
+                                ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN)))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers(
@@ -89,8 +158,10 @@ public class SecurityConfig {
                                 "/auth/csrf",
                                 "/auth/login/*",
                                 "/auth/register",
-                                "/auth/sms"
+                                "/auth/sms",
+                                "/auth/password/reset"
                         ).permitAll()
+                        .requestMatchers("/internal/ai/**").permitAll()
                         .anyRequest()
                         .authenticated()
                 )
@@ -123,12 +194,15 @@ public class SecurityConfig {
                         .invalidateHttpSession(true)
                         .clearAuthentication(true)
                         .deleteCookies("JSESSIONID", "XSRF-TOKEN")
-                        .logoutSuccessHandler((request, response, authentication) ->
-                                writeSuccess(
-                                        response,
-                                        "登出成功"
-                                )
-                        )
+                        .logoutSuccessHandler((request, response, authentication) -> {
+                            if (authentication != null && authentication.getPrincipal() instanceof UserLoginByPassword user) {
+                                if (request.getSession(false) != null) {
+                                    sessionRegistry.removeSessionInformation(request.getSession(false).getId());
+                                }
+                                auditLogService.record(null, null, user.getId(), "LOGOUT_SUCCEEDED", "AUTH", user.getId());
+                            }
+                            writeSuccess(response, "登出成功");
+                        })
                 );
 
         return http.build();
@@ -183,5 +257,10 @@ public class SecurityConfig {
     @Bean
     public SecurityContextRepository securityContextRepository() {
         return new HttpSessionSecurityContextRepository();
+    }
+
+    @Bean
+    public SessionRegistry sessionRegistry() {
+        return new SessionRegistryImpl();
     }
 }

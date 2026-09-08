@@ -13,6 +13,9 @@
         JOIN workspace_members wm ON wm.workspace_id = p.workspace_id AND wm.user_id = #{userId} AND wm.status = 'ACTIVE'
         WHERE p.id = #{projectId} AND p.workspace_id = #{workspaceId} AND p.status &lt;&gt; 'DELETED' AND (p.visibility = 'WORKSPACE' OR p.created_by = #{userId})
     </select>
+    <select id="findCreatorId" resultType="long">
+        SELECT created_by FROM projects WHERE id=#{projectId} AND status &lt;&gt; 'DELETED'
+    </select>
     <select id="hasWriteAccess" resultType="boolean">
         SELECT EXISTS (SELECT 1 FROM projects p JOIN workspace_members wm ON wm.workspace_id=p.workspace_id
         WHERE p.id=#{projectId} AND p.workspace_id=#{workspaceId} AND wm.user_id=#{userId} AND wm.status='ACTIVE'

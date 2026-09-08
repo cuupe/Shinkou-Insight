@@ -40,9 +40,14 @@ import RecoveryDialog from "@/components/auth/RecoveryDialog.vue";
 import SubmitButton from "@/components/auth/SubmitButton.vue";
 import { useAuth } from "@/composables/useAuth";
 import { useSmsCode } from "@/composables/useSmsCode";
-import { ApiError, api, getApiErrorMessage } from "@/api";
+import { ApiError, api } from "@/api";
+import { getAuthFeedback } from "@/utils/authFeedback";
 import { useRouter } from "vue-router";
-type Status = { type: "success" | "error" | "info"; message: string };
+type Status = {
+  type: "success" | "error" | "info";
+  title: string;
+  message: string;
+};
 const router = useRouter();
 const { isPhone, isCode, isCaptcha } = useAuth();
 const rememberedPhone = localStorage.getItem("shinkou-login-phone") || "";
@@ -103,7 +108,14 @@ async function submit() {
   if (!captchaId.value) next.captcha = "图片验证码已过期，请点击图片刷新";
   if (!agreed.value) next.agreement = "请先同意用户协议和隐私政策";
   errors.value = next;
-  if (Object.keys(next).length) return;
+  if (Object.keys(next).length) {
+    status.value = {
+      type: "error",
+      title: "请检查表单",
+      message: "还有信息未填写正确，请根据字段下方的红色提示修改后再提交。",
+    };
+    return;
+  }
   isSubmitting.value = true;
 
   try {
@@ -130,6 +142,7 @@ async function submit() {
     else localStorage.removeItem("shinkou-login-phone");
     status.value = {
       type: "success",
+      title: "登录成功",
       message: "登录成功，正在为你打开工作台…",
     };
 
@@ -145,23 +158,33 @@ async function submit() {
       if (navigationFailure) {
         status.value = {
           type: "error",
+          title: "工作台打开失败",
           message: "登录成功，但工作台打开失败，请刷新页面后重试。",
         };
       }
     } catch {
       status.value = {
         type: "error",
+        title: "工作台打开失败",
         message: "登录成功，但工作台打开失败，请刷新页面后重试。",
       };
     }
   } catch (error) {
-    if (error instanceof ApiError && error.code === "SMS_CODE_INVALID") {
+    const feedback = getAuthFeedback(
+      error,
+      loginMode.value === "password" ? "login-password" : "login-sms",
+      "登录失败，请稍后重试。",
+    );
+    if (feedback.markSmsExpired) {
       markSmsExpired();
       smsCode.value = "";
     }
+    // 接口错误统一展示在顶部提示，避免与字段下方重复显示同一条文案。
+    errors.value = {};
     status.value = {
       type: "error",
-      message: getApiErrorMessage(error, "登录失败，请稍后重试。"),
+      title: feedback.title,
+      message: feedback.message,
     };
   } finally {
     isSubmitting.value = false;
@@ -173,25 +196,32 @@ async function sendSms() {
     errors.value = { phone: "请输入正确的 11 位手机号" };
     return;
   }
+  status.value = null;
   smsSending.value = true;
   try {
     const response = await api.auth.sms({
       phoneNumber: phone.value.trim(),
       purpose: "LOGIN",
+      captchaId: captchaId.value,
+      captcha: captcha.value,
     });
     if (!response.smsId) {
       throw new ApiError("短信验证码发送失败，请稍后重试。", "SMS_ID_MISSING");
     }
     smsCode.value = "";
     startSmsCode(response.smsId);
-    status.value = { type: "info", message: "短信验证码已发送" };
   } catch (error) {
+    const feedback = getAuthFeedback(
+      error,
+      "send-sms",
+      "验证码发送失败，请刷新页面后重试。",
+    );
+    // 发送验证码失败时只保留顶部提示，避免同一错误在手机号字段下再次出现。
+    errors.value = {};
     status.value = {
       type: "error",
-      message: getApiErrorMessage(
-        error,
-        "验证码发送失败，请刷新页面后重试。",
-      ),
+      title: feedback.title,
+      message: feedback.message,
     };
   } finally {
     smsSending.value = false;
@@ -214,11 +244,13 @@ function openAgreement(type: "terms" | "privacy") {
       ><Alert
         v-if="status"
         class="mb-5"
+        role="alert"
+        aria-live="polite"
         :variant="status.type === 'error' ? 'destructive' : 'default'"
         ><CheckCircle2Icon
           v-if="status.type === 'success'"
         /><MessageCircleMoreIcon v-else /><AlertTitle>{{
-          status.type === "success" ? "操作成功" : "提示"
+          status.title
         }}</AlertTitle
         ><AlertDescription>{{ status.message }}</AlertDescription></Alert
       ><Tabs v-model="loginMode"

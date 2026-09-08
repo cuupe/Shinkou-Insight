@@ -29,8 +29,8 @@ Agent 工作流可恢复、可取消、可观察
                 │                  │ internal HTTP
                 ▼                  ▼
 ┌────────────────────────┐   ┌─────────────────────────────┐
-│ PostgreSQL + pgvector  │   │ Python FastAPI AI Runtime   │
-│ Business + Chunks      │   │ Parser / RAG / LangGraph    │
+│ PostgreSQL             │   │ Python FastAPI AI Runtime   │
+│ Business + Chunks + FTS│   │ Parser / RAG / Agent Workers │
 │ Runs + Evidence        │   │ Models / Tools / Evaluation │
 └───────────────┬────────┘   └──────────────┬──────────────┘
                 │                           │
@@ -87,7 +87,7 @@ Spring Boot 是外部系统唯一入口。前端不直接访问 Python 服务。
 Embedding 和检索
 Reranker
 模型适配
-LangGraph 状态工作流
+Agent Coordinator + Message Bus
 Prompt 渲染和结构化输出
 工具执行编排
 离线评估
@@ -96,18 +96,22 @@ Prompt 渲染和结构化输出
 
 Python 不负责用户登录、工作区成员 CRUD 和普通后台分页。
 
-### 3.4 PostgreSQL + pgvector
+### 3.4 PostgreSQL
 
 保存：
 
 - 企业业务数据。
-- 文档 Chunk 和向量。
+- 文档 Chunk 原文、元数据和 PostgreSQL Full Text Search 索引。
 - 运行、节点、工具、证据和报告。
 - Prompt、评估和模型版本元数据。
 
-MVP 使用同一个 PostgreSQL 实例，减少额外中间件。数据量增大后再评估独立检索系统。
+PostgreSQL 是业务数据和 Chunk 元数据的事实源；向量不进入业务库，避免向量索引与事务型数据耦合。
 
-### 3.5 Redis
+### 3.5 Milvus
+
+Milvus 只保存向量检索所需的数据：`chunk_id`、`workspace_id`、`project_id`、`asset_id` 和 Embedding 向量。索引时先写 PostgreSQL Chunk，再写 Milvus；重建资产时按 `asset_id` 删除旧向量并重新插入。检索时先在 Milvus 做带租户过滤的 ANN 召回，再回 PostgreSQL 补齐原文和引用元数据，最后与 PostgreSQL FTS 结果执行 RRF。
+
+### 3.6 Redis
 
 MVP 用途：
 
@@ -154,13 +158,16 @@ Browser 提问
 ```text
 Browser 创建 Run
 → Java 创建 PENDING 记录
-→ Python 启动 LangGraph
-→ 节点持续写 run_steps / tool_calls / evidence
+→ Python Coordinator 通过 AgentMessageBus 分派 Planner / Researcher / Analyst / Writer / Reviewer
+→ 各 Agent 通过 AgentMessage / AgentResult 契约交互
+→ Coordinator 持续写 run_steps / tool_calls / evidence
 → Java SSE 向前端发送事件
 → Python 生成报告草稿并审核
 → Java 保存最终报告和行动项
 → Run 进入 COMPLETED
 ```
+
+Agent 默认运行在同一个 AI Service 的独立队列 worker 中；设置 `AGENT_TRANSPORT=http` 和 `AGENT_WORKER_URLS` 后，可将指定 Agent 路由到独立进程。Coordinator、Agent Registry、消息契约和传输层彼此隔离，后续可以替换为 Redis Streams 或 NATS。
 
 ## 5. 同步与异步边界
 
@@ -179,7 +186,7 @@ Browser 创建 Run
 
 MVP 可用 Spring `@Async` 或轻量 Worker；若任务可靠性成为瓶颈，再引入消息队列。个人项目首版不强制部署 Kafka/RabbitMQ。
 
-当前队列选型：不立即引入 Kafka/RabbitMQ。`research_runs` 作为 PostgreSQL 中的任务事实表，Worker 使用短事务和 `FOR UPDATE SKIP LOCKED` 抢占 `PENDING` 任务；任务状态、重试次数和租约写回数据库。这样可以先获得重启恢复、并发消费和可审计性，同时避免新增基础设施。当前 `AgentService` 中的虚拟线程仅适合单实例原型，不能作为生产级可靠队列。
+当前业务任务选型：不立即引入 Kafka/RabbitMQ。`research_runs` 作为 PostgreSQL 中的任务事实表，Worker 使用短事务和 `FOR UPDATE SKIP LOCKED` 抢占 `PENDING` 任务；任务状态、重试次数和租约写回数据库。Agent 消息默认使用进程内队列，跨进程部署时通过 HTTP Worker transport 过渡，后续再引入可靠消息队列。
 
 当出现多实例高吞吐、跨服务解耦或外部任务积压时，再引入消息队列。优先评估已有 Redis 的 Streams/Consumer Group；如果需要更强的投递确认、死信队列和独立消费治理，再使用 RabbitMQ。Kafka 适合事件流和大规模日志，不是当前任务队列的首选。
 
@@ -188,11 +195,12 @@ MVP 可用 Spring `@Async` 或轻量 Worker；若任务可靠性成为瓶颈，�
 建议同时持久化两层状态：
 
 ```text
-LangGraph Checkpoint：工作流恢复所需的内部状态
+Agent Message：跨 Agent 的可追踪输入输出契约
+Agent Event：Agent 生命周期、工具调用和审核事件
 业务数据库：前端、审计、统计所需的稳定业务记录
 ```
 
-不能只依赖框架 Checkpoint，因为报告和审计需要独立于运行时框架长期访问。
+不能只依赖进程内队列，因为报告和审计需要独立于 Agent 运行时长期访问；跨进程 transport 也必须保留 `run_id`、`trace_id` 和 `message_id`。
 
 ## 7. 工具边界
 
@@ -250,7 +258,10 @@ MVP Docker Compose：
 frontend
 backend
 ai-service
-postgres-pgvector
+postgres
+milvus-etcd
+milvus-minio
+milvus
 redis
 ```
 
@@ -266,8 +277,8 @@ redis
 
 | 决策 | 选择 | 原因 |
 |---|---|---|
-| 向量数据库 | pgvector | 复用 PostgreSQL，个人项目部署简单 |
-| Agent 编排 | LangGraph | 需要分支、循环、状态、Streaming 和恢复 |
+| 向量数据库 | Milvus | 向量索引与业务事务解耦，支持标量过滤和独立扩展 |
+| Agent 编排 | AgentCoordinator + AgentMessageBus | 需要分支、循环、状态、Streaming、恢复和跨 Agent 路由 |
 | LangChain | 只用 Core/适配组件 | 避免业务被黑盒 Chain 绑定 |
 | 外部 API 入口 | Spring Boot | 保留传统后端优势和安全控制 |
 | 实时更新 | SSE | 单向事件足够，复杂度低于 WebSocket |

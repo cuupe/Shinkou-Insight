@@ -2,6 +2,7 @@ package com.cuupe.backend.modules.report.controller;
 
 import com.cuupe.backend.common.Result;
 import com.cuupe.backend.common.exception.ApiException;
+import com.cuupe.backend.modules.audit.service.AuditLogService;
 import com.cuupe.backend.modules.report.entity.Report;
 import com.cuupe.backend.modules.report.mapper.ReportMapper;
 import com.cuupe.backend.modules.notification.service.NotificationService;
@@ -21,6 +22,7 @@ import java.util.Map;
 public class ReportController {
     private final ReportMapper mapper;
     private final NotificationService notificationService;
+    private final AuditLogService auditLogService;
 
     @GetMapping
     public Result<List<Report>> list(@PathVariable Long projectId, Authentication auth) {
@@ -52,13 +54,16 @@ public class ReportController {
         if (body.containsKey("citations")) report.setCitations(integerValue(body.get("citations")));
         if (body.containsKey("content")) report.setContent(stringValue(body.get("content")));
         mapper.update(report);
+        auditLogService.record(workspaceId, projectId, userId, "REPORT_UPDATED", "REPORT", reportId);
         notificationService.create(workspaceId, userId, projectId, "report", "报告已更新", "“" + report.getTitle() + "”的内容已发生更新。", "project-reports");
         return Result.success(required(reportId, projectId, userId));
     }
 
     @GetMapping("/{reportId}/export")
-    public ResponseEntity<byte[]> export(@PathVariable Long projectId, @PathVariable Long reportId, @RequestParam(defaultValue = "markdown") String format, Authentication auth) {
-        Report report = required(reportId, projectId, userId(auth));
+    public ResponseEntity<byte[]> export(@PathVariable Long workspaceId, @PathVariable Long projectId, @PathVariable Long reportId, @RequestParam(defaultValue = "markdown") String format, Authentication auth) {
+        Long userId = userId(auth);
+        Report report = required(reportId, projectId, userId);
+        auditLogService.record(workspaceId, projectId, userId, "REPORT_EXPORTED", "REPORT", reportId, Map.of("format", format));
         String content = report.getContent() == null ? "" : report.getContent();
         return ResponseEntity.ok()
                 .contentType(MediaType.TEXT_PLAIN)

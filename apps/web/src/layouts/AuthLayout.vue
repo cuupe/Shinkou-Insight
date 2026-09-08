@@ -2,11 +2,33 @@
 import { computed } from "vue";
 import { RouterLink, RouterView, useRoute } from "vue-router";
 import { Badge } from "@/components/ui/badge";
-import { SparklesIcon } from "@lucide/vue";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { CircleAlertIcon, SparklesIcon } from "@lucide/vue";
 import BrandPanel from "@/components/auth/BrandPanel.vue";
 import ThemeToggle from "@/components/common/ThemeToggle.vue";
 const route = useRoute();
 const isRegister = computed(() => route.name === "register");
+const authNotice = computed(() => {
+  const reason = Array.isArray(route.query.reason)
+    ? route.query.reason[0]
+    : route.query.reason;
+
+  if (reason === "unauthorized") {
+    return {
+      title: "登录状态已失效",
+      message: "为了保护账号安全，当前会话已退出，请重新登录后继续使用。",
+    };
+  }
+
+  if (reason === "backend-unavailable") {
+    return {
+      title: "后端服务暂时不可用",
+      message: "当前会话已中断，可能是后端重启或网络异常。请确认服务已启动，稍后重新登录。",
+    };
+  }
+
+  return null;
+});
 </script>
 
 <template>
@@ -75,6 +97,18 @@ const isRegister = computed(() => route.name === "register");
               注册账号
             </RouterLink>
           </nav>
+
+          <Alert
+            v-if="authNotice"
+            class="mb-5"
+            variant="destructive"
+            role="alert"
+            aria-live="polite"
+          >
+            <CircleAlertIcon />
+            <AlertTitle>{{ authNotice.title }}</AlertTitle>
+            <AlertDescription>{{ authNotice.message }}</AlertDescription>
+          </Alert>
 
           <div class="auth-route">
             <RouterView />

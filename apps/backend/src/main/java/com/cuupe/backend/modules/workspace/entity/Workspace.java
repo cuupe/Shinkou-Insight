@@ -6,6 +6,7 @@ import tools.jackson.databind.annotation.JsonSerialize; import tools.jackson.dat
     private Long id;
     private String name;
     private String code;
+    private String currentRole;
     private String description;
     private String status;
     private String preferences;

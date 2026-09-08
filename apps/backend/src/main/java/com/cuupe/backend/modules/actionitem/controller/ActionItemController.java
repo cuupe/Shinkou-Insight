@@ -2,6 +2,7 @@ package com.cuupe.backend.modules.actionitem.controller;
 
 import com.cuupe.backend.common.Result;
 import com.cuupe.backend.common.exception.ApiException;
+import com.cuupe.backend.modules.audit.service.AuditLogService;
 import com.cuupe.backend.modules.actionitem.entity.ActionItem;
 import com.cuupe.backend.modules.actionitem.mapper.ActionItemMapper;
 import com.cuupe.backend.modules.user.security.UserLoginByPassword;
@@ -18,22 +19,26 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class ActionItemController {
     private final ActionItemMapper actionItemMapper;
+    private final AuditLogService auditLogService;
 
     @GetMapping public Result<List<ActionItem>> list(@PathVariable Long projectId, Authentication auth) { return Result.success(actionItemMapper.findByProject(projectId, userId(auth))); }
 
     @PostMapping
-    public Result<ActionItem> create(@PathVariable Long projectId, @RequestBody ActionItem item, Authentication auth) {
-        item.setProjectId(projectId); item.setCreatedBy(userId(auth));
+    public Result<ActionItem> create(@PathVariable Long workspaceId, @PathVariable Long projectId, @RequestBody ActionItem item, Authentication auth) {
+        Long userId = userId(auth);
+        item.setProjectId(projectId); item.setCreatedBy(userId);
         if (item.getTitle() == null || item.getTitle().isBlank()) throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "行动项标题不能为空");
         item.setPriority(normalizePriority(item.getPriority() == null ? "MEDIUM" : item.getPriority()));
         item.setStatus(normalizeStatus(item.getStatus() == null ? "DRAFT" : item.getStatus()));
         actionItemMapper.insert(item);
-        return Result.success(actionItemMapper.findById(item.getId(), projectId, userId(auth)));
+        auditLogService.record(workspaceId, projectId, userId, "ACTION_ITEM_CREATED", "ACTION_ITEM", item.getId(), Map.of("title", item.getTitle()));
+        return Result.success(actionItemMapper.findById(item.getId(), projectId, userId));
     }
 
     @PatchMapping("/{id}")
-    public Result<ActionItem> update(@PathVariable Long projectId, @PathVariable Long id, @RequestBody Map<String, Object> body, Authentication auth) {
-        ActionItem item = actionItemMapper.findById(id, projectId, userId(auth));
+    public Result<ActionItem> update(@PathVariable Long workspaceId, @PathVariable Long projectId, @PathVariable Long id, @RequestBody Map<String, Object> body, Authentication auth) {
+        Long userId = userId(auth);
+        ActionItem item = actionItemMapper.findById(id, projectId, userId);
         if (item == null) throw notFound();
         if (body.containsKey("title")) item.setTitle((String) body.get("title"));
         if (body.containsKey("description")) item.setDescription((String) body.get("description"));
@@ -42,7 +47,8 @@ public class ActionItemController {
         if (body.containsKey("priority")) item.setPriority(normalizePriority((String) body.get("priority")));
         if (body.containsKey("status")) item.setStatus(normalizeStatus((String) body.get("status")));
         actionItemMapper.update(item);
-        return Result.success(actionItemMapper.findById(id, projectId, userId(auth)));
+        auditLogService.record(workspaceId, projectId, userId, "ACTION_ITEM_UPDATED", "ACTION_ITEM", id);
+        return Result.success(actionItemMapper.findById(id, projectId, userId));
     }
 
     private Long userId(Authentication auth) { Object principal=auth.getPrincipal(); if(principal instanceof UserLoginByPassword user && user.getId()!=null) return user.getId(); throw new IllegalStateException("当前会话缺少用户信息"); }

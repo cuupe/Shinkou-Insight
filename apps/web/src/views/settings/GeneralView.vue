@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -18,18 +18,31 @@ import {
 import { useWorkspace } from "@/composables/useWorkspace";
 import { workspaceApi } from "@/api/workspace";
 
-const { notify, workspaceId, workspace } = useWorkspace();
+const {
+  notify,
+  workspaceId,
+  workspace,
+  availableWorkspaces,
+  currentUser,
+  isWorkspaceAdmin,
+  router,
+} = useWorkspace();
 const workspaceName = ref(workspace.name);
 const workspaceSlug = ref(workspace.slug);
 const workspaceDescription = ref(workspace.description);
-const slugError = ref("");
 const deleteOpen = ref(false);
 const deleteConfirmation = ref("");
+const replacementWorkspaceId = ref("");
 const preferences = reactive({
   webSearch: true,
   citationsRequired: true,
   retention: "90 天",
 });
+const replacementWorkspaces = computed(() =>
+  availableWorkspaces.filter(
+    (item) => String(item.id) !== workspaceId.value,
+  ),
+);
 
 function applyPreferences(value: unknown) {
   if (!value) return;
@@ -43,7 +56,7 @@ function applyPreferences(value: unknown) {
   }
 }
 
-onMounted(async () => {
+async function loadSettings() {
   try {
     const remote = await workspaceApi.detail(workspaceId.value);
     workspaceName.value = remote.name;
@@ -53,22 +66,25 @@ onMounted(async () => {
   } catch {
     notify("工作区设置加载失败");
   }
+}
+
+onMounted(loadSettings);
+watch(workspaceId, (next, previous) => {
+  if (next && next !== previous) void loadSettings();
 });
 
 async function saveSettings() {
+  if (!isWorkspaceAdmin.value) {
+    notify("只有工作区所有者或管理员可以修改工作区");
+    return;
+  }
   if (!workspaceName.value.trim()) {
     notify("请输入工作区名称");
     return;
   }
-  if (!/^[a-z0-9-]+$/.test(workspaceSlug.value)) {
-    slugError.value = "只能使用小写字母、数字和连字符";
-    return;
-  }
-  slugError.value = "";
   try {
     const remote = await workspaceApi.update(workspaceId.value, {
       name: workspaceName.value.trim(),
-      code: workspaceSlug.value,
       description: workspaceDescription.value.trim(),
     });
     Object.assign(workspace, {
@@ -92,22 +108,86 @@ async function copySlug() {
   }
 }
 
-function confirmDelete() {
+async function confirmDelete() {
+  if (!isWorkspaceAdmin.value) {
+    notify("只有工作区所有者或管理员可以删除工作区");
+    return;
+  }
   if (deleteConfirmation.value !== workspaceName.value) {
     notify("请输入正确的工作区名称");
     return;
   }
-  deleteOpen.value = false;
-  deleteConfirmation.value = "";
-  notify("当前版本暂不支持删除工作区，请联系平台管理员");
+  try {
+    const workspacesBeforeDelete = await workspaceApi.list();
+    availableWorkspaces.splice(
+      0,
+      availableWorkspaces.length,
+      ...workspacesBeforeDelete,
+    );
+    const otherWorkspaces = workspacesBeforeDelete.filter(
+      (item) => String(item.id) !== workspaceId.value,
+    );
+    if (
+      otherWorkspaces.length > 0 &&
+      !otherWorkspaces.some(
+        (item) => String(item.id) === replacementWorkspaceId.value,
+      )
+    ) {
+      notify("请先选择删除后要进入的其他工作区");
+      return;
+    }
+    await workspaceApi.remove(workspaceId.value);
+    const nextWorkspace = otherWorkspaces.find(
+      (item) => String(item.id) === replacementWorkspaceId.value,
+    );
+    const replacement =
+      nextWorkspace ||
+      (await workspaceApi.create({
+        name: `${currentUser.value?.userName || "我的"} 的工作区`,
+      }));
+
+    deleteOpen.value = false;
+    deleteConfirmation.value = "";
+    replacementWorkspaceId.value = "";
+    notify(
+      nextWorkspace
+        ? "工作区已删除，已切换到其他工作区"
+        : "工作区已删除，已为你创建新的工作区",
+    );
+    await router.replace({
+      name: "workspace-dashboard",
+      params: { workspaceId: String(replacement.id) },
+    });
+  } catch (error) {
+    notify(error instanceof Error ? error.message : "工作区删除失败");
+  }
 }
 
-function openDeleteDialog() {
+async function openDeleteDialog() {
+  if (!isWorkspaceAdmin.value) {
+    notify("只有工作区所有者或管理员可以删除工作区");
+    return;
+  }
   deleteConfirmation.value = "";
+  replacementWorkspaceId.value = "";
+  try {
+    const remoteWorkspaces = await workspaceApi.list();
+    availableWorkspaces.splice(
+      0,
+      availableWorkspaces.length,
+      ...remoteWorkspaces,
+    );
+  } catch {
+    // Keep the already loaded workspace list so the confirmation dialog remains usable.
+  }
   deleteOpen.value = true;
 }
 
 async function savePreferences() {
+  if (!isWorkspaceAdmin.value) {
+    notify("只有工作区所有者或管理员可以修改工作区");
+    return;
+  }
   try {
     const remote = await workspaceApi.updatePreferences(
       workspaceId.value,
@@ -132,31 +212,43 @@ async function savePreferences() {
         <div>
           <h2>工作区信息</h2>
           <p>用于识别团队和默认项目上下文。</p>
+          <p v-if="!isWorkspaceAdmin" class="permission-hint">
+            仅工作区所有者或管理员可以修改工作区信息。
+          </p>
         </div>
         <CheckCircle2 :size="18" class="section-icon" />
       </div>
       <div class="form-grid">
         <label class="field-label"
-          >工作区名称<input v-model="workspaceName" maxlength="40" /></label
+          >工作区名称<input
+            v-model="workspaceName"
+            maxlength="40"
+            :disabled="!isWorkspaceAdmin" /></label
         ><label class="field-label"
           >工作区标识
-          <div class="input-with-action">
-            <input v-model="workspaceSlug" @input="slugError = ''" /><button
-              type="button"
-              aria-label="复制工作区标识"
+           <div class="input-with-action">
+             <input :value="workspaceSlug" readonly aria-readonly="true" /><button
+               type="button"
+               aria-label="复制工作区标识"
               @click="copySlug"
             >
               <Copy :size="14" />
             </button>
-          </div>
-          <small v-if="slugError" class="field-error">{{
-            slugError
-          }}</small></label
+           </div>
+           <small class="field-hint">创建后不可修改，仅支持复制。</small></label
         ><label class="field-label field-wide"
-          >工作区描述<textarea v-model="workspaceDescription" rows="3" />
+          >工作区描述<textarea
+            v-model="workspaceDescription"
+            rows="3"
+            :disabled="!isWorkspaceAdmin" />
         </label>
       </div>
-      <button class="button button-primary" type="button" @click="saveSettings">
+      <button
+        v-if="isWorkspaceAdmin"
+        class="button button-primary"
+        type="button"
+        @click="saveSettings"
+      >
         保存设置
       </button>
     </div>
@@ -177,6 +269,7 @@ async function savePreferences() {
           ><input
             v-model="preferences.webSearch"
             type="checkbox"
+            :disabled="!isWorkspaceAdmin"
             class="switch-input" /><span class="switch-ui"
         /></label>
         <label class="preference-row"
@@ -186,13 +279,14 @@ async function savePreferences() {
           ><input
             v-model="preferences.citationsRequired"
             type="checkbox"
+            :disabled="!isWorkspaceAdmin"
             class="switch-input" /><span class="switch-ui"
         /></label>
         <label class="preference-row"
           ><span
             ><strong>运行记录保留</strong
             ><small>超过保留期的运行记录会进入归档状态</small></span
-          ><select v-model="preferences.retention">
+          ><select v-model="preferences.retention" :disabled="!isWorkspaceAdmin">
             <option>30 天</option>
             <option>90 天</option>
             <option>1 年</option>
@@ -201,6 +295,7 @@ async function savePreferences() {
         >
       </div>
       <button
+        v-if="isWorkspaceAdmin"
         class="button button-secondary button-sm"
         type="button"
         @click="savePreferences"
@@ -218,12 +313,16 @@ async function savePreferences() {
         </div>
       </div>
       <button
+        v-if="isWorkspaceAdmin"
         class="button button-danger"
         type="button"
         @click="openDeleteDialog"
       >
         删除工作区
       </button>
+      <span v-else class="permission-hint"
+        >仅工作区所有者或管理员可以删除工作区</span
+      >
     </div>
 
     <Dialog v-model:open="deleteOpen"
@@ -240,6 +339,22 @@ async function savePreferences() {
             :placeholder="workspaceName"
           />
         </div>
+        <label v-if="replacementWorkspaces.length" class="delete-target-field">
+          删除后进入工作区
+          <select v-model="replacementWorkspaceId">
+            <option disabled value="">请选择其他工作区</option>
+            <option
+              v-for="item in replacementWorkspaces"
+              :key="String(item.id)"
+              :value="String(item.id)"
+            >
+              {{ item.name }}
+            </option>
+          </select>
+        </label>
+        <p v-else class="delete-target-hint">
+          当前没有其他工作区。确认删除后，系统会自动创建新的工作区并进入。
+        </p>
         <DialogFooter
           ><button
             class="button button-secondary"
@@ -250,7 +365,10 @@ async function savePreferences() {
           ><button
             class="button button-danger"
             type="button"
-            :disabled="deleteConfirmation !== workspaceName"
+            :disabled="
+              deleteConfirmation !== workspaceName ||
+              (replacementWorkspaces.length > 0 && !replacementWorkspaceId)
+            "
             @click="confirmDelete"
           >
             确认提交删除
@@ -262,6 +380,10 @@ async function savePreferences() {
 </template>
 
 <style scoped>
+.form-grid {
+  align-items: start;
+}
+
 .section-intro {
   display: flex;
   align-items: flex-start;
@@ -270,6 +392,11 @@ async function savePreferences() {
 }
 .section-icon {
   color: var(--teal-dark);
+}
+.permission-hint {
+  margin-top: 0.375rem;
+  color: #8a5a24;
+  font-size: 0.75rem;
 }
 .input-with-action {
   display: flex;
@@ -422,6 +549,29 @@ async function savePreferences() {
 }
 .danger-confirm input:focus {
   border-color: #c87979;
+}
+.delete-target-field {
+  display: grid;
+  gap: 0.375rem;
+  color: var(--workspace-muted);
+  font-size: 0.625rem;
+}
+.delete-target-field select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--workspace-border);
+  border-radius: 0.375rem;
+  padding: 0.5rem;
+  color: var(--workspace-text);
+  background: var(--surface);
+  font: inherit;
+  font-size: 0.625rem;
+}
+.delete-target-hint {
+  margin: 0;
+  color: #9d5757;
+  font-size: 0.625rem;
+  line-height: 1.5;
 }
 .danger-dialog .button-danger:disabled {
   cursor: not-allowed;

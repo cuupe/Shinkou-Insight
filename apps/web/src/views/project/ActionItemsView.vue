@@ -647,7 +647,7 @@ function priorityClass(priority: string) {
   gap: 0.625rem;
 }
 .action-card {
-  padding: 0.875rem;
+  padding: 0.75rem;
   border: 0.0625rem solid var(--workspace-border);
   border-radius: 0.625rem;
   background: var(--surface);
@@ -705,7 +705,7 @@ function priorityClass(priority: string) {
   background: var(--surface-soft);
 }
 .action-card h3 {
-  margin: 0.875rem 0;
+  margin: 0.625rem 0;
   color: var(--workspace-text);
   font-size: 0.75rem;
   font-weight: 650;
@@ -731,8 +731,8 @@ function priorityClass(priority: string) {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  margin-top: 0.875rem;
-  padding-top: 0.6875rem;
+  margin-top: 0.625rem;
+  padding-top: 0.5rem;
   border-top: 0.0625rem solid var(--workspace-divider);
 }
 .card-detail-button,

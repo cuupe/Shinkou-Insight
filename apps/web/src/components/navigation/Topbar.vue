@@ -11,6 +11,7 @@ import {
   FileText,
   LogOut,
   Menu,
+  UserRound,
   Users,
 } from "@lucide/vue";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
@@ -362,8 +363,14 @@ onBeforeUnmount(() => {
             </small>
           </div>
 
-          <button type="button" role="menuitem" @click="openUserSettings">
-            个人信息设置
+          <button
+            class="user-settings-menu-item"
+            type="button"
+            role="menuitem"
+            @click="openUserSettings"
+          >
+            <UserRound :size="14" />
+            <span>个人信息设置</span>
           </button>
 
           <button
@@ -435,6 +442,7 @@ onBeforeUnmount(() => {
 
 .topbar-leading {
   min-width: 0;
+  gap: 0.75rem;
 }
 
 .topbar-page-slot {
@@ -956,6 +964,12 @@ onBeforeUnmount(() => {
 }
 
 .user-popover > button {
+  display: flex;
+
+  align-items: center;
+
+  gap: 0.375rem;
+
   width: 100%;
 
   padding: 0.5625rem 0.625rem;
@@ -983,12 +997,7 @@ onBeforeUnmount(() => {
   color: var(--workspace-text);
 }
 
-.user-popover > .help-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-}
-
+.user-popover > .user-settings-menu-item svg,
 .user-popover > .help-menu-item svg {
   color: var(--teal-dark);
 }
@@ -1057,7 +1066,6 @@ onBeforeUnmount(() => {
 
   .mobile-menu {
     display: inline-grid;
-    margin-right: 0.5rem;
   }
 
   .is-showed {

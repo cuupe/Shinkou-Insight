@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import {
   AlertCircle,
   Bot,
@@ -32,6 +32,7 @@ import {
 } from "@lucide/vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import { agentApi } from "@/api/agent";
+import { settingsApi, type ProjectModelConfig } from "@/api/settings";
 import { useAgentWorkspace } from "@/composables/useAgentWorkspace";
 import type {
   AgentAttachment,
@@ -42,7 +43,7 @@ import type {
 } from "@/api/types";
 import { useWorkspace } from "@/composables/useWorkspace";
 
-const { notify, router, routeTo, workspaceId, projectId } = useWorkspace();
+const { notify, router, routeTo, workspaceId, projectId, allowWeb } = useWorkspace();
 const {
   activeThread,
   threads,
@@ -61,6 +62,20 @@ const {
 const conversationScroll = ref<HTMLElement | null>(null);
 const attachmentInput = ref<HTMLInputElement | null>(null);
 const pendingAttachments = ref<AgentAttachment[]>([]);
+const modelOptions = ref<ProjectModelConfig[]>([]);
+const selectedModelId = ref<number | string>("");
+const selectedModelName = computed(
+  () => modelOptions.value.find((model) => String(model.id) === String(selectedModelId.value))?.name || "使用项目默认模型",
+);
+const agentConfig = computed(() => ({
+  allowWebSearch: allowWeb.value,
+  maxResearchRounds: 3,
+  topK: 8,
+  retrievalMode: "HYBRID" as const,
+  useReranker: true,
+  outputLanguage: "zh-CN",
+  ...(selectedModelId.value ? { modelConfigId: selectedModelId.value } : {}),
+}));
 const completedEvents = computed(
   () => events.value.filter((event) => event.status === "completed").length,
 );
@@ -68,6 +83,18 @@ const progress = computed(() =>
   events.value.length ? Math.round((completedEvents.value / events.value.length) * 100) : 0,
 );
 const latestEvent = computed(() => events.value.at(-1));
+
+onMounted(async () => {
+  if (projectId.value <= 0) return;
+  try {
+    modelOptions.value = (await settingsApi.models.list(workspaceId.value, projectId.value)).filter((model) => model.enabled);
+    // Empty means the backend applies the project default, including the
+    // project creator's credential precedence.
+    selectedModelId.value = "";
+  } catch {
+    notify("模型配置加载失败，将使用服务默认配置");
+  }
+});
 
 const eventIcons = {
   plan: ListChecks,
@@ -182,7 +209,7 @@ function openCitation(citation: NonNullable<AgentMessage["citations"]>[number]) 
 
 async function handleSubmit() {
   if (!draft.value.trim() && !pendingAttachments.value.length) {
-    void sendMessage();
+    void sendMessage(undefined, [], agentConfig.value);
     return;
   }
   const attachments = pendingAttachments.value.splice(0);
@@ -200,7 +227,7 @@ async function handleSubmit() {
         };
       }),
     );
-    void sendMessage(draft.value.trim() || "请分析我上传的附件。", uploadedAttachments);
+    void sendMessage(draft.value.trim() || "请分析我上传的附件。", uploadedAttachments, agentConfig.value);
   } catch (error) {
     pendingAttachments.value.unshift(...attachments);
     notify(error instanceof Error ? error.message : "附件上传失败，请重试");
@@ -260,21 +287,25 @@ watch(events, scrollConversationToBottom, { deep: true });
         </div>
       </div>
       <div class="agent-config-items">
-        <button class="agent-config-item" type="button" @click="openSettings('settings-models')">
+        <div class="agent-config-item agent-config-model">
           <Cpu :size="15" />
-          <span><small>模型</small><strong>未配置模型</strong></span>
-          <ChevronRight :size="13" />
-        </button>
+          <span><small>本次模型</small><strong>{{ selectedModelName }}</strong><select v-model="selectedModelId" aria-label="选择本次对话模型">
+            <option value="">使用项目默认模型</option>
+            <option v-for="model in modelOptions" :key="model.id" :value="model.id">{{ model.name }}</option>
+          </select></span>
+          <button class="config-link-button" type="button" aria-label="管理模型配置" @click="openSettings('settings-models')"><ChevronRight :size="13" /></button>
+        </div>
         <button class="agent-config-item" type="button" @click="openSettings('project-assets')">
           <Database :size="15" />
           <span><small>知识范围</small><strong>当前项目资料</strong></span>
           <ChevronRight :size="13" />
         </button>
-        <button class="agent-config-item" type="button" @click="openSettings('settings-tools')">
+        <div class="agent-config-item agent-config-tool">
           <Link2 :size="15" />
           <span><small>工具策略</small><strong>按需调用，写入需确认</strong></span>
-          <ChevronRight :size="13" />
-        </button>
+          <label class="inline-switch" title="允许本次运行联网搜索"><input v-model="allowWeb" type="checkbox" aria-label="允许本次运行联网搜索" /><span /></label>
+          <button class="config-link-button" type="button" aria-label="管理工具配置" @click="openSettings('settings-tools')"><ChevronRight :size="13" /></button>
+        </div>
       </div>
     </section>
 
@@ -573,6 +604,74 @@ watch(events, scrollConversationToBottom, { deep: true });
 .agent-config-item:hover {
   border-color: var(--teal);
   background: var(--surface-soft);
+}
+
+.agent-config-item select {
+  max-width: 10rem;
+  border: 0;
+  background: transparent;
+  color: var(--workspace-text);
+  font: inherit;
+  font-size: 0.5625rem;
+  outline: none;
+}
+
+.agent-config-model > span {
+  gap: 0.0625rem;
+}
+
+.config-link-button {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--workspace-subtle);
+  cursor: pointer;
+}
+
+.inline-switch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  cursor: pointer;
+}
+
+.inline-switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.inline-switch span {
+  position: relative;
+  display: block;
+  width: 1.75rem;
+  height: 1rem;
+  border-radius: 999px;
+  background: var(--workspace-divider);
+  transition: background 0.16s ease;
+}
+
+.inline-switch span::after {
+  position: absolute;
+  top: 0.125rem;
+  left: 0.125rem;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: var(--surface);
+  content: "";
+  transition: transform 0.16s ease;
+}
+
+.inline-switch input:checked + span {
+  background: var(--teal);
+}
+
+.inline-switch input:checked + span::after {
+  transform: translateX(0.75rem);
 }
 
 .agent-config-item span {

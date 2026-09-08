@@ -5,19 +5,28 @@ import {
   Sparkles,
   X,
 } from "@lucide/vue";
+import { ref } from "vue";
 import { RouterLink } from "vue-router";
 import { useWorkspace } from "@/composables/useWorkspace";
 
 const {
   workspace,
+  availableWorkspaces,
+  workspaceId,
   selectedProject,
   currentName,
   mobileOpen,
   workspaceNav,
   projectNav,
   routeTo,
-  notify,
+  switchWorkspace,
 } = useWorkspace();
+const workspaceMenuOpen = ref(false);
+
+function selectWorkspace(id: number | string) {
+  workspaceMenuOpen.value = false;
+  switchWorkspace(id);
+}
 
 function closeMenu() {
   mobileOpen.value = false;
@@ -53,22 +62,51 @@ function closeMenu() {
     </div>
 
     <!-- 工作区 -->
-    <button
-      class="workspace-switcher"
-      type="button"
-      @click="notify(`当前工作区：${workspace.name || '暂无工作区信息'}`)"
-    >
-      <span class="workspace-avatar">
-        {{ workspace.initials || "—" }}
-      </span>
+    <div class="workspace-switcher-wrap">
+      <button
+        class="workspace-switcher"
+        type="button"
+        aria-label="切换工作区"
+        :aria-expanded="workspaceMenuOpen"
+        @click="workspaceMenuOpen = !workspaceMenuOpen"
+      >
+        <span class="workspace-avatar">
+          {{ workspace.initials || "—" }}
+        </span>
 
-      <span class="workspace-switcher-copy">
-        <strong>{{ workspace.name || "当前工作区" }}</strong>
-        <small>{{ workspace.plan || "暂无套餐信息" }}</small>
-      </span>
+        <span class="workspace-switcher-copy">
+          <strong>{{ workspace.name || "当前工作区" }}</strong>
+          <small>{{ workspace.plan || "暂无套餐信息" }}</small>
+        </span>
 
-      <ChevronDown :size="15" />
-    </button>
+        <ChevronDown :size="15" />
+      </button>
+
+      <div v-if="workspaceMenuOpen" class="workspace-menu" role="menu">
+        <div class="workspace-menu-heading">切换工作区</div>
+        <button
+          v-for="item in availableWorkspaces"
+          :key="String(item.id)"
+          class="workspace-menu-item"
+          :class="{ active: String(item.id) === workspaceId }"
+          type="button"
+          role="menuitem"
+          @click="selectWorkspace(item.id)"
+        >
+          <span class="workspace-menu-avatar">
+            {{ item.name.slice(0, 2).toUpperCase() }}
+          </span>
+          <span class="workspace-menu-copy">
+            <strong>{{ item.name }}</strong>
+            <small>{{ item.currentRole === "OWNER" ? "所有者" : item.currentRole === "ADMIN" ? "管理员" : "成员" }}</small>
+          </span>
+          <span v-if="String(item.id) === workspaceId" class="workspace-menu-current">当前</span>
+        </button>
+        <p v-if="!availableWorkspaces.length" class="workspace-menu-empty">
+          暂无可用工作区
+        </p>
+      </div>
+    </div>
 
     <!-- 导航 -->
     <div class="sidebar-scroll">
@@ -255,13 +293,18 @@ function closeMenu() {
   color: var(--teal-dark);
 }
 
+.workspace-switcher-wrap {
+  position: relative;
+  width: calc(100% - 1.75rem);
+  margin: 0 0.875rem 1.625rem;
+}
+
 .workspace-switcher {
   display: flex;
-  width: calc(100% - 1.75rem);
+  width: 100%;
   align-items: center;
   gap: 0.5625rem;
 
-  margin: 0 0.875rem 1.625rem;
   padding: 0.625rem;
 
   border: 0.0625rem solid rgb(255 255 255 / 9%);
@@ -276,6 +319,94 @@ function closeMenu() {
 
 .workspace-switcher:hover {
   background: rgb(255 255 255 / 10%);
+}
+
+.workspace-menu {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  left: 0;
+  z-index: 40;
+  padding: 0.375rem;
+  border: 0.0625rem solid rgb(255 255 255 / 12%);
+  border-radius: 0.6875rem;
+  background: #183036;
+  box-shadow: 0 0.75rem 1.75rem rgb(0 0 0 / 24%);
+}
+
+.workspace-menu-heading {
+  padding: 0.5rem 0.5625rem 0.375rem;
+  color: var(--sidebar-muted);
+  font-size: 0.625rem;
+  font-weight: 700;
+}
+
+.workspace-menu-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-menu-item:hover,
+.workspace-menu-item.active {
+  background: rgb(255 255 255 / 9%);
+}
+
+.workspace-menu-avatar {
+  display: grid;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 0.5rem;
+  background: #dff7f3;
+  color: #0b756b;
+  font-size: 0.5625rem;
+  font-weight: 800;
+}
+
+.workspace-menu-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 0.125rem;
+}
+
+.workspace-menu-copy strong,
+.workspace-menu-copy small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.workspace-menu-copy strong {
+  font-size: 0.6875rem;
+}
+
+.workspace-menu-copy small,
+.workspace-menu-current,
+.workspace-menu-empty {
+  color: var(--sidebar-muted);
+  font-size: 0.5625rem;
+}
+
+.workspace-menu-current {
+  color: #8de4d6;
+  white-space: nowrap;
+}
+
+.workspace-menu-empty {
+  margin: 0;
+  padding: 0.75rem 0.5625rem;
+  text-align: center;
 }
 
 .workspace-avatar {

@@ -43,15 +43,27 @@ export const authApi = {
     },
   },
 
-  sms: (payload: { phoneNumber: string; purpose: SmsPurpose }) =>
+  sms: (payload: {
+    phoneNumber: string;
+    purpose: SmsPurpose;
+    captchaId?: string;
+    captcha?: string;
+  }) =>
     unwrap<SmsResponse>(
-      anet.get<ApiResponse<SmsResponse>>("/auth/sms", { params: payload }),
+      anet.post<ApiResponse<SmsResponse>>("/auth/sms", null, { params: payload }),
     ),
 
   register: (payload: RegisterPayload) =>
     unwrap<RegisterResponse>(
       anet.post<ApiResponse<RegisterResponse>>("/auth/register", payload),
     ),
+
+  resetPassword: (payload: {
+    phoneNumber: string;
+    verifyCodeId: string;
+    verifyCode: string;
+    newPassword: string;
+  }) => unwrap<void>(anet.post<ApiResponse<void>>("/auth/password/reset", payload)),
 
   me: () => unwrap<AuthUser>(anet.get<ApiResponse<AuthUser>>("/auth/me")),
 

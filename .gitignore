@@ -11,3 +11,11 @@ apps/web/*tmp*.png
 
 # Local captcha/debug artifacts
 scripts/browser-captcha.b64
+
+# Python AI service local environment and test artifacts
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+apps/ai-service/.ruff_cache/
+apps/ai-service/data/

@@ -5,12 +5,17 @@ import com.cuupe.backend.modules.agent.dto.AgentAttachmentResponse;
 import com.cuupe.backend.modules.agent.dto.AgentMessageRequest;
 import com.cuupe.backend.modules.agent.dto.AgentRunAccepted;
 import com.cuupe.backend.modules.agent.entity.AgentAttachment;
-import com.cuupe.backend.modules.agent.entity.AgentChunk;
 import com.cuupe.backend.modules.agent.entity.AgentMessage;
 import com.cuupe.backend.modules.agent.entity.AgentRun;
 import com.cuupe.backend.modules.agent.entity.AgentRunEvent;
 import com.cuupe.backend.modules.agent.entity.AgentThread;
 import com.cuupe.backend.modules.agent.mapper.AgentMapper;
+import com.cuupe.backend.modules.ai.AiIndexingClient;
+import com.cuupe.backend.modules.ai.RuntimeConfigResolver;
+import com.cuupe.backend.modules.settings.entity.PromptVersion;
+import com.cuupe.backend.modules.settings.mapper.PromptVersionMapper;
+import com.cuupe.backend.modules.workspace.entity.Workspace;
+import com.cuupe.backend.modules.workspace.mapper.WorkspaceMapper;
 import com.cuupe.backend.modules.storage.ObjectStorageService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -21,28 +26,26 @@ import org.springframework.web.multipart.MultipartFile;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
 public class AgentService {
     private static final long MAX_ATTACHMENT_BYTES = 50L * 1024 * 1024;
-    private static final Pattern WORDS = Pattern.compile("[\\p{L}\\p{N}]+");
 
     private final AgentMapper mapper;
     private final ObjectMapper objectMapper;
     private final ObjectStorageService objectStorageService;
+    private final AiIndexingClient aiClient;
+    private final RuntimeConfigResolver runtimeConfigResolver;
+    private final PromptVersionMapper promptVersionMapper;
+    private final WorkspaceMapper workspaceMapper;
     private final Map<String, CopyOnWriteArrayList<SseEmitter>> subscribers = new ConcurrentHashMap<>();
 
     public AgentRunAccepted accept(Long workspaceId, Long projectId, Long userId, AgentMessageRequest request) {
@@ -86,7 +89,7 @@ public class AgentService {
         mapper.insertRun(run);
 
         AgentRun acceptedRun = run;
-        Thread.startVirtualThread(() -> runPipeline(acceptedRun, workspaceId, projectId, userId, content, attachments));
+        Thread.startVirtualThread(() -> runPipeline(acceptedRun, workspaceId, projectId, userId, content, request));
 
         return new AgentRunAccepted(
                 run.getRunKey(),
@@ -158,6 +161,76 @@ public class AgentService {
         return attachment;
     }
 
+    @SuppressWarnings("unchecked")
+    public void handleAiCallback(String runKey, Map<String, Object> body) {
+        Long projectId = longValue(body.get("projectId"));
+        Long userId = longValue(body.get("userId"));
+        if (projectId == null || userId == null) return;
+        AgentRun run = mapper.findRun(runKey, projectId, userId);
+        if (run == null) return;
+        String eventType = String.valueOf(body.getOrDefault("eventType", ""));
+        Map<String, Object> payload = body.get("payload") instanceof Map<?, ?> value
+                ? (Map<String, Object>) value : Map.of();
+        try {
+            if (eventType.startsWith("node.")) {
+                String node = String.valueOf(payload.getOrDefault("node", "agent"));
+                String status = eventType.endsWith("started") ? "running" : "completed";
+                publishStep(run, node.toLowerCase(Locale.ROOT), String.valueOf(payload.getOrDefault("title", node)), String.valueOf(payload.getOrDefault("detail", "")), status);
+                return;
+            }
+            if (eventType.startsWith("tool.")) {
+                String tool = String.valueOf(payload.getOrDefault("tool", "tool"));
+                publishStep(run, "tool", "调用 " + tool, String.valueOf(payload.getOrDefault("query", "")), eventType.endsWith("started") ? "running" : "completed");
+                return;
+            }
+            if ("evidence.added".equals(eventType)) {
+                Object items = payload.get("items");
+                if (items instanceof List<?> list) for (Object raw : list) publishCitation(run, raw);
+                return;
+            }
+            if ("run.completed".equals(eventType)) {
+                String answer = formatReport(payload.get("report"));
+                mapper.updateMessage(run.getAssistantMessageId(), answer, "COMPLETED");
+                publish(run, "message.delta", Map.of("type", "message.delta", "runId", runKey, "messageId", findMessageKey(run.getAssistantMessageId()), "delta", answer));
+                publish(run, "message.completed", Map.of("type", "message.completed", "runId", runKey, "messageId", findMessageKey(run.getAssistantMessageId())));
+                mapper.updateRun(run.getId(), "COMPLETED", null);
+                publish(run, "run.completed", Map.of("type", "run.completed", "runId", runKey));
+                completeSubscribers(runKey);
+                return;
+            }
+            if ("run.failed".equals(eventType)) {
+                String message = String.valueOf(payload.getOrDefault("message", "Agent 运行失败"));
+                mapper.updateMessage(run.getAssistantMessageId(), message, "FAILED");
+                mapper.updateRun(run.getId(), "FAILED", message);
+                publish(run, "run.failed", Map.of("type", "run.failed", "runId", runKey, "message", message));
+                completeSubscribers(runKey);
+            }
+        } catch (IOException exception) {
+            mapper.updateRun(run.getId(), "FAILED", "Agent 事件转发失败");
+            completeSubscribers(runKey);
+        }
+    }
+
+    public void cancel(Long workspaceId, Long projectId, Long userId, String runKey) {
+        if (!mapper.hasProjectAccess(workspaceId, projectId, userId)) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "PROJECT_NOT_FOUND", "项目不存在或无权访问");
+        }
+        AgentRun run = mapper.findRun(runKey, projectId, userId);
+        if (run == null) throw new ApiException(HttpStatus.NOT_FOUND, "AGENT_RUN_NOT_FOUND", "Agent 运行不存在或无权访问");
+        try { aiClient.cancelRun(runKey); } catch (Exception exception) { throw new ApiException(HttpStatus.BAD_GATEWAY, "AGENT_CANCEL_FAILED", "Agent 运行取消失败"); }
+        mapper.updateMessage(run.getAssistantMessageId(), "本次运行已取消。", "COMPLETED");
+        mapper.updateRun(run.getId(), "CANCELLED", null);
+        try {
+            String messageId = findMessageKey(run.getAssistantMessageId());
+            publish(run, "message.delta", Map.of("type", "message.delta", "runId", runKey, "messageId", messageId, "delta", "本次运行已取消。"));
+            publish(run, "message.completed", Map.of("type", "message.completed", "runId", runKey, "messageId", messageId));
+            publish(run, "run.completed", Map.of("type", "run.completed", "runId", runKey));
+        } catch (IOException exception) {
+            completeSubscribers(runKey);
+        }
+        completeSubscribers(runKey);
+    }
+
     public java.io.InputStream openAttachment(AgentAttachment attachment) throws Exception {
         if (attachment.getStorageKey() != null && !attachment.getStorageKey().isBlank()) {
             return objectStorageService.open(attachment.getStorageKey());
@@ -165,39 +238,23 @@ public class AgentService {
         return new java.io.ByteArrayInputStream(attachment.getContent() == null ? new byte[0] : attachment.getContent());
     }
 
-    private void runPipeline(AgentRun run, Long workspaceId, Long projectId, Long userId, String query, List<Map<String, Object>> attachments) {
+    private void runPipeline(AgentRun run, Long workspaceId, Long projectId, Long userId, String query, AgentMessageRequest request) {
         try {
-            publish(run, "run.started", Map.of("type", "run.started", "runId", run.getRunKey()));
-            publishStep(run, "plan", "整理问题", "已接收问题，准备检索当前项目资料。", "running");
-            publishStep(run, "plan", "整理问题", "问题已进入项目资料检索流程。", "completed");
-
-            publishStep(run, "search", "检索项目资料", "正在检索当前项目已建立索引的文本资料。", "running");
-            List<ScoredChunk> matches = findMatches(workspaceId, projectId, userId, query);
-            publishStep(run, "search", "检索项目资料", matches.isEmpty() ? "当前项目资料没有命中内容。" : "已完成项目资料检索。", "completed");
-
-            publishStep(run, "evidence", "整理证据引用", "正在整理可追溯的原文片段。", "running");
-            for (int index = 0; index < matches.size(); index++) {
-                ScoredChunk match = matches.get(index);
-                Map<String, Object> citation = new LinkedHashMap<>();
-                citation.put("id", "citation-" + match.chunk().getId());
-                citation.put("title", match.chunk().getAssetName());
-                citation.put("source", match.chunk().getAssetName() + (match.chunk().getPageNumber() == null ? "" : " · 第" + match.chunk().getPageNumber() + "页"));
-                citation.put("quote", quote(match.chunk().getContent()));
-                citation.put("score", String.format(Locale.ROOT, "%.2f", Math.min(0.99, 0.55 + match.score() / 10.0)));
-                citation.put("pageNumber", match.chunk().getPageNumber());
-                publish(run, "citation.added", Map.of("type", "citation.added", "runId", run.getRunKey(), "citation", citation));
-            }
-            publishStep(run, "evidence", "整理证据引用", matches.isEmpty() ? "没有可展示的引用。" : "已整理 " + matches.size() + " 条项目证据。", "completed");
-
-            publishStep(run, "synthesis", "生成常规回答", "正在根据检索结果整理回答文本。", "running");
-            String answer = buildAnswer(query, matches, attachments);
-            streamText(run, answer);
-            mapper.updateMessage(run.getAssistantMessageId(), answer, "COMPLETED");
-            publish(run, "message.completed", Map.of("type", "message.completed", "runId", run.getRunKey(), "messageId", findMessageKey(run.getAssistantMessageId())));
-            publishStep(run, "synthesis", "生成常规回答", "回答已生成。", "completed");
-            mapper.updateRun(run.getId(), "COMPLETED", null);
-            publish(run, "run.completed", Map.of("type", "run.completed", "runId", run.getRunKey()));
-            completeSubscribers(run.getRunKey());
+            Map<String, Object> config = new LinkedHashMap<>();
+            putIfPresent(config, "allowWebSearch", request.getAllowWebSearch());
+            putIfPresent(config, "maxResearchRounds", request.getMaxResearchRounds());
+            putIfPresent(config, "topK", request.getTopK());
+            putIfPresent(config, "retrievalMode", request.getRetrievalMode());
+            putIfPresent(config, "useReranker", request.getUseReranker());
+            putIfPresent(config, "outputLanguage", request.getOutputLanguage());
+            Map<String, String> systemPrompts = activeSystemPrompts(workspaceId, userId);
+            if (!systemPrompts.isEmpty()) config.put("systemPrompts", systemPrompts);
+            config.putAll(agentPolicy(workspaceId, userId));
+            Map<String, Object> requested = new LinkedHashMap<>();
+            putIfPresent(requested, "modelConfigId", request.getModelConfigId());
+            putIfPresent(requested, "webSearchToolId", request.getWebSearchToolId());
+            Map<String, Object> runtime = runtimeConfigResolver.resolve(projectId, userId, requested);
+            aiClient.executeAgentRun(run.getRunKey(), workspaceId, projectId, userId, findMessageKey(run.getAssistantMessageId()), query, config, runtime);
         } catch (Exception exception) {
             String message = exception.getMessage() == null ? "Agent 运行失败" : shortText(exception.getMessage(), 900);
             mapper.updateMessage(run.getAssistantMessageId(), message, "FAILED");
@@ -211,59 +268,37 @@ public class AgentService {
         }
     }
 
-    private List<ScoredChunk> findMatches(Long workspaceId, Long projectId, Long userId, String query) {
-        List<AgentChunk> chunks = mapper.findProjectChunks(workspaceId, projectId, userId);
-        return scoreChunks(chunks, query);
+    private Map<String, String> activeSystemPrompts(Long workspaceId, Long userId) {
+        Map<String, String> prompts = new LinkedHashMap<>();
+        for (PromptVersion prompt : promptVersionMapper.findByWorkspace(workspaceId, userId)) {
+            if (!"ACTIVE".equalsIgnoreCase(clean(prompt.getStatus()))) continue;
+            String scene = clean(prompt.getScene()).toLowerCase(Locale.ROOT);
+            String systemPrompt = clean(prompt.getSystemPrompt());
+            if (scene.isBlank() || systemPrompt.isBlank()) continue;
+            // The mapper returns the newest versions first, so the first active
+            // version wins if old data contains duplicate active rows.
+            prompts.putIfAbsent(scene, systemPrompt);
+        }
+        return prompts;
     }
 
-    private List<ScoredChunk> scoreChunks(List<AgentChunk> chunks, String query) {
-        String normalized = query.toLowerCase(Locale.ROOT);
-        Set<String> terms = new LinkedHashSet<>();
-        var matcher = WORDS.matcher(normalized);
-        while (matcher.find()) terms.add(matcher.group());
-        for (int index = 0; index + 1 < normalized.length(); index++) {
-            char first = normalized.charAt(index);
-            char second = normalized.charAt(index + 1);
-            if (Character.isLetterOrDigit(first) && Character.isLetterOrDigit(second)) {
-                terms.add(normalized.substring(index, index + 2));
-            }
-        }
-        List<ScoredChunk> scored = new ArrayList<>();
-        for (AgentChunk chunk : chunks) {
-            String text = chunk.getContent() == null ? "" : chunk.getContent().toLowerCase(Locale.ROOT);
-            int score = 0;
-            for (String term : terms) if (text.contains(term)) score++;
-            if (score > 0) scored.add(new ScoredChunk(chunk, score));
-        }
-        return scored.stream().sorted(Comparator.comparingInt(ScoredChunk::score).reversed()).limit(3).toList();
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> agentPolicy(Long workspaceId, Long userId) {
+        Workspace workspace = workspaceMapper.findAccessible(workspaceId, userId);
+        if (workspace == null || workspace.getPreferences() == null || workspace.getPreferences().isBlank()) return Map.of();
+        try {
+            Map<String, Object> preferences = objectMapper.readValue(workspace.getPreferences(), Map.class);
+            Object raw = preferences.get("agentPolicy");
+            if (!(raw instanceof Map<?, ?> policy)) return Map.of();
+            Map<String, Object> result = new LinkedHashMap<>();
+            if (policy.get("maxCalls") != null) result.put("toolMaxCalls", policy.get("maxCalls"));
+            if (policy.get("requireApproval") != null) result.put("requireToolApproval", policy.get("requireApproval"));
+            return result;
+        } catch (Exception ignored) { return Map.of(); }
     }
 
-    private String buildAnswer(String query, List<ScoredChunk> matches, List<Map<String, Object>> attachments) {
-        StringBuilder answer = new StringBuilder();
-        answer.append("已完成对当前项目资料的常规检索。\n\n");
-        if (matches.isEmpty()) {
-            answer.append("项目资料中没有命中与“").append(query).append("”相关的内容。\n");
-            answer.append("当前回答不包含演示数据；请补充已建立索引的资料，或调整问题后重试。");
-        } else {
-            answer.append("围绕“").append(query).append("”找到 ").append(matches.size()).append(" 条相关证据：\n");
-            for (int index = 0; index < matches.size(); index++) {
-                answer.append(index + 1).append(". ").append(matches.get(index).chunk().getAssetName()).append("：")
-                        .append(quote(matches.get(index).chunk().getContent())).append("\n");
-            }
-            answer.append("\n以上内容来自当前项目资料，引用可在右侧查看原文片段。模型调用尚未接入，因此本次仅返回检索与证据整理结果。");
-        }
-        if (!attachments.isEmpty()) answer.append("\n\n已接收 ").append(attachments.size()).append(" 个附件，附件内容已保存，可供后续 Agent 处理。");
-        return answer.toString();
-    }
-
-    private void streamText(AgentRun run, String text) throws IOException {
-        String messageId = findMessageKey(run.getAssistantMessageId());
-        for (int offset = 0; offset < text.length();) {
-            int end = Math.min(text.length(), offset + 18);
-            String delta = text.substring(offset, end);
-            publish(run, "message.delta", Map.of("type", "message.delta", "runId", run.getRunKey(), "messageId", messageId, "delta", delta));
-            offset = end;
-        }
+    private void putIfPresent(Map<String, Object> target, String key, Object value) {
+        if (value != null) target.put(key, value);
     }
 
     private void publishStep(AgentRun run, String kind, String title, String detail, String status) throws IOException {
@@ -274,6 +309,61 @@ public class AgentService {
         event.put("detail", detail);
         event.put("status", status);
         publish(run, "event.updated", Map.of("type", "event.updated", "runId", run.getRunKey(), "event", event));
+    }
+
+    private void publishCitation(AgentRun run, Object raw) throws IOException {
+        if (!(raw instanceof Map<?, ?> item)) return;
+        String id = String.valueOf(value(item, "id", "evidence"));
+        String title = String.valueOf(valueAny(item, "assetName", "asset_name", valueAny(item, "sourceName", "source_name", "外部来源")));
+        String source = String.valueOf(valueAny(item, "sourceName", "source_name", title));
+        Object page = valueAny(item, "pageNumber", "page_number", null);
+        Map<String, Object> citation = new LinkedHashMap<>();
+        citation.put("id", id);
+        citation.put("title", title);
+        citation.put("source", source + (page == null ? "" : " · 第" + page + "页"));
+        citation.put("quote", quote(String.valueOf(value(item, "content", ""))));
+        citation.put("score", value(item, "score", null));
+        citation.put("pageNumber", page);
+        citation.put("url", item.get("url"));
+        publish(run, "citation.added", Map.of("type", "citation.added", "runId", run.getRunKey(), "citation", citation));
+    }
+
+    private Object value(Map<?, ?> source, String key, Object fallback) {
+        Object value = source.get(key);
+        return value == null ? fallback : value;
+    }
+
+    private Object valueAny(Map<?, ?> source, String first, String second, Object fallback) {
+        return value(source, first, value(source, second, fallback));
+    }
+
+    @SuppressWarnings("unchecked")
+    private String formatReport(Object raw) {
+        if (!(raw instanceof Map<?, ?> report)) return String.valueOf(raw == null ? "Agent 未返回报告" : raw);
+        StringBuilder answer = new StringBuilder();
+        appendLine(answer, report.get("title"));
+        appendLine(answer, valueAny(report, "executiveSummary", "executive_summary", null));
+        Object sections = report.get("sections");
+        if (sections instanceof List<?> list) for (Object section : list) {
+            if (!(section instanceof Map<?, ?> value)) continue;
+            appendLine(answer, value.get("heading"));
+            appendLine(answer, value.get("body"));
+        }
+        Object recommendations = report.get("recommendations");
+        if (recommendations instanceof List<?> list && !list.isEmpty()) {
+            appendLine(answer, "建议");
+            for (Object item : list) appendLine(answer, "- " + item);
+        }
+        return answer.length() == 0 ? "Agent 已完成分析，但报告内容为空。" : answer.toString().trim();
+    }
+
+    private void appendLine(StringBuilder target, Object value) {
+        if (value != null && !String.valueOf(value).isBlank()) target.append(String.valueOf(value)).append("\n\n");
+    }
+
+    private Long longValue(Object value) {
+        if (value == null) return null;
+        try { return Long.valueOf(String.valueOf(value)); } catch (NumberFormatException ignored) { return null; }
     }
 
     private AgentMessage message(Long threadId, String key, String role, String content, String status, List<Map<String, Object>> attachments) {
@@ -393,5 +483,4 @@ public class AgentService {
         return fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
     }
 
-    private record ScoredChunk(AgentChunk chunk, int score) {}
 }

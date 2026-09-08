@@ -6,10 +6,10 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* The original interface used a very compressed type scale. Keep mobile at
-   the browser baseline while giving desktop content a more readable rhythm. */
+/* Keep the workspace dense enough to show more useful content in the first
+   viewport while retaining the browser baseline on mobile. */
 html {
-  font-size: 18px;
+  font-size: 16px;
 }
 
 @theme inline {
@@ -175,8 +175,8 @@ html {
   justify-items: center;
   gap: 0.4375rem;
   min-height: 8.75rem;
-  margin: 0.75rem 1rem 1rem;
-  padding: 1.5rem 1rem;
+  margin: 0.625rem 0.875rem 0.875rem;
+  padding: 1.125rem 0.875rem;
   border: 0.0625rem dashed var(--workspace-border);
   border-radius: 0.625rem;
   background: color-mix(in oklab, var(--teal) 3%, var(--surface));
@@ -366,7 +366,7 @@ html {
 .panel {
   min-width: 0;
   border: 0.0625rem solid var(--workspace-border);
-  border-radius: 0.75rem;
+  border-radius: 0.625rem;
   background: var(--surface);
   box-shadow: 0 0.4375rem 1.4375rem rgba(21, 53, 52, 0.035);
 }
@@ -376,7 +376,7 @@ html {
   align-items: flex-start;
   justify-content: space-between;
   gap: 0.75rem;
-  padding: 1.5rem 1.5rem 1.125rem;
+  padding: 1.125rem 1.25rem 0.875rem;
 }
 
 .panel-heading h2 {
@@ -406,9 +406,9 @@ html {
 .table-row {
   display: grid;
   align-items: center;
-  min-height: 3.6875rem;
-  gap: 1rem;
-  padding: 0 1.5rem;
+  min-height: 3.25rem;
+  gap: 0.75rem;
+  padding: 0 1.25rem;
   border-top: 0.0625rem solid var(--workspace-divider);
   font-size: 0.6875rem;
 }
@@ -601,4 +601,150 @@ html {
   border-color: var(--brand);
   background: color-mix(in oklab, var(--brand) 12%, var(--background));
   color: var(--foreground);
+}
+
+/* Dialog theme ----------------------------------------------------------
+   Dialog portals are mounted under <body>, outside .app-shell. Give every
+   portal its own workspace tokens so scoped page styles resolve in both
+   themes instead of inheriting the wrong page or browser colors. */
+[data-slot="dialog-content"] {
+  --workspace-bg: var(--background);
+  --surface: var(--popover);
+  --surface-raised: var(--card);
+  --surface-soft: var(--secondary);
+  --workspace-text: var(--popover-foreground);
+  --workspace-muted: var(--muted-foreground);
+  --workspace-subtle: color-mix(in oklab, var(--muted-foreground) 82%, transparent);
+  --workspace-border: var(--border);
+  --workspace-divider: color-mix(in oklab, var(--border) 72%, transparent);
+  --workspace-chart-grid: color-mix(in oklab, var(--border) 72%, transparent);
+  --workspace-chart-axis: var(--muted-foreground);
+  --teal: var(--brand);
+  --teal-dark: var(--brand);
+  --teal-soft: color-mix(in oklab, var(--brand) 14%, var(--surface));
+  --violet: #8175e8;
+  --amber: #d99022;
+  --red: var(--destructive);
+
+  color-scheme: light;
+  color: var(--workspace-text);
+  background: var(--surface) !important;
+  border-color: var(--workspace-border);
+}
+
+.dark [data-slot="dialog-content"] {
+  --workspace-bg: #0d171b;
+  --surface: #142329;
+  --surface-raised: #192b31;
+  --surface-soft: #1c3036;
+  --workspace-text: #e7f1f0;
+  --workspace-muted: #9cafb2;
+  --workspace-subtle: #7f969b;
+  --workspace-border: #2c4147;
+  --workspace-divider: #294047;
+  --workspace-chart-grid: #294047;
+  --workspace-chart-axis: #9cafb2;
+  --teal: #45d6c3;
+  --teal-dark: #68e1d0;
+  --teal-soft: color-mix(in oklab, #45d6c3 16%, #142329);
+  --amber: #f2bd69;
+  --red: #ffaaa8;
+
+  color-scheme: dark;
+  background: var(--surface) !important;
+  border-color: var(--workspace-border) !important;
+}
+
+[data-slot="dialog-content"] [data-slot="dialog-title"],
+[data-slot="dialog-content"] [data-slot="dialog-description"],
+[data-slot="dialog-content"] .field-label,
+[data-slot="dialog-content"] .form-section-heading strong,
+[data-slot="dialog-content"] .form-section-heading small,
+[data-slot="dialog-content"] .dialog-security-note {
+  color: var(--workspace-text);
+}
+
+[data-slot="dialog-content"] [data-slot="dialog-description"],
+[data-slot="dialog-content"] .form-section-heading small,
+[data-slot="dialog-content"] .dialog-security-note {
+  color: var(--workspace-muted);
+}
+
+[data-slot="dialog-content"] [data-slot="dialog-footer"] {
+  border-color: var(--workspace-border) !important;
+  background: color-mix(in oklab, var(--surface-raised) 88%, var(--surface)) !important;
+  color: var(--workspace-text);
+}
+
+[data-slot="dialog-content"] input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+[data-slot="dialog-content"] textarea,
+[data-slot="dialog-content"] select {
+  border-color: var(--workspace-border) !important;
+  background: var(--surface-soft) !important;
+  color: var(--workspace-text) !important;
+}
+
+[data-slot="dialog-content"] input::placeholder,
+[data-slot="dialog-content"] textarea::placeholder {
+  color: var(--workspace-muted) !important;
+}
+
+[data-slot="dialog-content"] .model-form-section,
+[data-slot="dialog-content"] .connector-form-section,
+[data-slot="dialog-content"] .form-step,
+[data-slot="dialog-content"] .create-project-options {
+  border-color: var(--workspace-border) !important;
+  background: var(--surface-raised) !important;
+  color: var(--workspace-text);
+}
+
+[data-slot="dialog-content"] .form-section-icon,
+[data-slot="dialog-content"] .config-icon,
+[data-slot="dialog-content"] .help-article-row-icon,
+[data-slot="dialog-content"] .evidence-dialog-icon {
+  color: var(--teal-dark);
+  background: color-mix(in oklab, var(--teal) 14%, var(--surface)) !important;
+}
+
+[data-slot="dialog-content"] .model-note,
+[data-slot="dialog-content"] .permission-note,
+[data-slot="dialog-content"] .dialog-security-note {
+  color: var(--workspace-muted);
+}
+
+.dark [data-slot="dialog-overlay"] {
+  background: rgb(0 0 0 / 58%) !important;
+}
+
+.dark [data-slot="dialog-content"] .button-secondary,
+.dark [data-slot="dialog-content"] .mini-button {
+  border-color: var(--workspace-border);
+  background: var(--surface-soft);
+  color: var(--workspace-text);
+}
+
+.dark [data-slot="dialog-content"] .button-secondary:hover,
+.dark [data-slot="dialog-content"] .mini-button:hover {
+  border-color: color-mix(in oklab, var(--teal) 45%, var(--workspace-border));
+  background: color-mix(in oklab, var(--teal) 12%, var(--surface-soft));
+}
+
+.dark [data-slot="dialog-content"] .button-danger {
+  border-color: #633b40;
+  background: #321f24;
+  color: #ffaaa8;
+}
+
+.dark [data-slot="dialog-content"] .danger-confirm,
+.dark [data-slot="dialog-content"] .delete-warning,
+.dark [data-slot="dialog-content"] .form-error,
+.dark [data-slot="dialog-content"] .delete-target-hint {
+  border-color: #633b40;
+  background: #321f24;
+  color: #ffaaa8;
+}
+
+.dark [data-slot="dialog-content"] .danger-confirm strong,
+.dark [data-slot="dialog-content"] .delete-warning strong {
+  color: #ffaaa8;
 }

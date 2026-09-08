@@ -5,7 +5,6 @@ import {
   ArrowDownRight,
   ArrowRight,
   FileText,
-  Plus,
 } from "@lucide/vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
@@ -20,7 +19,6 @@ const {
   workspace,
   statistics,
   displayName,
-  selectedProject,
   iconForStat,
   statusClass,
 } = useWorkspace();
@@ -120,16 +118,6 @@ function focusIcon(icon: string) {
     :title="`${greeting}，${displayName}`"
     :subtitle="dashboardSubtitle"
   >
-    <template #action
-      ><button
-        class="button button-primary"
-        type="button"
-        :disabled="!selectedProject"
-        @click="router.push(routeTo('project-new-run'))"
-      >
-        <Plus :size="17" />创建调研
-      </button></template
-    >
   </PageHeader>
   <div class="stat-grid">
     <article
@@ -222,7 +210,7 @@ function focusIcon(icon: string) {
         </div>
         <div v-if="!recentRuns.length" class="empty-state panel-empty-state">
           <Activity :size="18" /><strong>暂无调研运行</strong>
-          <span>创建并执行调研后，这里会显示真实运行记录。</span>
+          <span>有调研运行后，这里会显示真实运行记录。</span>
         </div>
       </div>
     </section>
@@ -277,7 +265,7 @@ function focusIcon(icon: string) {
   background: var(--surface);
   border: 0.0625rem solid var(--workspace-border);
   border-radius: 0.6875rem;
-  padding: 1.25rem 1.3125rem;
+  padding: 1rem 1.125rem;
   transition:
     transform 0.2s ease,
     border-color 0.2s ease,
@@ -350,7 +338,7 @@ function focusIcon(icon: string) {
   font-size: 1.5625rem;
   letter-spacing: -0.05em;
   color: var(--workspace-text);
-  margin: 1.0625rem 0 0.375rem;
+  margin: 0.75rem 0 0.25rem;
 }
 .stat-trend {
   display: flex;
@@ -365,19 +353,19 @@ function focusIcon(icon: string) {
 }
 .dashboard-grid {
   grid-template-columns: minmax(0, 1.55fr) minmax(18.75rem, 0.9fr);
-  gap: 1.125rem;
-  margin-bottom: 1.125rem;
+  gap: 0.875rem;
+  margin-bottom: 0.875rem;
 }
 .chart-panel {
-  min-height: 21.125rem;
+  min-height: 18rem;
 }
 .chart-empty {
   display: grid;
   place-content: center;
   justify-items: center;
   gap: 0.5rem;
-  min-height: 15rem;
-  margin: 0 1.5rem 1.5rem;
+  min-height: 12rem;
+  margin: 0 1.25rem 1.25rem;
   border: 0.0625rem dashed var(--workspace-border);
   border-radius: 0.625rem;
 }
@@ -396,7 +384,7 @@ function focusIcon(icon: string) {
   display: grid;
   justify-items: center;
   gap: 0.375rem;
-  padding: 2rem 1rem;
+  padding: 1.25rem 1rem;
 }
 .dashboard-empty svg {
   color: var(--workspace-muted);
@@ -409,7 +397,7 @@ function focusIcon(icon: string) {
   font-size: 0.625rem;
 }
 .chart-panel .panel-heading {
-  padding: 1.5rem 1.5rem 1rem;
+  padding: 1.125rem 1.25rem 0.75rem;
 }
 .chart-legend {
   gap: 1rem;
@@ -417,7 +405,7 @@ function focusIcon(icon: string) {
   font-size: 0.625rem;
 }
 .chart-panel .chart-legend {
-  padding: 0 1.5rem;
+  padding: 0 1.25rem;
   justify-content: flex-end;
   margin-top: 0;
   margin-bottom: 0.5rem;
@@ -437,8 +425,8 @@ function focusIcon(icon: string) {
 }
 .fake-chart {
   display: flex;
-  height: 12.625rem;
-  padding: 1rem 1.375rem 0;
+  height: 11.5rem;
+  padding: 0.75rem 1.25rem 0;
 }
 .trend-chart {
   width: 100%;

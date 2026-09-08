@@ -103,11 +103,11 @@ FinalReportPayload
 
 可以通过共享 OpenAPI Schema 或 JSON Schema 测试。
 
-## 6. PostgreSQL 集成测试
+## 6. PostgreSQL + Milvus 集成测试
 
-使用带 pgvector 的 Testcontainer，验证：
+使用 PostgreSQL 和 Milvus Testcontainer/Compose 依赖，验证：
 
-- 向量列读写。
+- Milvus 向量写入和相似度召回。
 - 租户过滤。
 - 全文检索。
 - Hybrid 候选合并。

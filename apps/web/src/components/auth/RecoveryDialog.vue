@@ -27,6 +27,7 @@ import {
 import ImageCaptcha from "@/components/auth/ImageCaptcha.vue";
 import { useAuth } from "@/composables/useAuth";
 import { useSmsCode } from "@/composables/useSmsCode";
+import { api, ApiError } from "@/api";
 type Status = { type: "success" | "error" | "info"; message: string };
 const props = defineProps<{ open: boolean; phone: string }>();
 const emit = defineEmits<{ "update:open": [value: boolean] }>();
@@ -67,6 +68,7 @@ watch(
       account.value = props.phone;
       code.value = "";
       captcha.value = "";
+      captchaId.value = "";
       captchaError.value = "";
       password.value = "";
       confirmPassword.value = "";
@@ -74,34 +76,47 @@ watch(
     }
   },
 );
-function sendCode() {
+async function sendCode() {
+  captchaError.value = "";
+  status.value = null;
   if (!isPhone(account.value)) {
     status.value = { type: "error", message: "请输入正确的 11 位手机号。" };
     return;
   }
   if (!isCaptcha(captcha.value)) {
     captchaError.value = "请输入图片验证码";
-    status.value = { type: "error", message: captchaError.value };
     return;
   }
   if (!captchaId.value) {
-    status.value = {
-      type: "error",
-      message: "图片验证码已过期，请点击图片刷新。",
-    };
+    captchaError.value = "图片验证码已过期，请点击图片刷新。";
     return;
   }
-  startSmsCode(`recovery-${Date.now()}`);
-  step.value = "verify";
-  status.value = { type: "info", message: "验证码已发送，有效期 5 分钟。" };
+  try {
+    const response = await api.auth.sms({
+      phoneNumber: account.value.trim(),
+      purpose: "PASSWORD_RESET",
+      captchaId: captchaId.value,
+      captcha: captcha.value,
+    });
+    if (!response.smsId) throw new ApiError("验证码发送失败", "SMS_ID_MISSING");
+    startSmsCode(response.smsId);
+    step.value = "verify";
+  } catch (error) {
+    status.value = {
+      type: "error",
+      message: error instanceof Error ? error.message : "验证码发送失败，请稍后重试",
+    };
+  }
 }
 function verify() {
   if (!codeId.value) {
+    if (expired.value) {
+      status.value = null;
+      return;
+    }
     status.value = {
       type: "error",
-      message: expired.value
-        ? "验证码已过期，请重新获取。"
-        : "请先获取验证码。",
+      message: "请先获取验证码。",
     };
     return;
   }
@@ -112,17 +127,30 @@ function verify() {
   step.value = "reset";
   status.value = null;
 }
-function reset() {
-  if (password.value.length < 8) {
-    status.value = { type: "error", message: "新密码至少需要 8 位字符。" };
+async function reset() {
+  if (password.value.length < 12) {
+    status.value = { type: "error", message: "新密码至少需要 12 个字符。" };
     return;
   }
   if (password.value !== confirmPassword.value) {
     status.value = { type: "error", message: "两次输入的新密码不一致。" };
     return;
   }
-  status.value = { type: "success", message: "密码已重置，请返回登录。" };
-  window.setTimeout(() => emit("update:open", false), 900);
+  try {
+    await api.auth.resetPassword({
+      phoneNumber: account.value.trim(),
+      verifyCodeId: codeId.value,
+      verifyCode: code.value,
+      newPassword: password.value,
+    });
+    status.value = { type: "success", message: "密码已重置，请返回登录。" };
+    window.setTimeout(() => emit("update:open", false), 900);
+  } catch (error) {
+    status.value = {
+      type: "error",
+      message: error instanceof Error ? error.message : "密码重置失败，请稍后重试",
+    };
+  }
 }
 </script>
 
@@ -185,7 +213,7 @@ function reset() {
               id="recovery-new-password"
               v-model="password"
               :type="showPassword ? 'text' : 'password'"
-              placeholder="至少 8 位字符"
+              placeholder="至少 12 位字符"
               class="pr-10"
             /><Button
               type="button"

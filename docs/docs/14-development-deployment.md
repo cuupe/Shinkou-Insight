@@ -7,7 +7,8 @@ Node.js 20+
 Java 21
 Maven 3.9+
 Python 3.11+
-PostgreSQL 16 + pgvector
+PostgreSQL 16
+Milvus 2.4.x（Standalone）
 Redis 7
 Docker / Docker Compose
 ```
@@ -85,14 +86,17 @@ AI_SERVICE_BASE_URL
 INTERNAL_SERVICE_TOKEN
 FILE_STORAGE_ROOT
 MAX_UPLOAD_SIZE_MB
-LLM_PROVIDER
-LLM_MODEL
-LLM_API_KEY
+# LLM provider endpoint, model id and API keys are configured in the web UI.
+LLM_MODE
 EMBEDDING_MODEL
 EMBEDDING_DIMENSION
 RERANKER_MODEL
-WEB_SEARCH_API_KEY
+# Web search API keys are configured in project settings.
 OTEL_EXPORTER_ENDPOINT
+MILVUS_URI
+MILVUS_TOKEN
+MILVUS_DB_NAME
+MILVUS_COLLECTION_NAME
 ```
 
 `.env.example` 不包含真实密钥。
@@ -100,7 +104,7 @@ OTEL_EXPORTER_ENDPOINT
 ## 6. 本地启动
 
 ```bash
-docker compose up postgres redis -d
+docker compose up postgres milvus-etcd milvus-minio milvus redis -d
 
 cd Shinkou-backend
 mvn spring-boot:run
@@ -109,7 +113,7 @@ cd Shinkou-ai
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+uvicorn main:app --reload --port 8000
 
 cd Shinkou-web
 npm install
@@ -158,6 +162,9 @@ frontend
 backend
 ai-service
 postgres
+milvus-etcd
+milvus-minio
+milvus
 redis
 ```
 

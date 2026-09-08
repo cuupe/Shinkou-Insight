@@ -2,9 +2,9 @@
 import { computed } from "vue";
 import {
   ArrowRight,
+  CheckCircle2,
   Clock3,
   Database,
-  Plus,
   Search,
   ShieldCheck,
   Upload,
@@ -19,7 +19,6 @@ const { selectedProject, router, routeTo, assets, recentRuns, actionItems, statu
 const quickActions = [
   { label: "上传资料", description: "PDF、Markdown、TXT", route: "project-assets", tone: "teal" },
   { label: "检索测试", description: "验证知识库召回", route: "project-playground", tone: "violet" },
-  { label: "创建调研", description: "让 Agent 开始工作", route: "project-new-run", tone: "amber" },
 ];
 
 const indexedCount = computed(
@@ -68,7 +67,7 @@ const capabilities = computed(() => [
   },
   {
     title: recentRuns.length ? "已有调研运行" : "暂无调研运行",
-    description: recentRuns.length ? "可查看项目内真实任务进展" : "创建调研后这里会显示运行进展",
+    description: recentRuns.length ? "可查看项目内真实任务进展" : "已有调研运行后这里会显示进展",
     icon: "zap",
   },
 ]);
@@ -84,16 +83,6 @@ function overviewIcon(icon: string) {
     :title="selectedProject?.name || '暂无项目'"
     :subtitle="selectedProject?.description || ''"
   >
-    <template #action>
-      <button
-        class="button button-primary"
-        type="button"
-        :disabled="!selectedProject"
-        @click="router.push(routeTo('project-new-run'))"
-      >
-        <Plus :size="17" />创建调研
-      </button>
-    </template>
   </PageHeader>
   <div class="quick-actions">
     <button
@@ -216,7 +205,7 @@ function overviewIcon(icon: string) {
         </button>
         <div v-if="!recentRuns.length" class="empty-detail-state panel-empty-state">
           <Clock3 :size="18" /><strong>暂无调研运行</strong>
-          <span>创建调研后，这里会显示真实的运行记录。</span>
+          <span>已有调研运行后，这里会显示真实的运行记录。</span>
         </div>
       </div>
     </section>
@@ -256,6 +245,12 @@ function overviewIcon(icon: string) {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.75rem;
+  align-items: stretch;
+}
+.overview-grid > .panel {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
 }
 .project-statistics-panel {
   margin-bottom: 0.75rem;
@@ -328,6 +323,7 @@ function overviewIcon(icon: string) {
   grid-column: 1 / -1;
 }
 .asset-health {
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -378,7 +374,9 @@ function overviewIcon(icon: string) {
   background: var(--teal);
 }
 .capability-list {
+  flex: 1 1 auto;
   display: grid;
+  align-content: space-evenly;
   gap: 0;
   padding: 0.125rem 1.5rem 0.875rem;
 }
@@ -407,8 +405,15 @@ function overviewIcon(icon: string) {
   min-width: 0;
 }
 .recent-run-list {
-  display: grid;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: space-evenly;
   padding: 0.125rem 1rem 0.75rem;
+}
+.recent-run-list > .panel-empty-state {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .recent-run-item {
   display: flex;
@@ -482,7 +487,9 @@ function overviewIcon(icon: string) {
   grid-column: 1 / -1;
 }
 .follow-up-list {
+  flex: 1 1 auto;
   display: grid;
+  align-content: space-evenly;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   padding: 0.125rem 1rem 0.75rem;
   gap: 0.625rem;

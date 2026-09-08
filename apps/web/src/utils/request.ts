@@ -78,6 +78,7 @@ function isPublicAuthRequest(config?: AxiosError["config"]) {
     "/auth/login/",
     "/auth/register",
     "/auth/sms",
+    "/auth/password/reset",
     "/auth/logout",
   ].some((path) => url === path || url.startsWith(path));
 }

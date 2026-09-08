@@ -643,7 +643,7 @@ onMounted(loadProjects);
 
 .project-card {
   min-width: 0;
-  height: 14rem;
+  height: 11.75rem;
   box-sizing: border-box;
 
   display: flex;
@@ -653,7 +653,7 @@ onMounted(loadProjects);
   border: 0.0625rem solid var(--workspace-border);
   border-radius: 0.75rem;
 
-  padding: 1.375rem;
+  padding: 1.125rem;
 
   box-shadow: 0 0.4375rem 1.4375rem rgba(21, 53, 52, 0.035);
 
@@ -770,7 +770,7 @@ onMounted(loadProjects);
   line-height: 1.4;
   letter-spacing: -0.03em;
 
-  margin: 1.25rem 0 0.5rem;
+  margin: 0.875rem 0 0.375rem;
 
   min-height: 1.4em;
 
@@ -805,7 +805,7 @@ onMounted(loadProjects);
   display: flex;
   gap: 1.25rem;
 
-  padding: 0.875rem 0;
+  padding: 0.625rem 0;
   margin-top: auto;
 
   border-bottom: 0.0625rem solid #edf1f1;
@@ -841,7 +841,7 @@ onMounted(loadProjects);
 
   text-decoration: none;
 
-  margin-top: 0.75rem;
+  margin-top: 0.5rem;
 }
 
 .project-card-link:hover {

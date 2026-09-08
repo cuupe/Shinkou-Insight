@@ -29,7 +29,7 @@
 
 | Issue | 优先级 | 估时 |
 |---|---|---:|
-| pgvector setup | P0 | 0.5d |
+| Milvus setup | P0 | 0.5d |
 | Embedding Provider | P0 | 1d |
 | Batch indexing | P0 | 1.5d |
 | Vector search | P0 | 1d |

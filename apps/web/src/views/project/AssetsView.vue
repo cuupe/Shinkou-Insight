@@ -266,7 +266,26 @@ onMounted(loadAssets);
         <span>资料总量</span><strong>{{ assets.length }}</strong
         ><small>当前项目知识库</small>
       </div>
-      <div class="health-ring">
+      <div
+        class="health-ring"
+        role="progressbar"
+        :aria-valuenow="completionRate"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        :aria-label="`索引完成率 ${completionRate}%`"
+      >
+        <svg viewBox="0 0 40 40" aria-hidden="true">
+          <circle class="health-ring-track" cx="20" cy="20" r="17.5" />
+          <circle
+            v-if="completionRate > 0"
+            class="health-ring-progress"
+            cx="20"
+            cy="20"
+            r="17.5"
+            pathLength="100"
+            :stroke-dasharray="`${completionRate} 100`"
+          />
+        </svg>
         <strong>{{ completionRate }}%</strong><small>索引完成</small>
       </div>
     </article>
@@ -555,15 +574,15 @@ onMounted(loadAssets);
 .knowledge-health-grid {
   display: grid;
   grid-template-columns: 1.45fr repeat(3, 1fr);
-  gap: 0.875rem;
-  margin-bottom: 1rem;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
 }
 .health-card {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  min-height: 5.5rem;
-  padding: 1rem 1.125rem;
+  min-height: 4.5rem;
+  padding: 0.75rem 1rem;
   border: 0.0625rem solid var(--workspace-border);
   border-radius: 0.75rem;
   background: var(--surface);
@@ -620,28 +639,51 @@ onMounted(loadAssets);
   white-space: nowrap;
 }
 .health-ring {
+  position: relative;
   display: grid;
-  width: 3.25rem;
-  height: 3.25rem;
+  width: 3.75rem;
+  height: 3.75rem;
   flex: 0 0 auto;
   place-content: center;
   margin-left: auto;
-  border: 0.25rem solid #dff4ef;
-  border-right-color: var(--teal);
   border-radius: 50%;
   text-align: center;
+  box-sizing: border-box;
+}
+.health-ring svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.health-ring circle {
+  fill: none;
+  stroke-width: 2.6667;
+}
+.health-ring-track {
+  stroke: #dff4ef;
+}
+.health-ring-progress {
+  stroke: var(--teal);
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: center;
 }
 .health-ring strong {
+  position: relative;
+  z-index: 1;
   font-size: 0.6875rem;
 }
 .health-ring small {
+  position: relative;
+  z-index: 1;
   font-size: 0.4375rem;
 }
 .asset-table-panel {
   overflow: visible;
 }
 .library-toolbar {
-  padding: 1.25rem 1.5rem 0;
+  padding: 1rem 1.25rem 0;
 }
 .toolbar-topline,
 .toolbar-controls,

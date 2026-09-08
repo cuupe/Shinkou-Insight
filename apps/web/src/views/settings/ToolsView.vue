@@ -31,6 +31,14 @@ import { projectApi } from "@/api/projects";
 import { workspaceApi } from "@/api/workspace";
 
 type OperationKey = "read" | "search" | "create" | "update";
+type AgentAutonomy = "受控模式" | "自主模式" | "仅建议不执行";
+type AgentFallback = "暂停并请求确认" | "自动重试后暂停" | "降级为只读";
+type AgentPolicy = {
+  autonomy: AgentAutonomy;
+  requireApproval: boolean;
+  maxCalls: number;
+  fallback: AgentFallback;
+};
 
 type ToolRecord = {
   id?: number | string;
@@ -43,6 +51,7 @@ type ToolRecord = {
   endpoint: string;
   authType: string;
   credential: string;
+  sharingScope: "PERSONAL" | "TEAM";
   scope: string;
   method: string;
   timeout: number;
@@ -78,12 +87,13 @@ const selectedTool = ref<ToolRecord | null>(null);
 const editingExisting = ref(false);
 const testingTool = ref("");
 const connectorError = ref("");
-const agentPolicy = reactive({
-  autonomy: "",
-  requireApproval: false,
-  maxCalls: 0,
-  fallback: "",
-});
+const defaultAgentPolicy: AgentPolicy = {
+  autonomy: "受控模式",
+  requireApproval: true,
+  maxCalls: 10,
+  fallback: "暂停并请求确认",
+};
+const agentPolicy = reactive<AgentPolicy>({ ...defaultAgentPolicy });
 const workspacePreferences = reactive<Record<string, unknown>>({});
 const connectorForm = reactive({
   name: "",
@@ -92,6 +102,7 @@ const connectorForm = reactive({
   endpoint: "",
   authType: "API Key",
   credential: "",
+  sharingScope: "TEAM" as "PERSONAL" | "TEAM",
   scope: "当前工作区",
   method: "GET",
   timeout: 30,
@@ -110,6 +121,27 @@ const autonomousCount = computed(
     tools.value.filter((tool) => tool.enabled && tool.allowAutonomous).length,
 );
 
+function applyAgentPolicy(value: unknown) {
+  const stored = value && typeof value === "object" ? value as Partial<AgentPolicy> : {};
+  const maxCalls = Number(stored.maxCalls);
+  agentPolicy.autonomy =
+    stored.autonomy === "自主模式" || stored.autonomy === "仅建议不执行"
+      ? stored.autonomy
+      : defaultAgentPolicy.autonomy;
+  agentPolicy.requireApproval =
+    typeof stored.requireApproval === "boolean"
+      ? stored.requireApproval
+      : defaultAgentPolicy.requireApproval;
+  agentPolicy.maxCalls =
+    Number.isInteger(maxCalls) && maxCalls >= 1 && maxCalls <= 50
+      ? maxCalls
+      : defaultAgentPolicy.maxCalls;
+  agentPolicy.fallback =
+    stored.fallback === "自动重试后暂停" || stored.fallback === "降级为只读"
+      ? stored.fallback
+      : defaultAgentPolicy.fallback;
+}
+
 onMounted(async () => {
   try {
     const remoteWorkspace = await workspaceApi.detail(workspaceId.value);
@@ -118,7 +150,7 @@ onMounted(async () => {
         ? JSON.parse(remoteWorkspace.preferences)
         : {};
       Object.assign(workspacePreferences, preferences);
-      if (preferences.agentPolicy) Object.assign(agentPolicy, preferences.agentPolicy);
+      applyAgentPolicy(preferences.agentPolicy);
     } catch {
       // Malformed legacy preferences are treated as unavailable data.
     }
@@ -150,6 +182,7 @@ onMounted(async () => {
         endpoint: tool.endpoint,
         authType: tool.authType,
         credential: "",
+        sharingScope: tool.scope === "PERSONAL" ? "PERSONAL" : String(config.sharingScope || "TEAM") === "PERSONAL" ? "PERSONAL" : "TEAM",
         scope: String(config.scope || "—"),
         method: String(config.method || "—"),
         timeout: Number(config.timeout || 0),
@@ -174,6 +207,7 @@ function resetConnectorForm() {
     endpoint: "",
     authType: "API Key",
     credential: "",
+    sharingScope: "TEAM",
     scope: "当前工作区",
     method: "GET",
     timeout: 30,
@@ -197,6 +231,7 @@ function openConnector(tool: ToolRecord) {
     endpoint: tool.endpoint,
     authType: tool.authType,
     credential: tool.credential || "",
+    sharingScope: tool.sharingScope,
     scope: tool.scope,
     method: tool.method,
     timeout: tool.timeout,
@@ -288,6 +323,7 @@ async function saveConnector() {
     endpoint: connectorForm.endpoint.trim(),
     authType: connectorForm.authType,
     credential: connectorForm.credential.trim(),
+    sharingScope: connectorForm.sharingScope,
     scope: connectorForm.scope,
     method: connectorForm.method,
     timeout: connectorForm.timeout,
@@ -304,8 +340,10 @@ async function saveConnector() {
     connectorType: config.connectorType,
     authType: config.authType,
     credential: config.credential || undefined,
+    scope: config.sharingScope,
     config: JSON.stringify({
       description: config.description,
+      sharingScope: config.sharingScope,
       scope: config.scope,
       method: config.method,
       timeout: config.timeout,
@@ -446,11 +484,10 @@ function testTool(toolName: string) {
       <div class="policy-grid">
         <label class="field-label"
           >默认调用模式<select v-model="agentPolicy.autonomy">
-            <option value="">后端未提供策略配置</option>
-            <option>受控模式</option>
-            <option>自主模式</option>
-            <option>仅建议不执行</option></select
-          ><small>自主模式允许已授权工具在任务执行中直接调用。</small></label
+            <option value="受控模式">受控模式</option>
+            <option value="自主模式">自主模式</option>
+            <option value="仅建议不执行">仅建议不执行</option></select
+          ><small>受控模式会在写入操作前请求确认，自主模式仅适用于已授权工具。</small></label
         ><label class="field-label"
           >单次运行调用上限<input
             v-model.number="agentPolicy.maxCalls"
@@ -469,10 +506,9 @@ function testTool(toolName: string) {
           ></label
         ><label class="field-label"
           >失败后的处理<select v-model="agentPolicy.fallback">
-            <option value="">后端未提供策略配置</option>
-            <option>暂停并请求确认</option>
-            <option>自动重试后暂停</option>
-            <option>降级为只读</option>
+            <option value="暂停并请求确认">暂停并请求确认</option>
+            <option value="自动重试后暂停">自动重试后暂停</option>
+            <option value="降级为只读">降级为只读</option>
           </select></label
         >
       </div>
@@ -515,7 +551,7 @@ function testTool(toolName: string) {
             ><strong>{{ tool.name }}</strong
             ><small
               >{{ tool.description }} · {{ tool.connectorType }} ·
-              {{ tool.scope }}</small
+              {{ tool.sharingScope === "PERSONAL" ? "个人凭证" : "项目共享" }} · {{ tool.scope }}</small
             ></span
           ><span
             class="tool-policy"
@@ -632,6 +668,7 @@ function testTool(toolName: string) {
                 >连接类型<select v-model="connectorForm.connectorType">
                   <option>内置连接器</option>
                   <option>REST API</option>
+                  <option>WEB_SEARCH</option>
                   <option>MCP Server</option>
                   <option>Webhook</option>
                 </select></label
@@ -701,6 +738,11 @@ function testTool(toolName: string) {
                   <option>仅限读取</option>
                   <option>指定资源</option>
                 </select></label
+              ><label class="field-label"
+                >凭证归属<select v-model="connectorForm.sharingScope">
+                  <option value="TEAM">项目共享</option>
+                  <option value="PERSONAL">仅自己使用</option>
+                </select><small>个人凭证只对本人可见；项目执行默认优先使用项目创建者的凭证。</small></label
               ><label class="policy-toggle"
                 ><input
                   v-model="connectorForm.allowAutonomous"

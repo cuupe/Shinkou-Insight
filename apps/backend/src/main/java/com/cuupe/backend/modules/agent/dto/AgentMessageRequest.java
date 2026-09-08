@@ -12,4 +12,12 @@ public class AgentMessageRequest {
     private String messageId;
     private String content;
     private List<Map<String, Object>> attachments = new ArrayList<>();
+    private Boolean allowWebSearch;
+    private Integer maxResearchRounds;
+    private Integer topK;
+    private String retrievalMode;
+    private Boolean useReranker;
+    private String outputLanguage;
+    private Long modelConfigId;
+    private Long webSearchToolId;
 }

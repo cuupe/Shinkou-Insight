@@ -18,9 +18,14 @@ public class SecretCipher {
     private final SecretKeySpec key;
     private final SecureRandom random = new SecureRandom();
 
-    public SecretCipher(@Value("${shinkou.security.encryption-key}") String encodedKey) {
+    public SecretCipher(
+            @Value("${shinkou.security.encryption-key}") String encodedKey,
+            @Value("${shinkou.security.environment:development}") String environment) {
         byte[] bytes;
         if (encodedKey == null || encodedKey.isBlank()) {
+            if ("production".equalsIgnoreCase(environment)) {
+                throw new IllegalStateException("生产环境必须配置 SHINKOU_ENCRYPTION_KEY");
+            }
             bytes = new byte[32];
             new SecureRandom().nextBytes(bytes);
             System.err.println("SHINKOU_ENCRYPTION_KEY 未配置，仅使用临时开发密钥；重启后已保存凭证将无法解密");

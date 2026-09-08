@@ -35,7 +35,7 @@
 ## Phase 2：RAG 检索
 
 - Embedding Provider。
-- pgvector。
+- Milvus collection 和向量索引。
 - Keyword Search。
 - Hybrid Fusion。
 - Retrieval Playground。

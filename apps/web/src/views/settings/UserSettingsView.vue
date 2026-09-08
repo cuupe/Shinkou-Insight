@@ -87,14 +87,19 @@ onMounted(async () => {
 
 const passwordStrength = computed(() => {
   if (!passwordForm.next) return "未设置";
+  const classes = [
+    /[A-Z]/.test(passwordForm.next),
+    /[a-z]/.test(passwordForm.next),
+    /\d/.test(passwordForm.next),
+    /[^A-Za-z0-9]/.test(passwordForm.next),
+  ].filter(Boolean).length;
   if (
-    passwordForm.next.length >= 10 &&
-    /[A-Z]/.test(passwordForm.next) &&
-    /\d/.test(passwordForm.next)
+    passwordForm.next.length >= 12 &&
+    classes >= 3
   )
     return "强度良好";
-  if (passwordForm.next.length >= 8) return "强度一般";
-  return "强度偏弱";
+  if (passwordForm.next.length >= 12) return "复杂度不足";
+  return "至少需要 12 位";
 });
 
 async function saveProfile() {
@@ -145,10 +150,10 @@ async function changePassword() {
     return;
   }
   if (
-    passwordForm.next.length < 8 ||
+    passwordForm.next.length < 12 ||
     passwordForm.next !== passwordForm.confirm
   ) {
-    notify("请确认新密码至少 8 位且两次输入一致");
+    notify("请确认新密码至少 12 位且两次输入一致");
     return;
   }
   if (!passwordCodeId.value) {
@@ -313,16 +318,18 @@ async function handleLogout() {
           >邮箱（可选）<input v-model="email" type="email" autocomplete="email"
         /></label>
       </div>
-      <button class="button button-primary" type="button" @click="saveProfile">
-        保存个人信息
-      </button>
-      <button
-        class="button button-secondary phone-change-button"
-        type="button"
-        @click="phoneOpen = true"
-      >
-        修改手机号
-      </button>
+      <div class="profile-actions">
+        <button class="button button-primary" type="button" @click="saveProfile">
+          保存个人信息
+        </button>
+        <button
+          class="button button-secondary"
+          type="button"
+          @click="phoneOpen = true"
+        >
+          修改手机号
+        </button>
+      </div>
     </div>
 
     <div class="settings-section">
@@ -421,7 +428,7 @@ async function handleLogout() {
               type="password"
               autocomplete="new-password"
             /><small class="password-hint"
-              >{{ passwordStrength }} · 至少 8 位</small
+              >{{ passwordStrength }} · 至少 12 位</small
             ></label
           ><label class="field-label"
             >确认新密码<input
@@ -679,8 +686,12 @@ async function handleLogout() {
   display: grid;
   gap: 0.875rem;
 }
-.phone-change-button {
-  margin-top: 0.75rem;
+.profile-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1rem;
 }
 .verification-row {
   display: flex;
@@ -716,6 +727,13 @@ async function handleLogout() {
   }
   .security-setting-row .button {
     margin-left: 2.75rem;
+  }
+  .profile-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .profile-actions .button {
+    width: 100%;
   }
   .section-intro {
     gap: 0.5rem;

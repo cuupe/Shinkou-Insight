@@ -1,0 +1,36 @@
+server:
+  servlet:
+    session:
+      cookie:
+        secure: true
+
+spring:
+  datasource:
+    url: ${SHINKOU_DB_URL}
+    username: ${SHINKOU_DB_USERNAME}
+    password: ${SHINKOU_DB_PASSWORD}
+  data:
+    redis:
+      host: ${SHINKOU_REDIS_HOST}
+      port: ${SHINKOU_REDIS_PORT:6379}
+      password: ${SHINKOU_REDIS_PASSWORD}
+
+shinkou:
+  security:
+    environment: production
+    allowed-origins: ${SHINKOU_ALLOWED_ORIGINS}
+    encryption-key: ${SHINKOU_ENCRYPTION_KEY}
+  storage:
+    minio:
+      endpoint: ${SHINKOU_MINIO_ENDPOINT}
+      access-key: ${SHINKOU_MINIO_ACCESS_KEY}
+      secret-key: ${SHINKOU_MINIO_SECRET_KEY}
+  graph:
+    neo4j:
+      uri: ${SHINKOU_NEO4J_URI}
+      username: ${SHINKOU_NEO4J_USERNAME}
+      password: ${SHINKOU_NEO4J_PASSWORD}
+  ai:
+    base-url: ${SHINKOU_AI_SERVICE_URL}
+    internal-api-key: ${SHINKOU_AI_INTERNAL_API_KEY}
+    callback-base-url: ${SHINKOU_AI_CALLBACK_BASE_URL}

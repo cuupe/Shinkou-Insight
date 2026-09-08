@@ -64,18 +64,6 @@
           AND e.id &gt; COALESCE(#{afterId}, 0)
         ORDER BY e.id
     </select>
-    <select id="findProjectChunks" resultType="com.cuupe.backend.modules.agent.entity.AgentChunk">
-        SELECT c.id, c.asset_id, a.name AS asset_name, c.page_number, c.content
-        FROM asset_chunks c
-        JOIN knowledge_assets a ON a.id = c.asset_id
-        JOIN projects p ON p.id = a.project_id
-        JOIN workspace_members wm ON wm.workspace_id = p.workspace_id
-            AND wm.user_id = #{userId} AND wm.status = 'ACTIVE'
-        WHERE p.id = #{projectId} AND p.workspace_id = #{workspaceId}
-          AND p.status &lt;&gt; 'DELETED' AND c.content IS NOT NULL AND c.content &lt;&gt; ''
-        ORDER BY a.updated_at DESC, c.chunk_index
-        LIMIT 200
-    </select>
     <insert id="insertAttachment" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO agent_attachments(workspace_id, project_id, uploaded_by, file_name, kind, mime_type, file_size, storage_key, content)
         VALUES(#{workspaceId}, #{projectId}, #{uploadedBy}, #{fileName}, #{kind}, #{mimeType}, #{fileSize}, #{storageKey}, #{content})

@@ -1,7 +1,8 @@
 server:
-  port: 8081
+  port: 8080
   servlet:
     session:
+      timeout: ${SHINKOU_SESSION_TIMEOUT:30m}
       cookie:
         http-only: true
         same-site: lax
@@ -53,10 +54,29 @@ shinkou:
       uri: ${SHINKOU_NEO4J_URI:bolt://localhost:7687}
       username: ${SHINKOU_NEO4J_USERNAME:neo4j}
       password: ${SHINKOU_NEO4J_PASSWORD:shinkou_graph_password}
+  ai:
+    base-url: ${SHINKOU_AI_SERVICE_URL:http://localhost:8000}
+    internal-api-key: ${SHINKOU_AI_INTERNAL_API_KEY:local-dev-key}
+    callback-base-url: ${SHINKOU_AI_CALLBACK_BASE_URL:http://localhost:8081}
   security:
-    allowed-origins: ${SHINKOU_ALLOWED_ORIGINS:http://localhost:4173,http://127.0.0.1:4173}
-    # 生产环境必须设置，值为 Base64 编码的 32 字节随机密钥。
+    environment: ${SHINKOU_ENVIRONMENT:development}
+    # Vite 默认使用 5173，4173/4174 用于本地预览或端口自动切换。
+    allowed-origins: ${SHINKOU_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:4173,http://127.0.0.1:4173,http://localhost:4174,http://127.0.0.1:4174,http://localhost:4175,http://127.0.0.1:4175}
     encryption-key: ${SHINKOU_ENCRYPTION_KEY:}
+    auth:
+      login-requests-per-ip: ${SHINKOU_AUTH_LOGIN_REQUESTS_PER_IP:30}
+      login-request-window: ${SHINKOU_AUTH_LOGIN_REQUEST_WINDOW:5m}
+      login-failures-per-account-ip: ${SHINKOU_AUTH_LOGIN_FAILURES_PER_ACCOUNT_IP:5}
+      login-failure-window: ${SHINKOU_AUTH_LOGIN_FAILURE_WINDOW:15m}
+      sms-requests-per-ip: ${SHINKOU_AUTH_SMS_REQUESTS_PER_IP:20}
+      sms-requests-per-phone: ${SHINKOU_AUTH_SMS_REQUESTS_PER_PHONE:3}
+      sms-request-window: ${SHINKOU_AUTH_SMS_REQUEST_WINDOW:10m}
+      sms-cooldown: ${SHINKOU_AUTH_SMS_COOLDOWN:60s}
+      captcha-requests-per-ip: ${SHINKOU_AUTH_CAPTCHA_REQUESTS_PER_IP:30}
+      captcha-request-window: ${SHINKOU_AUTH_CAPTCHA_REQUEST_WINDOW:1m}
+      password-mutations-per-user: ${SHINKOU_AUTH_PASSWORD_MUTATIONS_PER_USER:5}
+      password-mutation-window: ${SHINKOU_AUTH_PASSWORD_MUTATION_WINDOW:15m}
+      max-active-sessions-per-user: ${SHINKOU_AUTH_MAX_ACTIVE_SESSIONS:5}
 
 mybatis:
   mapper-locations: classpath*:mapper/**/*.xml
