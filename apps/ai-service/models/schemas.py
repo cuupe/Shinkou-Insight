@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def _camel(value: str) -> str:
@@ -45,6 +45,7 @@ class RuntimeModelConfig(ApiModel):
     base_url: str = Field(min_length=1, max_length=1_000)
     api_key: str = Field(min_length=1, max_length=10_000)
     model: str = Field(min_length=1, max_length=300)
+    provider: str | None = None
     timeout_seconds: float = Field(default=60, gt=0, le=600)
     retries: int = Field(default=2, ge=0, le=5)
     generation: ModelGenerationConfig = Field(default_factory=ModelGenerationConfig)
@@ -55,7 +56,8 @@ class RuntimeWebSearchConfig(ApiModel):
     """按项目/团队解析的联网搜索配置。"""
 
     provider: str = "brave"
-    api_key: str = Field(min_length=1, max_length=10_000)
+    # DuckDuckGo's public HTML endpoint does not require a credential.
+    api_key: str = Field(default="", max_length=10_000)
     base_url: str = Field(min_length=1, max_length=1_000)
     language: str = "zh-hans"
 
@@ -79,6 +81,11 @@ class TokenUsage(ApiModel):
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    model: str | None = None
+    # False means the provider did not return usage metadata; zero is not
+    # treated as a made-up estimate in that case.
+    available: bool = False
+    estimated: bool = False
 
 
 class ModelChatResult(ApiModel):
@@ -149,6 +156,44 @@ class ReviewResult(ApiModel):
     rewrite_instructions: list[str] = Field(default_factory=list)
 
 
+class ReflectionResult(ApiModel):
+    """One bounded self-check for a chat draft."""
+
+    approved: bool = False
+    issues: list[str] = Field(default_factory=list, max_length=8)
+    corrections: list[str] = Field(default_factory=list, max_length=8)
+    confidence: float = Field(default=0.5, ge=0, le=1)
+
+
+class ReActAction(ApiModel):
+    """One bounded action in the interactive chat tool loop.
+
+    ``note`` is an operational summary for the trace, not hidden
+    chain-of-thought. The runtime records the action and its observation
+    separately so the UI can explain what happened safely.
+    """
+
+    action: Literal["SEARCH_INTERNAL", "SEARCH_WEB", "FINAL"] = "FINAL"
+    query: str = Field(default="", max_length=2_000)
+    note: str = Field(default="", max_length=300)
+
+
+class PlanStep(ApiModel):
+    """A small executable step used by the chat Plan-and-Solve path."""
+
+    id: str = Field(min_length=1, max_length=40)
+    objective: str = Field(min_length=1, max_length=500)
+    action: Literal["SEARCH_INTERNAL", "SEARCH_WEB", "SYNTHESIZE"] = "SYNTHESIZE"
+    query: str = Field(default="", max_length=2_000)
+
+
+class AgentPlan(ApiModel):
+    """A bounded plan containing tasks, not hidden reasoning."""
+
+    summary: str = Field(default="", max_length=500)
+    steps: list[PlanStep] = Field(default_factory=list, max_length=6)
+
+
 class ResearchConfig(ApiModel):
     allow_web_search: bool = False
     max_research_rounds: int = Field(default=3, ge=1, le=8)
@@ -157,9 +202,14 @@ class ResearchConfig(ApiModel):
     top_k: int = Field(default=8, ge=1, le=20)
     retrieval_mode: Literal["VECTOR", "KEYWORD", "HYBRID"] = "HYBRID"
     use_reranker: bool = False
-    system_prompts: dict[str, str] = Field(default_factory=dict)
     tool_max_calls: int = Field(default=10, ge=1, le=50)
     require_tool_approval: bool = True
+    reflection_enabled: bool = True
+    # AUTO selects a suitable path per request. DIRECT is for internal callers
+    # and is intentionally not exposed as a separate UI option.
+    strategy: Literal["AUTO", "DIRECT", "REACT", "PLAN_AND_SOLVE", "REFLECTION"] = "AUTO"
+    # 当后端没有解析出项目级模型时，作为默认模型的本次运行覆盖参数。
+    generation: ModelGenerationConfig | None = None
 
 
 class ExecuteRunRequest(ApiModel):
@@ -174,6 +224,7 @@ class ExecuteRunRequest(ApiModel):
     runtime_web_search: RuntimeWebSearchConfig | None = None
     runtime_embedding: RuntimeEmbeddingConfig | None = None
     agent_message_id: str | None = None
+    context_messages: list[ChatMessage] = Field(default_factory=list, max_length=40)
 
 
 class KnowledgeSearchRequest(ApiModel):
@@ -228,6 +279,19 @@ class KnowledgeAnswerResponse(ApiModel):
     insufficient_evidence: bool
 
 
+class ChunkingConfig(ApiModel):
+    strategy: Literal["natural", "paragraph", "fixed"] = "natural"
+    chunk_size: int = Field(default=1200, ge=400, le=4000)
+    chunk_overlap: int = Field(default=180, ge=0, le=1200)
+    preserve_sections: bool = True
+
+    @model_validator(mode="after")
+    def validate_overlap(self) -> "ChunkingConfig":
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap must be smaller than chunk_size")
+        return self
+
+
 class IndexAssetRequest(ApiModel):
     asset_id: int | str
     workspace_id: int
@@ -240,6 +304,7 @@ class IndexAssetRequest(ApiModel):
     language: str | None = None
     checksum: str | None = None
     runtime_embedding: RuntimeEmbeddingConfig | None = None
+    chunking: ChunkingConfig | None = None
 
 
 class IndexAssetResponse(ApiModel):

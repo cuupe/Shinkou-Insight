@@ -75,6 +75,8 @@ data: {"type":"event.updated","runId":"agent-run-2408","event":{...}}
 
 其中 `event.kind` 建议使用 `plan`、`search`、`tool`、`evidence`、`synthesis`，这样前端可以显示对应的执行节点图标。
 
+聊天请求的 `config` 还支持 `strategy`：`AUTO`、`REACT`、`PLAN_AND_SOLVE`、`REFLECTION`。页面对应的正常产品文案是“自动选择”“先整理步骤”“边查边确认”“回答后检查”，不会把内部实现术语直接写进用户提示。详见 [对话处理方式升级说明](22-reasoning-workflows.md)。
+
 ## 3. 设计约束
 
 - SSE 事件顺序应保持服务端实际执行顺序。

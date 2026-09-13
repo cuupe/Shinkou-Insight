@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     llm_api_key: str | None = Field(default=None, validation_alias="AI_SERVICE_LLM_API_KEY")
     llm_model: str = Field(default="", validation_alias="AI_SERVICE_LLM_MODEL")
     llm_timeout_seconds: float = Field(default=60, gt=0, le=600)
+    # Knowledge retrieval is an optional enrichment step. It must never hold
+    # the whole answer behind the provider/database timeout.
+    knowledge_timeout_seconds: float = Field(default=6, gt=0, le=120)
     request_timeout_seconds: float = Field(default=30, gt=0, le=600)
     max_retries: int = Field(default=2, ge=0, le=5)
     llm_structured_output_method: str = "json_schema"

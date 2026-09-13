@@ -22,12 +22,7 @@ class EvidenceAnalystAgent:
         else:
             action = "ENOUGH"
         evaluation, _ = await context.model_for(self.name).structured(
-            evidence_evaluation_prompt(
-                payload["goal"],
-                evidence_count,
-                payload.get("output_language", "zh-CN"),
-                system_prompts=payload.get("system_prompts"),
-            ),
+            evidence_evaluation_prompt(payload["goal"], evidence_count, payload.get("output_language", "zh-CN")),
             EvidenceEvaluation,
         )
         evaluation.next_action = action
@@ -55,12 +50,7 @@ class FindingAnalystAgent:
             )
         else:
             finding, _ = await context.model_for(self.name).structured(
-                finding_prompt(
-                    payload["goal"],
-                    [item.model_dump() for item in evidence],
-                    payload.get("output_language", "zh-CN"),
-                    system_prompts=payload.get("system_prompts"),
-                ),
+                finding_prompt(payload["goal"], [item.model_dump() for item in evidence], payload.get("output_language", "zh-CN")),
                 Finding,
             )
             valid_ids = {item.id for item in evidence}

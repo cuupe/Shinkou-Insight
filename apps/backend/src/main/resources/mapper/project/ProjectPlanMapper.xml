@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cuupe.backend.modules.project.mapper.ProjectPlanMapper">
+    <select id="findByProject" resultType="com.cuupe.backend.modules.project.entity.ProjectPlan">
+        SELECT project_id, workspace_id, objective, problem, success_metrics,
+               constraints, owner, deadline, updated_by, created_at, updated_at
+        FROM project_plans
+        WHERE workspace_id = #{workspaceId} AND project_id = #{projectId}
+    </select>
+
+    <insert id="upsert">
+        INSERT INTO project_plans
+            (project_id, workspace_id, objective, problem, success_metrics, constraints, owner, deadline, updated_by)
+        VALUES
+            (#{projectId}, #{workspaceId}, #{objective}, #{problem}, #{successMetrics}, #{constraints}, #{owner}, #{deadline}, #{updatedBy})
+        ON CONFLICT (project_id) DO UPDATE SET
+            workspace_id = EXCLUDED.workspace_id,
+            objective = EXCLUDED.objective,
+            problem = EXCLUDED.problem,
+            success_metrics = EXCLUDED.success_metrics,
+            constraints = EXCLUDED.constraints,
+            owner = EXCLUDED.owner,
+            deadline = EXCLUDED.deadline,
+            updated_by = EXCLUDED.updated_by,
+            updated_at = CURRENT_TIMESTAMP
+    </insert>
+</mapper>

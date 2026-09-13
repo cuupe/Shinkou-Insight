@@ -14,6 +14,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -27,6 +28,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.List;
 
 @RestController
 @RequestMapping("/workspaces/{workspaceId}/projects/{projectId}/agent")
@@ -46,6 +48,27 @@ public class AgentController {
         AgentRunAccepted accepted = agentService.accept(workspaceId, projectId, userId, request);
         auditLogService.record(workspaceId, projectId, userId, "AGENT_RUN_CREATED", "AGENT_RUN", accepted.getRunId());
         return Result.success(accepted);
+    }
+
+    @GetMapping("/threads")
+    public Result<List<Map<String, Object>>> threads(
+            @PathVariable Long projectId,
+            Authentication authentication
+    ) {
+        return Result.success(agentService.history(projectId, userId(authentication)));
+    }
+
+    @DeleteMapping("/threads/{threadId}")
+    public Result<Void> deleteThread(
+            @PathVariable Long workspaceId,
+            @PathVariable Long projectId,
+            @PathVariable String threadId,
+            Authentication authentication
+    ) {
+        Long userId = userId(authentication);
+        agentService.deleteThread(workspaceId, projectId, userId, threadId);
+        auditLogService.record(workspaceId, projectId, userId, "AGENT_THREAD_DELETED", "AGENT_THREAD", threadId);
+        return Result.success();
     }
 
     @GetMapping(value = "/runs/{runId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

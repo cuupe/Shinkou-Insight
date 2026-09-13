@@ -18,12 +18,7 @@ class ReportReviewerAgent:
             referenced.update(section.get("evidence_ids", []))
         invalid = sorted(referenced - valid_ids)
         review, _ = await context.model_for(self.name).structured(
-            review_prompt(
-                sorted(referenced),
-                sorted(valid_ids),
-                message.payload.get("output_language", "zh-CN"),
-                system_prompts=message.payload.get("system_prompts"),
-            ),
+            review_prompt(sorted(referenced), sorted(valid_ids), message.payload.get("output_language", "zh-CN")),
             ReviewResult,
         )
         review.missing_citations = invalid

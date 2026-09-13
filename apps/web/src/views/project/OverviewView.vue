@@ -3,22 +3,27 @@ import { computed } from "vue";
 import {
   ArrowRight,
   CheckCircle2,
+  ClipboardList,
   Clock3,
   Database,
-  Search,
+  Download,
+  FileCheck2,
+  MessageCircle,
   ShieldCheck,
-  Upload,
   Users,
   Zap,
 } from "@lucide/vue";
 import { useWorkspace } from "@/composables/useWorkspace";
 import PageHeader from "@/components/common/PageHeader.vue";
-const { selectedProject, router, routeTo, assets, recentRuns, actionItems, statusClass, statistics } =
+import TokenUsageChart from "@/components/common/TokenUsageChart.vue";
+const { selectedProject, router, routeTo, assets, recentRuns, reports, actionItems, statusClass, statistics } =
   useWorkspace();
 
 const quickActions = [
-  { label: "上传资料", description: "PDF、Markdown、TXT", route: "project-assets", tone: "teal" },
-  { label: "检索测试", description: "验证知识库召回", route: "project-playground", tone: "violet" },
+  { label: "启动项目 Agent", description: "从目标开始，串联规划、搜集与审查", route: "project-agent-chat", tone: "violet", icon: MessageCircle },
+  { label: "查看规划中枢", description: "目标、竞品、可行性与计划书", route: "project-planning", tone: "teal", icon: ClipboardList },
+  { label: "查看审查中心", description: "引用门禁与反虚构规则", route: "project-review", tone: "amber", icon: FileCheck2 },
+  { label: "上传项目资料", description: "PDF、Markdown、TXT", route: "project-assets", tone: "blue", icon: Database },
 ];
 
 const indexedCount = computed(
@@ -29,6 +34,30 @@ const indexCompletion = computed(() => {
   return `${Math.round((indexedCount.value / assets.length) * 100)}%`;
 });
 const projectSummary = computed(() => statistics.value?.summary);
+const tokenUsage = computed(() => statistics.value?.tokenUsage);
+const tokenDaily = computed(() => statistics.value?.tokenDaily || []);
+const tokenUsers = computed(() => statistics.value?.tokenUsers || []);
+const tokenBreakdown = computed(() => {
+  if (statistics.value?.tokenBreakdown?.length) return statistics.value.tokenBreakdown;
+  return tokenUsers.value.map((user) => ({
+    projectId: selectedProject.value?.id || 0,
+    projectName: selectedProject.value?.name || "当前项目",
+    userId: user.userId,
+    userName: user.userName,
+    modelName: "模型未标注",
+    totalTokens: user.totalTokens,
+    inputTokens: 0,
+    outputTokens: 0,
+    runCount: user.runCount,
+  }));
+});
+const tokenChartItems = computed(() => tokenBreakdown.value.map((item) => ({
+  label: `${item.userName || `用户 ${item.userId}`} · ${item.modelName || "模型未标注"}`,
+  detail: `${item.projectName || "当前项目"} · ${item.runCount} 次运行`,
+  tokens: Number(item.totalTokens) || 0,
+})));
+const maxDailyTokens = computed(() => Math.max(1, ...tokenDaily.value.map((item) => Number(item.tokens) || 0)));
+const maxHeatTokens = computed(() => Math.max(1, ...tokenDaily.value.map((item) => Number(item.tokens) || 0)));
 const qualityAverage = computed(() => {
   const values = [
     projectSummary.value?.avgRecall,
@@ -75,6 +104,50 @@ const capabilities = computed(() => [
 function overviewIcon(icon: string) {
   return icon === "database" ? Database : Zap;
 }
+
+function formatTokens(value: number | string | undefined) {
+  return Number(value || 0).toLocaleString();
+}
+
+function heatLevel(value: number | string | undefined) {
+  const ratio = (Number(value) || 0) / maxHeatTokens.value;
+  if (ratio <= 0) return "level-0";
+  if (ratio < 0.25) return "level-1";
+  if (ratio < 0.5) return "level-2";
+  if (ratio < 0.75) return "level-3";
+  return "level-4";
+}
+
+function downloadText(name: string, content: string, type: string) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportTokenCsv() {
+  const rows = ["date,tokens,runs", ...tokenDaily.value.map((item) => `${item.date},${item.tokens},${item.runs}`)];
+  downloadText("project-token-usage.csv", `\ufeff${rows.join("\n")}\n`, "text/csv;charset=utf-8");
+}
+
+function exportProjectSnapshot() {
+  const snapshot = {
+    exportedAt: new Date().toISOString(),
+    project: selectedProject.value,
+    statistics: statistics.value,
+    assets: assets,
+    runs: recentRuns,
+    reports,
+    actionItems,
+  };
+  downloadText(
+    `${selectedProject.value?.name || "project"}-snapshot.json`,
+    JSON.stringify(snapshot, null, 2),
+    "application/json;charset=utf-8",
+  );
+}
 </script>
 
 <template>
@@ -92,14 +165,17 @@ function overviewIcon(icon: string) {
       @click="router.push(routeTo(action.route))"
     >
       <span class="quick-icon" :class="`${action.tone}-bg`">
-        <Upload v-if="index === 0" :size="18" />
-        <Search v-else-if="index === 1" :size="18" />
-        <Zap v-else :size="18" />
+        <component :is="action.icon" :size="18" />
       </span>
       <span><strong>{{ action.label }}</strong><small>{{ action.description }}</small></span>
       <ArrowRight :size="15" />
     </button>
   </div>
+  <section class="planning-callout panel">
+    <div class="planning-callout-icon"><ClipboardList :size="18" /></div>
+    <div><strong>把一次调研升级为可审查的项目计划</strong><p>系统会沿着目标、证据、市场对比、可行性和人工签署逐步收敛，引用不足的结论不会直接进入发布版本。</p></div>
+    <button class="button button-primary button-sm" type="button" @click="router.push(routeTo('project-agent-chat'))">启动 Agent <ArrowRight :size="14" /></button>
+  </section>
   <section class="panel project-statistics-panel">
     <div class="panel-heading">
       <div>
@@ -131,6 +207,57 @@ function overviewIcon(icon: string) {
         <span class="breakdown-title">行动状态</span>
         <span v-for="item in (statistics?.actionItemStatuses || [])" :key="`action-${item.status}`" class="breakdown-item">{{ statisticStatusLabel(item.status) }} {{ item.count }}</span>
         <span v-if="!statistics?.actionItemStatuses?.length" class="breakdown-empty">暂无行动数据</span>
+      </div>
+    </div>
+  </section>
+  <section class="panel token-usage-panel">
+    <div class="panel-heading">
+      <div>
+        <h2>项目 Token 使用</h2>
+        <p>按真实运行记录统计；颜色越深表示当天消耗越高</p>
+      </div>
+      <div class="usage-actions">
+        <button class="text-button" type="button" @click="exportTokenCsv"><Download :size="14" />导出 CSV</button>
+        <button class="text-button" type="button" @click="exportProjectSnapshot"><Download :size="14" />导出项目快照</button>
+      </div>
+    </div>
+    <div class="token-summary-grid">
+      <div><strong>{{ formatTokens(tokenUsage?.totalTokens) }}</strong><span>总 Tokens</span></div>
+      <div><strong>{{ formatTokens(tokenUsage?.inputTokens) }}</strong><span>输入 Tokens</span></div>
+      <div><strong>{{ formatTokens(tokenUsage?.outputTokens) }}</strong><span>输出 Tokens</span></div>
+      <div><strong>{{ formatTokens(tokenUsage?.compressedContextTokens) }}</strong><span>压缩节省估算</span></div>
+      <div><strong>{{ formatTokens(tokenUsage?.runCount) }}</strong><span>计费运行次数</span></div>
+    </div>
+    <div class="token-usage-grid">
+      <div class="token-heatmap-card">
+        <div class="usage-subheading"><strong>近 {{ tokenDaily.length || 30 }} 天</strong><span>每日使用量</span></div>
+        <div v-if="tokenDaily.length" class="token-heatmap" aria-label="每日 Token 使用热力图">
+          <span
+            v-for="point in tokenDaily"
+            :key="point.date"
+            class="heat-cell"
+            :class="heatLevel(point.tokens)"
+            :title="`${point.date} · ${formatTokens(point.tokens)} tokens · ${point.runs} 次运行`"
+          />
+        </div>
+        <p v-else class="usage-empty">暂无真实 Token 记录</p>
+        <div class="heatmap-legend"><span>少</span><i class="level-0" /><i class="level-1" /><i class="level-2" /><i class="level-3" /><i class="level-4" /><span>多</span></div>
+        <div v-if="tokenDaily.length" class="daily-bars" aria-label="每日 Token 柱状图">
+          <span v-for="point in tokenDaily" :key="`bar-${point.date}`" :title="`${point.date} · ${formatTokens(point.tokens)} tokens`"><i :style="{ height: `${Math.max(3, ((Number(point.tokens) || 0) / maxDailyTokens) * 100)}%` }" /></span>
+        </div>
+      </div>
+      <div class="token-users-card">
+        <div class="usage-subheading"><strong>按项目 / 用户 / 模型</strong><span>每条均来自真实运行记录</span></div>
+        <TokenUsageChart v-if="tokenChartItems.length" :items="tokenChartItems" />
+        <p v-else class="usage-empty">暂无真实 Token 记录</p>
+        <div v-if="tokenBreakdown.length" class="token-breakdown-table">
+          <div class="token-breakdown-row token-breakdown-header"><span>用户</span><span>模型</span><span>运行 / Tokens</span></div>
+          <div v-for="item in tokenBreakdown" :key="`${item.projectId}-${item.userId}-${item.modelName}`" class="token-breakdown-row">
+            <span>{{ item.userName || `用户 ${item.userId}` }}<small>{{ item.projectName }}</small></span>
+            <span class="model-label">{{ item.modelName || "模型未标注" }}</span>
+            <span>{{ item.runCount }} 次 · {{ formatTokens(item.totalTokens) }}</span>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -247,6 +374,43 @@ function overviewIcon(icon: string) {
   gap: 0.75rem;
   align-items: stretch;
 }
+.planning-callout {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding: 0.875rem 1.25rem;
+  border-color: color-mix(in oklab, var(--teal) 24%, var(--workspace-border));
+  background: color-mix(in oklab, var(--teal) 6%, var(--surface));
+}
+.planning-callout-icon {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 0.625rem;
+  background: #e3f7f3;
+  color: var(--teal-dark);
+}
+.planning-callout > div:nth-child(2) {
+  min-width: 0;
+  flex: 1;
+}
+.planning-callout strong,
+.planning-callout p {
+  display: block;
+}
+.planning-callout strong {
+  color: var(--workspace-text);
+  font-size: 0.6875rem;
+}
+.planning-callout p {
+  margin: 0.25rem 0 0;
+  color: var(--workspace-muted);
+  font-size: 0.5625rem;
+  line-height: 1.55;
+}
 .overview-grid > .panel {
   display: flex;
   min-height: 0;
@@ -254,6 +418,230 @@ function overviewIcon(icon: string) {
 }
 .project-statistics-panel {
   margin-bottom: 0.75rem;
+}
+.token-usage-panel {
+  margin-bottom: 0.75rem;
+}
+.usage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+.usage-actions .text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.token-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.625rem;
+  padding: 0.125rem 1.25rem 1rem;
+}
+.token-summary-grid > div {
+  min-width: 0;
+  padding: 0.6875rem 0.75rem;
+  border: 0.0625rem solid var(--workspace-divider);
+  border-radius: 0.5rem;
+  background: var(--surface-raised);
+}
+.token-summary-grid strong,
+.token-summary-grid span {
+  display: block;
+}
+.token-summary-grid strong {
+  color: var(--workspace-text);
+  font-size: 1rem;
+  letter-spacing: -0.04em;
+}
+.token-summary-grid span {
+  margin-top: 0.3125rem;
+  color: var(--workspace-muted);
+  font-size: 0.5rem;
+}
+.token-usage-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(18rem, 0.8fr);
+  gap: 1rem;
+  padding: 0 1.25rem 1.125rem;
+}
+.token-heatmap-card,
+.token-users-card {
+  min-width: 0;
+  padding: 0.75rem;
+  border: 0.0625rem solid var(--workspace-divider);
+  border-radius: 0.625rem;
+  background: var(--surface-raised);
+}
+.usage-subheading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.usage-subheading strong {
+  color: var(--workspace-text);
+  font-size: 0.625rem;
+}
+.usage-subheading span {
+  color: var(--workspace-muted);
+  font-size: 0.5rem;
+}
+.token-heatmap {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 0.25rem;
+}
+.heat-cell,
+.heatmap-legend i {
+  display: block;
+  aspect-ratio: 1;
+  min-width: 0.5rem;
+  border-radius: 0.1875rem;
+  background: var(--workspace-divider);
+}
+.heat-cell.level-0,
+.heatmap-legend i.level-0 { background: color-mix(in oklab, var(--teal) 5%, var(--surface)); }
+.heat-cell.level-1,
+.heatmap-legend i.level-1 { background: color-mix(in oklab, var(--teal) 20%, var(--surface)); }
+.heat-cell.level-2,
+.heatmap-legend i.level-2 { background: color-mix(in oklab, var(--teal) 38%, var(--surface)); }
+.heat-cell.level-3,
+.heatmap-legend i.level-3 { background: color-mix(in oklab, var(--teal) 62%, var(--surface)); }
+.heat-cell.level-4,
+.heatmap-legend i.level-4 { background: var(--teal); }
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+  color: var(--workspace-muted);
+  font-size: 0.4375rem;
+}
+.heatmap-legend i {
+  width: 0.625rem;
+  min-width: 0.625rem;
+}
+.daily-bars {
+  display: flex;
+  height: 4.25rem;
+  align-items: flex-end;
+  gap: 0.1875rem;
+  margin-top: 0.875rem;
+  padding-top: 0.5rem;
+  border-top: 0.0625rem solid var(--workspace-divider);
+}
+.daily-bars > span {
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  flex: 1 1 0;
+  align-items: flex-end;
+}
+.daily-bars i {
+  display: block;
+  width: 100%;
+  min-height: 0.125rem;
+  border-radius: 0.1875rem 0.1875rem 0 0;
+  background: color-mix(in oklab, var(--teal) 72%, var(--surface));
+}
+.user-bars {
+  display: grid;
+  gap: 0.75rem;
+}
+.user-bar-row {
+  display: grid;
+  grid-template-columns: minmax(5rem, 0.6fr) minmax(5rem, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+}
+.user-bar-row > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 0.1875rem;
+}
+.user-bar-row strong,
+.user-bar-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-bar-row strong {
+  color: var(--workspace-text);
+  font-size: 0.5625rem;
+}
+.user-bar-row small,
+.user-bar-row > span {
+  color: var(--workspace-muted);
+  font-size: 0.5rem;
+}
+.user-bar-track {
+  height: 0.4375rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--workspace-divider);
+}
+.user-bar-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--teal);
+}
+.usage-empty {
+  margin: 1rem 0;
+  color: var(--workspace-muted);
+  font-size: 0.5625rem;
+}
+.token-usage-chart {
+  width: 100%;
+  min-height: 15rem;
+}
+.token-breakdown-table {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 0.75rem;
+  padding-top: 0.625rem;
+  border-top: 0.0625rem solid var(--workspace-divider);
+}
+.token-breakdown-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, 1fr) minmax(7rem, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  color: var(--workspace-muted);
+  font-size: 0.5rem;
+}
+.token-breakdown-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.token-breakdown-row > span:first-child {
+  color: var(--workspace-text);
+}
+.token-breakdown-row small {
+  display: block;
+  margin-top: 0.125rem;
+  overflow: hidden;
+  color: var(--workspace-subtle);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.token-breakdown-header {
+  padding-bottom: 0.25rem;
+  color: var(--workspace-subtle);
+  font-size: 0.4375rem;
+}
+.token-breakdown-header > span:first-child {
+  color: var(--workspace-subtle);
+}
+.model-label {
+  color: var(--teal-dark);
 }
 .statistics-source {
   color: var(--teal-dark);
@@ -741,6 +1129,21 @@ function overviewIcon(icon: string) {
 }
 
 @media (max-width: 47.5rem) {
+  .token-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding-inline: 0.875rem;
+  }
+  .token-usage-grid {
+    grid-template-columns: 1fr;
+    padding-inline: 0.875rem;
+  }
+  .planning-callout {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .planning-callout .button {
+    margin-left: 3rem;
+  }
   .project-stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -758,6 +1161,12 @@ function overviewIcon(icon: string) {
 }
 
 @media (max-width: 68.75rem) and (min-width: 47.51rem) {
+  .token-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .token-usage-grid {
+    grid-template-columns: 1fr;
+  }
   .overview-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

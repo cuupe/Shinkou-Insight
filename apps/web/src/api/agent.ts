@@ -5,6 +5,7 @@ import type {
   AgentSendMessagePayload,
   AgentRunAccepted,
   AgentStreamEvent,
+  AgentThreadHistory,
   ApiResponse,
 } from "./types";
 
@@ -15,6 +16,20 @@ import type {
  * 3. 前端只依赖事件类型，不依赖具体模型或工作流实现。
  */
 export const agentApi = {
+  threads: (workspaceId: number | string, projectId: number) =>
+    unwrap<AgentThreadHistory[]>(
+      anet.get<ApiResponse<AgentThreadHistory[]>>(
+        `${projectPath(workspaceId, projectId)}/agent/threads`,
+      ),
+    ),
+
+  deleteThread: (workspaceId: number | string, projectId: number, threadId: string) =>
+    unwrap<void>(
+      anet.delete<ApiResponse<void>>(
+        `${projectPath(workspaceId, projectId)}/agent/threads/${encodeURIComponent(threadId)}`,
+      ),
+    ),
+
   sendMessage: (
     workspaceId: number | string,
     projectId: number,

@@ -28,9 +28,9 @@ public class AiIndexingClient {
 
     public AiIndexingClient(
             ObjectMapper objectMapper,
-            @Value("${shinkou.ai.base-url:http://localhost:8000}") String baseUrl,
+            @Value("${shinkou.ai.base-url:http://localhost:8003}") String baseUrl,
             @Value("${shinkou.ai.internal-api-key:local-dev-key}") String internalApiKey,
-            @Value("${shinkou.ai.callback-base-url:http://localhost:8081}") String callbackBaseUrl
+            @Value("${shinkou.ai.callback-base-url:http://localhost:8080}") String callbackBaseUrl
     ) {
         this.objectMapper = objectMapper;
         this.baseUrl = baseUrl.replaceAll("/+$", "");
@@ -39,7 +39,7 @@ public class AiIndexingClient {
         this.client = new OkHttpClient.Builder().callTimeout(Duration.ofSeconds(90)).build();
     }
 
-    public void index(KnowledgeAsset asset, Long workspaceId, Long userId, Map<String, Object> runtimeEmbedding) throws IOException {
+    public void index(KnowledgeAsset asset, Long workspaceId, Long userId, Map<String, Object> runtimeEmbedding, String chunkingConfig) throws IOException {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("assetId", asset.getId());
         payload.put("workspaceId", workspaceId);
@@ -51,6 +51,13 @@ public class AiIndexingClient {
         payload.put("language", asset.getLanguage());
         payload.put("checksum", asset.getChecksum());
         if (runtimeEmbedding != null && !runtimeEmbedding.isEmpty()) payload.put("runtimeEmbedding", runtimeEmbedding.get("embedding"));
+        if (chunkingConfig != null && !chunkingConfig.isBlank()) {
+            try {
+                payload.put("chunking", objectMapper.readValue(chunkingConfig, Map.class));
+            } catch (Exception ignored) {
+                // A malformed persisted preference must fall back to the AI service defaults.
+            }
+        }
 
         Request request = new Request.Builder()
                 .url(baseUrl + "/internal/indexing/assets/" + asset.getId())
@@ -87,7 +94,7 @@ public class AiIndexingClient {
         post("/internal/research/runs/" + runId + "/execute", payload);
     }
 
-    public void executeAgentRun(String runKey, Long workspaceId, Long projectId, Long userId, String messageId, String goal, Map<String, Object> config, Map<String, Object> runtime) throws IOException {
+    public void executeAgentRun(String runKey, Long workspaceId, Long projectId, Long userId, String messageId, String goal, Map<String, Object> config, Map<String, Object> runtime, List<Map<String, Object>> contextMessages) throws IOException {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("runId", runKey);
         payload.put("workspaceId", workspaceId);
@@ -95,6 +102,7 @@ public class AiIndexingClient {
         payload.put("userId", userId);
         payload.put("goal", goal);
         payload.put("agentMessageId", messageId);
+        payload.put("contextMessages", contextMessages == null ? List.of() : contextMessages);
         payload.put("config", config == null ? Map.of() : config);
         if (runtime != null && runtime.get("model") != null) payload.put("runtimeModel", runtime.get("model"));
         if (runtime != null && runtime.get("webSearch") != null) payload.put("runtimeWebSearch", runtime.get("webSearch"));
@@ -119,6 +127,10 @@ public class AiIndexingClient {
         return post("/internal/embedding/test", embedding);
     }
 
+    public Map<String, Object> testWebSearch(Map<String, Object> webSearch) throws IOException {
+        return post("/internal/web-search/test", webSearch);
+    }
+
     public Map<String, Object> runSecurityHarness(Long workspaceId, Long projectId, List<String> caseIds,
                                                    boolean includeModelProbes, Map<String, Object> runtime) throws IOException {
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -138,7 +150,12 @@ public class AiIndexingClient {
                 .build();
         try (Response response = client.newCall(request).execute()) {
             String body = response.body() == null ? "{}" : response.body().string();
-            if (!response.isSuccessful()) throw new IOException("AI service failed with HTTP " + response.code());
+            if (!response.isSuccessful()) {
+                String detail = body.replaceAll("[\\r\\n\\t]+", " ").trim();
+                if (detail.length() > 1600) detail = detail.substring(0, 1600) + "…";
+                throw new IOException("AI service failed with HTTP " + response.code() + " at " + request.url()
+                        + (detail.isBlank() ? "" : ": " + detail));
+            }
             return objectMapper.readValue(body, Map.class);
         }
     }

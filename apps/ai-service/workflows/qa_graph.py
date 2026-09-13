@@ -76,7 +76,7 @@ def build_qa_graph(runtime: GraphRuntime, *, checkpointer: Any | None = None):
     async def plan(state: ResearchState) -> dict:
         await checkpoint(state, "PLAN", "Planner 拆解研究目标")
         item, _ = await runtime.model_for(state["run_id"]).structured(
-            planner_prompt(state["goal"], state.get("output_language", "zh-CN"), system_prompts=state.get("system_prompts")), PlanItem
+            planner_prompt(state["goal"], state.get("output_language", "zh-CN")), PlanItem
         )
         plan_item = item.model_dump()
         await done(state, "PLAN", "Planner 拆解研究目标", "已生成 1 个高价值子问题")
@@ -123,7 +123,7 @@ def build_qa_graph(runtime: GraphRuntime, *, checkpointer: Any | None = None):
         else:
             action = "ENOUGH"
         evaluation, _ = await runtime.model_for(state["run_id"]).structured(
-            evidence_evaluation_prompt(state["goal"], evidence_count, state.get("output_language", "zh-CN"), system_prompts=state.get("system_prompts")), EvidenceEvaluation
+            evidence_evaluation_prompt(state["goal"], evidence_count, state.get("output_language", "zh-CN")), EvidenceEvaluation
         )
         # The routing decision is rule-constrained; the model cannot widen the
         # tenant scope or invent a tool path.
@@ -163,7 +163,7 @@ def build_qa_graph(runtime: GraphRuntime, *, checkpointer: Any | None = None):
             finding = Finding(id="F1", kind="gap", statement="当前项目资料不足以支持可靠结论。", evidence_ids=[], confidence=1.0)
         else:
             finding, _ = await runtime.model_for(state["run_id"]).structured(
-                finding_prompt(state["goal"], [item.model_dump() for item in evidence], state.get("output_language", "zh-CN"), system_prompts=state.get("system_prompts")), Finding
+                finding_prompt(state["goal"], [item.model_dump() for item in evidence], state.get("output_language", "zh-CN")), Finding
             )
             valid_ids = {item.id for item in evidence}
             finding.evidence_ids = [item for item in finding.evidence_ids if item in valid_ids]
@@ -176,7 +176,7 @@ def build_qa_graph(runtime: GraphRuntime, *, checkpointer: Any | None = None):
         evidence = [Evidence.model_validate(item) for item in state.get("evidence", [])]
         valid_ids = {item.id for item in evidence}
         draft, _ = await runtime.model_for(state["run_id"]).structured(
-            report_prompt(state["goal"], state.get("findings", []), [item.model_dump() for item in evidence], state.get("output_language", "zh-CN"), system_prompts=state.get("system_prompts")), ReportDraft
+            report_prompt(state["goal"], state.get("findings", []), [item.model_dump() for item in evidence], state.get("output_language", "zh-CN")), ReportDraft
         )
         draft.evidence_ids = [item for item in draft.evidence_ids if item in valid_ids]
         for section in draft.sections:
@@ -196,7 +196,7 @@ def build_qa_graph(runtime: GraphRuntime, *, checkpointer: Any | None = None):
             referenced.update(section.get("evidence_ids", []))
         invalid = sorted(referenced - valid_ids)
         review, _ = await runtime.model_for(state["run_id"]).structured(
-            review_prompt(sorted(referenced), sorted(valid_ids), state.get("output_language", "zh-CN"), system_prompts=state.get("system_prompts")), ReviewResult
+            review_prompt(sorted(referenced), sorted(valid_ids), state.get("output_language", "zh-CN")), ReviewResult
         )
         review.missing_citations = invalid
         review.approved = not invalid

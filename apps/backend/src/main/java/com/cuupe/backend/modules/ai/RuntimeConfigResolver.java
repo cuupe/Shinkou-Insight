@@ -2,10 +2,9 @@ package com.cuupe.backend.modules.ai;
 
 import com.cuupe.backend.config.security.SecretCipher;
 import com.cuupe.backend.modules.settings.entity.ModelConfig;
-import com.cuupe.backend.modules.settings.entity.ToolConfig;
+import com.cuupe.backend.modules.settings.entity.WebSearchConfig;
 import com.cuupe.backend.modules.settings.mapper.ModelConfigMapper;
-import com.cuupe.backend.modules.settings.mapper.ToolConfigMapper;
-import com.cuupe.backend.modules.project.mapper.ProjectMapper;
+import com.cuupe.backend.modules.settings.mapper.WebSearchConfigMapper;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -19,8 +18,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class RuntimeConfigResolver {
     private final ModelConfigMapper modelMapper;
-    private final ToolConfigMapper toolMapper;
-    private final ProjectMapper projectMapper;
+    private final WebSearchConfigMapper webSearchMapper;
     private final SecretCipher cipher;
     private final ObjectMapper objectMapper;
 
@@ -28,7 +26,7 @@ public class RuntimeConfigResolver {
         Map<String, Object> runtime = new LinkedHashMap<>();
         ModelConfig model = resolveModel(projectId, userId, requested == null ? null : requested.get("modelConfigId"));
         if (model != null) runtime.put("model", modelPayload(model));
-        ToolConfig webSearch = resolveWebSearch(projectId, userId, requested == null ? null : requested.get("webSearchToolId"));
+        WebSearchConfig webSearch = resolveWebSearch(projectId, userId);
         if (webSearch != null) runtime.put("webSearch", webPayload(webSearch));
         ModelConfig embedding = resolveEmbedding(projectId, userId, requested == null ? null : requested.get("embeddingConfigId"));
         if (embedding != null) runtime.put("embedding", embeddingPayload(embedding));
@@ -47,13 +45,18 @@ public class RuntimeConfigResolver {
         return Map.of("embedding", embeddingPayload(embedding));
     }
 
+    public Map<String, Object> resolveWebSearchPayload(Long projectId, Long userId) {
+        WebSearchConfig webSearch = resolveWebSearch(projectId, userId);
+        if (webSearch == null) return Map.of();
+        return Map.of("webSearch", webPayload(webSearch));
+    }
+
     private ModelConfig resolveModel(Long projectId, Long userId, Object requestedId) {
         if (requestedId != null) {
             ModelConfig requested = modelMapper.findById(asLong(requestedId), projectId, userId);
             if (requested != null && requested.isEnabled() && !isEmbedding(requested)) return requested;
         }
-        Long creatorId = projectMapper.findCreatorId(projectId);
-        return modelMapper.findForRuntime(projectId, creatorId, userId).stream()
+        return modelMapper.findForRuntime(projectId, userId).stream()
                 .filter(model -> !isEmbedding(model))
                 .findFirst()
                 .orElse(null);
@@ -64,8 +67,7 @@ public class RuntimeConfigResolver {
             ModelConfig requested = modelMapper.findById(asLong(requestedId), projectId, userId);
             if (requested != null && requested.isEnabled() && isExternalEmbedding(requested)) return requested;
         }
-        Long creatorId = projectMapper.findCreatorId(projectId);
-        return modelMapper.findForRuntime(projectId, creatorId, userId).stream()
+        return modelMapper.findForRuntime(projectId, userId).stream()
                 .filter(this::isExternalEmbedding)
                 .findFirst()
                 .orElse(null);
@@ -83,27 +85,23 @@ public class RuntimeConfigResolver {
         return !"local".equalsIgnoreCase(mode) && !"hash".equalsIgnoreCase(mode);
     }
 
-    private ToolConfig resolveWebSearch(Long projectId, Long userId, Object requestedId) {
-        if (requestedId != null) {
-            ToolConfig requested = toolMapper.findById(asLong(requestedId), projectId, userId);
-            if (requested != null && requested.isEnabled() && isWebSearch(requested)) return requested;
-        }
-        Long creatorId = projectMapper.findCreatorId(projectId);
-        return toolMapper.findForRuntime(projectId, creatorId, userId).stream().filter(this::isWebSearch).findFirst().orElse(null);
-    }
-
-    private boolean isWebSearch(ToolConfig tool) {
-        Map<String, Object> config = parse(tool.getConfig());
-        String purpose = String.valueOf(config.getOrDefault("purpose", ""));
-        return "WEB_SEARCH".equalsIgnoreCase(tool.getConnectorType())
-                || "web_search".equalsIgnoreCase(purpose)
-                || "brave".equalsIgnoreCase(String.valueOf(config.getOrDefault("provider", "")));
+    private WebSearchConfig resolveWebSearch(Long projectId, Long userId) {
+        WebSearchConfig configured = webSearchMapper.findByProject(projectId, userId);
+        if (configured != null) return configured.isEnabled() ? configured : null;
+        WebSearchConfig defaults = new WebSearchConfig();
+        defaults.setProvider("duckduckgo");
+        defaults.setBaseUrl("https://html.duckduckgo.com/html/");
+        defaults.setLanguage("zh-hans");
+        defaults.setEnabled(true);
+        defaults.setHasCredential(true);
+        return defaults;
     }
 
     private Map<String, Object> modelPayload(ModelConfig model) {
         Map<String, Object> config = parse(model.getConfig());
         String credential = decrypt(model.getCredentialCiphertext(), "模型");
         Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("provider", model.getProvider());
         payload.put("baseUrl", model.getEndpoint());
         payload.put("apiKey", credential);
         payload.put("model", model.getModelId());
@@ -140,19 +138,19 @@ public class RuntimeConfigResolver {
         return payload;
     }
 
-    private Map<String, Object> webPayload(ToolConfig tool) {
-        Map<String, Object> config = parse(tool.getConfig());
+    private Map<String, Object> webPayload(WebSearchConfig tool) {
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("provider", String.valueOf(config.getOrDefault("provider", "brave")));
-        payload.put("apiKey", decrypt(tool.getCredentialCiphertext(), "联网搜索"));
-        payload.put("baseUrl", String.valueOf(config.getOrDefault("baseUrl", tool.getEndpoint())));
-        payload.put("language", String.valueOf(config.getOrDefault("language", "zh-hans")));
+        String provider = tool.getProvider() == null ? "duckduckgo" : tool.getProvider().toLowerCase();
+        payload.put("provider", provider);
+        payload.put("apiKey", "duckduckgo".equals(provider) ? "" : decrypt(tool.getCredentialCiphertext(), "联网搜索"));
+        payload.put("baseUrl", tool.getBaseUrl() == null || tool.getBaseUrl().isBlank() ? "https://html.duckduckgo.com/html/" : tool.getBaseUrl());
+        payload.put("language", tool.getLanguage() == null || tool.getLanguage().isBlank() ? "zh-hans" : tool.getLanguage());
         return payload;
     }
 
     private String decrypt(String ciphertext, String name) {
         if (ciphertext == null || ciphertext.isBlank()) throw new IllegalStateException(name + "连接器缺少凭证");
-        return cipher.decrypt(ciphertext);
+        return cipher.decrypt(ciphertext).trim();
     }
 
     private Map<String, Object> parse(String value) {

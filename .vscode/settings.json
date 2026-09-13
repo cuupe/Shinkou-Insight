@@ -1,0 +1,8 @@
+{
+  "chat.tools.terminal.autoApprove": {
+    "/^Push-Location apps/backend; mvn test; Pop-Location$/": {
+      "approve": true,
+      "matchCommandLine": true
+    }
+  }
+}

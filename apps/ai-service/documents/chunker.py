@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 
 from langchain_core.documents import Document
@@ -20,18 +21,42 @@ class DocumentChunk:
 
 
 class DocumentChunker:
-    def __init__(self, chunk_size: int = 1200, chunk_overlap: int = 180):
+    def __init__(self, chunk_size: int = 1200, chunk_overlap: int = 180, strategy: str = "natural", preserve_sections: bool = True):
         if chunk_overlap >= chunk_size:
             raise ValueError("chunk_overlap must be smaller than chunk_size")
+        if strategy not in {"natural", "paragraph", "fixed"}:
+            raise ValueError("unsupported chunking strategy")
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        self.splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap, separators=["\n## ", "\n### ", "\n\n", "\n", "。", "！", "？", ". ", " ", ""])
+        self.strategy = strategy
+        self.preserve_sections = preserve_sections
+        separators = {
+            "natural": ["\n\n", "\n", "。", "！", "？", "；", ";", ". ", " ", ""],
+            "paragraph": ["\n\n", "\n", ""],
+            "fixed": [""],
+        }[strategy]
+        self.splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            separators=separators,
+        )
+
+    @classmethod
+    def from_config(cls, config: dict | None) -> "DocumentChunker":
+        config = config or {}
+        return cls(
+            chunk_size=int(config.get("chunk_size", config.get("chunkSize", 1200))),
+            chunk_overlap=int(config.get("chunk_overlap", config.get("chunkOverlap", 180))),
+            strategy=str(config.get("strategy", "natural")),
+            preserve_sections=bool(config.get("preserve_sections", config.get("preserveSections", True))),
+        )
 
     def split(self, documents: list[Document]) -> list[DocumentChunk]:
         chunks: list[DocumentChunk] = []
         index = 0
         for document in documents:
-            split_documents = self.splitter.split_documents([document])
+            section_documents = self._section_documents(document) if self.preserve_sections else [document]
+            split_documents = self.splitter.split_documents(section_documents)
             for split in split_documents:
                 content = split.page_content.strip()
                 if not content:
@@ -45,8 +70,39 @@ class DocumentChunker:
                 index += 1
         return chunks
 
+    def _section_documents(self, document: Document) -> list[Document]:
+        """Keep Markdown-style sections together before applying size limits."""
+
+        lines = document.page_content.splitlines()
+        if not any(re.match(r"^\s{0,3}#{1,6}\s+\S", line) for line in lines):
+            return [document]
+
+        sections: list[Document] = []
+        current_lines: list[str] = []
+        current_title = str(document.metadata.get("section_title") or "").strip() or None
+
+        def flush() -> None:
+            nonlocal current_lines
+            content = "\n".join(current_lines).strip()
+            if content:
+                metadata = dict(document.metadata)
+                if current_title:
+                    metadata["section_title"] = current_title
+                sections.append(Document(page_content=content, metadata=metadata))
+            current_lines = []
+
+        for line in lines:
+            heading = re.match(r"^\s{0,3}#{1,6}\s+(.+?)\s*$", line)
+            if heading:
+                flush()
+                current_title = heading.group(1).strip()
+            current_lines.append(line.rstrip())
+        flush()
+        return sections or [document]
+
     def _section(self, metadata: dict, content: str) -> str | None:
         if metadata.get("section_title"):
             return str(metadata["section_title"])
         first_line = content.splitlines()[0].strip() if content else ""
-        return first_line[2:].strip() if first_line.startswith("#") else None
+        heading = re.match(r"^#{1,6}\s+(.+?)\s*$", first_line)
+        return heading.group(1).strip() if heading else None

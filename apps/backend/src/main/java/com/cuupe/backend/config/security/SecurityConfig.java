@@ -43,7 +43,6 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 public class SecurityConfig {
     private final ObjectMapper objectMapper;
     private final AuditLogService auditLogService;
-    private final SessionRegistry sessionRegistry;
     private final AuthSecurityProperties authSecurityProperties;
 
     @Value("${shinkou.security.allowed-origins:http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:4173,http://127.0.0.1:4173,http://localhost:4174,http://127.0.0.1:4174,http://localhost:4175,http://127.0.0.1:4175}")
@@ -117,7 +116,8 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(
-            HttpSecurity http
+            HttpSecurity http,
+            SessionRegistry sessionRegistry
     ) throws Exception {
         CookieCsrfTokenRepository csrfTokenRepository =
                 CookieCsrfTokenRepository.withHttpOnlyFalse();

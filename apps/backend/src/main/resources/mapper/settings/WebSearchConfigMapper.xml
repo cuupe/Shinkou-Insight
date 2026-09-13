@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cuupe.backend.modules.settings.mapper.WebSearchConfigMapper">
+    <sql id="c">id,project_id,provider,base_url,language,credential_ciphertext,(credential_ciphertext IS NOT NULL) AS has_credential,enabled,created_by,created_at,updated_at</sql>
+
+    <select id="findByProject" resultType="com.cuupe.backend.modules.settings.entity.WebSearchConfig">
+        SELECT <include refid="c"/>
+        FROM project_web_search_configs
+        WHERE project_id=#{projectId} AND created_by=#{userId}
+          AND EXISTS(
+            SELECT 1 FROM projects p
+            JOIN workspace_members wm ON wm.workspace_id=p.workspace_id
+            WHERE p.id=#{projectId} AND wm.user_id=#{userId} AND wm.status='ACTIVE'
+          )
+        ORDER BY updated_at DESC
+        LIMIT 1
+    </select>
+
+    <select id="findForRuntime" resultType="com.cuupe.backend.modules.settings.entity.WebSearchConfig">
+        SELECT <include refid="c"/>
+        FROM project_web_search_configs
+        WHERE project_id=#{projectId} AND created_by=#{userId} AND enabled=TRUE
+        ORDER BY updated_at DESC
+        LIMIT 1
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO project_web_search_configs(project_id,provider,base_url,language,credential_ciphertext,enabled,created_by)
+        VALUES(#{projectId},#{provider},#{baseUrl},#{language},#{credentialCiphertext},#{enabled},#{createdBy})
+    </insert>
+
+    <update id="update">
+        UPDATE project_web_search_configs
+        SET provider=#{provider},base_url=#{baseUrl},language=#{language},
+            credential_ciphertext=COALESCE(#{credentialCiphertext},credential_ciphertext),
+            enabled=#{enabled},updated_at=CURRENT_TIMESTAMP
+        WHERE id=#{id} AND project_id=#{projectId} AND created_by=#{createdBy}
+    </update>
+</mapper>

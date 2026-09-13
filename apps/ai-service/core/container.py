@@ -20,7 +20,7 @@ from storage.files import LocalFileStorage, MinioFileStorage
 from tools.knowledge import KnowledgeTool
 from tools.mcp_bridge import MCPToolBridge, register_mcp_tools
 from tools.registry import ToolRegistry, ToolSpec
-from tools.web import BraveWebSearch, DisabledWebSearch, WebSearchProvider
+from tools.web import DEFAULT_DUCKDUCKGO_BASE_URL, BraveWebSearch, DisabledWebSearch, DuckDuckGoWebSearch, WebSearchProvider
 
 
 @dataclass(slots=True)
@@ -103,7 +103,7 @@ class ServiceContainer:
                 ToolSpec(
                     name="search_knowledge",
                     permission="READ",
-                    timeout_seconds=settings.request_timeout_seconds,
+                    timeout_seconds=min(settings.request_timeout_seconds, settings.knowledge_timeout_seconds),
                     input_schema={"type": "object"},
                 ),
                 knowledge.search_knowledge,
@@ -223,13 +223,20 @@ class ServiceContainer:
     def _build_web_search(settings: Settings, http_client: httpx.AsyncClient | None) -> WebSearchProvider:
         if not settings.enable_web_search:
             return DisabledWebSearch()
-        if settings.web_search_provider.lower() != "brave":
-            raise RuntimeError("WEB_SEARCH_PROVIDER must be brave")
+        provider = settings.web_search_provider.lower()
+        if provider not in {"brave", "duckduckgo"}:
+            raise RuntimeError("WEB_SEARCH_PROVIDER must be brave or duckduckgo")
         # The system-level key is optional. Project runs can inject a personal or
         # creator-owned key through RuntimeWebSearchConfig at execution time.
-        if not settings.web_search_api_key:
+        if provider == "brave" and not settings.web_search_api_key:
             return DisabledWebSearch()
         client = http_client or httpx.AsyncClient(timeout=httpx.Timeout(settings.request_timeout_seconds))
+        if provider == "duckduckgo":
+            return DuckDuckGoWebSearch(
+                client=client,
+                base_url=settings.web_search_base_url or DEFAULT_DUCKDUCKGO_BASE_URL,
+                search_language=settings.web_search_language,
+            )
         return BraveWebSearch(
             client=client,
             api_key=settings.web_search_api_key,

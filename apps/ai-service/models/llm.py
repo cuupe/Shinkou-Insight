@@ -1,6 +1,9 @@
+import asyncio
 import json
+import re
 import time
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar
 
 import httpx
@@ -104,6 +107,23 @@ class ModelGateway(Protocol):
         temperature: float | None = None,
     ) -> tuple[T, ModelChatResult]: ...
 
+    def stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float | None = None,
+    ) -> AsyncIterator["ModelStreamChunk"]: ...
+
+    def with_generation(self, generation: ModelGenerationConfig) -> "ModelGateway": ...
+
+
+@dataclass(frozen=True)
+class ModelStreamChunk:
+    """One provider response delta and optional usage metadata."""
+
+    delta: str = ""
+    usage: TokenUsage | None = None
+
 
 class UnavailableModelGateway:
     """进程级模型未配置时的显式占位实现。
@@ -124,6 +144,18 @@ class UnavailableModelGateway:
     ) -> tuple[T, ModelChatResult]:
         raise ModelGatewayError("no default LLM configured; select a project model configuration")
 
+    async def stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float | None = None,
+    ) -> AsyncIterator[ModelStreamChunk]:
+        raise ModelGatewayError("no default LLM configured; select a project model configuration")
+        yield ModelStreamChunk()
+
+    def with_generation(self, generation: ModelGenerationConfig) -> "UnavailableModelGateway":
+        return self
+
 
 class LangChainModelGateway:
     """LangChain adapter for OpenAI-compatible chat models.
@@ -140,6 +172,7 @@ class LangChainModelGateway:
         base_url: str,
         api_key: str,
         model: str,
+        provider: str | None = None,
         timeout_seconds: float = 60,
         max_retries: int = 2,
         client: httpx.AsyncClient | None = None,
@@ -164,6 +197,7 @@ class LangChainModelGateway:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
+        self.provider = (provider or "").strip().casefold()
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.structured_output_method = structured_output_method
@@ -178,6 +212,19 @@ class LangChainModelGateway:
         if client is not None:
             kwargs["http_async_client"] = client
         self._chat_model = ChatOpenAI(**kwargs)
+
+    def with_generation(self, generation: ModelGenerationConfig) -> "LangChainModelGateway":
+        return LangChainModelGateway(
+            base_url=self.base_url,
+            api_key=self.api_key,
+            model=self.model,
+            provider=self.provider,
+            timeout_seconds=self.timeout_seconds,
+            max_retries=self.max_retries,
+            client=self.client,
+            structured_output_method=self.structured_output_method,
+            generation=generation,
+        )
 
     async def chat(
         self,
@@ -198,6 +245,23 @@ class LangChainModelGateway:
             fallback_model=self.model,
             latency_ms=int((time.perf_counter() - started_at) * 1000),
         )
+
+    async def stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float | None = None,
+    ) -> AsyncIterator[ModelStreamChunk]:
+        try:
+            async for chunk in self._chat_model.astream(
+                _to_langchain_messages(messages),
+                **self._invoke_kwargs(temperature),
+            ):
+                content = _message_content(chunk)
+                if content:
+                    yield ModelStreamChunk(delta=content)
+        except Exception as exc:
+            raise _translate_langchain_error(exc) from exc
 
     async def structured(
         self,
@@ -238,6 +302,7 @@ class LangChainModelGateway:
             result = ModelChatResult(
                 content=json.dumps(value.model_dump(), ensure_ascii=False),
                 model=self.model,
+                usage=TokenUsage(available=False),
                 latency_ms=int((time.perf_counter() - started_at) * 1000),
             )
         else:
@@ -262,9 +327,14 @@ class LangChainModelGateway:
             kwargs["seed"] = generation.seed
         if generation.stop:
             kwargs["stop"] = generation.stop
-        if generation.reasoning_effort and generation.reasoning_effort != "none":
-            kwargs["reasoning_effort"] = generation.reasoning_effort
         extra_body = dict(generation.extra_body)
+        if self.provider in {"siliconflow", "silicon flow", "硅基流动"}:
+            effort = generation.reasoning_effort or "none"
+            extra_body.setdefault("enable_thinking", effort != "none")
+            if effort != "none":
+                kwargs["reasoning_effort"] = "high" if effort in {"low", "medium"} else effort
+        elif generation.reasoning_effort and generation.reasoning_effort != "none":
+            kwargs["reasoning_effort"] = generation.reasoning_effort
         if generation.top_k is not None:
             extra_body.setdefault("top_k", generation.top_k)
         if extra_body:
@@ -315,6 +385,7 @@ def _model_chat_result(message: Any, *, fallback_model: str, latency_ms: int) ->
     response_metadata = getattr(message, "response_metadata", None) or {}
     usage_metadata = getattr(message, "usage_metadata", None) or {}
     token_usage = response_metadata.get("token_usage") or response_metadata.get("usage") or {}
+    usage_available = bool(usage_metadata or token_usage)
     input_tokens = int(usage_metadata.get("input_tokens", token_usage.get("prompt_tokens", 0)) or 0)
     output_tokens = int(usage_metadata.get("output_tokens", token_usage.get("completion_tokens", 0)) or 0)
     total_tokens = int(usage_metadata.get("total_tokens", token_usage.get("total_tokens", input_tokens + output_tokens)) or 0)
@@ -324,7 +395,12 @@ def _model_chat_result(message: Any, *, fallback_model: str, latency_ms: int) ->
     return ModelChatResult(
         content=content,
         model=str(response_metadata.get("model_name") or response_metadata.get("model") or fallback_model),
-        usage=TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens),
+        usage=TokenUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            available=usage_available,
+        ),
         latency_ms=latency_ms,
         request_id=(response_metadata.get("id") or response_metadata.get("request_id")),
     )
@@ -339,13 +415,69 @@ def _translate_langchain_error(error: Exception) -> ModelGatewayError:
     if status_code is None:
         response = getattr(error, "response", None)
         status_code = getattr(response, "status_code", None)
+    detail = _langchain_error_detail(error)
+    error_type = type(error).__name__.casefold()
+    if any(marker in error_type for marker in ("connection", "connecterror", "network")):
+        return ModelRequestError(f"LLM network request failed{detail or f': {type(error).__name__}'}")
     if status_code in {401, 403}:
-        return ModelAuthError("LLM authentication failed")
+        return ModelAuthError(f"LLM authentication failed{detail}")
     if status_code == 429:
-        return ModelRateLimitError("LLM rate limit exceeded")
+        return ModelRateLimitError(f"LLM rate limit exceeded{detail}")
     if isinstance(status_code, int) and status_code >= 500:
-        return ModelServerError(f"LLM provider server error (status={status_code})")
-    return ModelRequestError(f"LLM request failed: {type(error).__name__}")
+        return ModelServerError(f"LLM provider server error (status={status_code}){detail}")
+    status_suffix = f" (status={status_code})" if status_code is not None else ""
+    return ModelRequestError(f"LLM request failed{status_suffix}: {detail or type(error).__name__}")
+
+
+def _langchain_error_detail(error: Exception) -> str:
+    """Keep provider diagnostics while removing anything that looks like a secret.
+
+    LangChain/OpenAI exceptions otherwise collapse into a generic ``OpenAIError``
+    message, which makes connection testing impossible to diagnose from the UI.
+    The provider response is useful here (for example SiliconFlow's 20012 model
+    error), but it must be bounded and must never echo an Authorization header.
+    """
+
+    candidates: list[str] = []
+    current: BaseException | None = error
+    visited: set[int] = set()
+    for _ in range(4):
+        if current is None or id(current) in visited:
+            break
+        visited.add(id(current))
+        response = getattr(current, "response", None)
+        if response is not None:
+            try:
+                text = response.text
+            except Exception:  # pragma: no cover - defensive for provider exceptions
+                text = ""
+            if text:
+                candidates.append(str(text))
+
+        body = getattr(current, "body", None)
+        if body:
+            try:
+                candidates.append(json.dumps(body, ensure_ascii=False, default=str))
+            except Exception:  # pragma: no cover - defensive only
+                candidates.append(str(body))
+
+        message = str(current).strip()
+        if message:
+            candidates.append(message)
+        current = current.__cause__ or current.__context__
+
+    for candidate in candidates:
+        normalized = re.sub(r"[\r\n\t]+", " ", candidate).strip()
+        if not normalized:
+            continue
+        normalized = re.sub(r"(?i)(bearer\s+)[^\s,}]+", r"\1[REDACTED]", normalized)
+        normalized = re.sub(
+            r"(?i)((?:api[_-]?key|access[_-]?token)\s*[:=]\s*[\"']?)[^\"'\s,}]+",
+            r"\1[REDACTED]",
+            normalized,
+        )
+        return f": {normalized[:1000]}"
+    return ""
 
     async def structured(self, messages: list[dict[str, str]], schema: type[T], *, temperature: float | None = None) -> tuple[T, ModelChatResult]:
         raise ModelGatewayError("no default LLM configured; select a project model configuration")
@@ -380,6 +512,7 @@ class HttpModelGateway:
         base_url: str,
         api_key: str,
         model: str,
+        provider: str | None = None,
         timeout_seconds: float = 60,
         max_retries: int = 2,
         generation: ModelGenerationConfig | None = None,
@@ -397,9 +530,22 @@ class HttpModelGateway:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
+        self.provider = (provider or "").strip().casefold()
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.generation = generation or ModelGenerationConfig()
+
+    def with_generation(self, generation: ModelGenerationConfig) -> "HttpModelGateway":
+        return HttpModelGateway(
+            client=self.client,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            model=self.model,
+            provider=self.provider,
+            timeout_seconds=self.timeout_seconds,
+            max_retries=self.max_retries,
+            generation=generation,
+        )
 
     # =====================================================
     # 普通聊天
@@ -419,25 +565,7 @@ class HttpModelGateway:
             "Content-Type": "application/json",
         }
 
-        generation = self.generation
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": generation.temperature if temperature is None else temperature,
-            "top_p": generation.top_p,
-            "max_tokens": generation.max_tokens,
-            "frequency_penalty": generation.frequency_penalty,
-            "presence_penalty": generation.presence_penalty,
-        }
-        if generation.top_k is not None:
-            payload["top_k"] = generation.top_k
-        if generation.seed is not None:
-            payload["seed"] = generation.seed
-        if generation.stop:
-            payload["stop"] = generation.stop
-        if generation.reasoning_effort and generation.reasoning_effort != "none":
-            payload["reasoning_effort"] = generation.reasoning_effort
-        payload.update(generation.extra_body)
+        payload = self._build_payload(messages, temperature=temperature, stream=False)
 
         started_at = time.perf_counter()
 
@@ -454,7 +582,8 @@ class HttpModelGateway:
 
         except httpx.RequestError as exc:
 
-            raise ModelRequestError(f"LLM network request failed: {exc}") from exc
+            detail = str(exc).strip() or repr(exc)
+            raise ModelRequestError(f"LLM network request failed at {url}: {detail[:1000]}") from exc
 
         latency_ms = int((time.perf_counter() - started_at) * 1000)
 
@@ -487,6 +616,107 @@ class HttpModelGateway:
             latency_ms=latency_ms,
             request_id=request_id,
         )
+
+    async def stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float | None = None,
+    ) -> AsyncIterator[ModelStreamChunk]:
+        """Stream OpenAI-compatible SSE deltas without buffering the answer."""
+
+        url = f"{self.base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        }
+        payload = self._build_payload(messages, temperature=temperature, stream=True)
+        usage: TokenUsage | None = None
+        try:
+            async with self.client.stream("POST", url, headers=headers, json=payload) as response:
+                if not 200 <= response.status_code < 300:
+                    await response.aread()
+                    self._raise_for_status(response)
+                async for line in response.aiter_lines():
+                    line = line.strip()
+                    if not line or line.startswith(":") or line.startswith("event:"):
+                        continue
+                    if line.startswith("data:"):
+                        line = line[5:].strip()
+                    if line == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(line)
+                    except ValueError as exc:
+                        raise ModelResponseError("LLM streaming response is not valid JSON") from exc
+                    raw_usage = data.get("usage")
+                    if raw_usage:
+                        usage = self._extract_usage(data)
+                    delta = self._extract_stream_delta(data)
+                    if delta:
+                        yield ModelStreamChunk(delta=delta)
+        except httpx.TimeoutException as exc:
+            raise ModelTimeoutError("LLM request timed out") from exc
+        except httpx.RequestError as exc:
+            detail = str(exc).strip() or repr(exc)
+            raise ModelRequestError(f"LLM network request failed at {url}: {detail[:1000]}") from exc
+        if usage is not None:
+            yield ModelStreamChunk(usage=usage)
+
+    def _build_payload(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float | None,
+        stream: bool,
+    ) -> dict[str, Any]:
+        generation = self.generation
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": generation.temperature if temperature is None else temperature,
+            "top_p": generation.top_p,
+            "max_tokens": generation.max_tokens,
+            "frequency_penalty": generation.frequency_penalty,
+            "presence_penalty": generation.presence_penalty,
+        }
+        if stream:
+            payload["stream"] = True
+            # OpenAI-compatible providers return usage for a stream only when
+            # this option is explicitly requested.
+            payload["stream_options"] = {"include_usage": True}
+        if generation.top_k is not None:
+            payload["top_k"] = generation.top_k
+        if generation.seed is not None:
+            payload["seed"] = generation.seed
+        if generation.stop:
+            payload["stop"] = generation.stop
+        extra_body = dict(generation.extra_body)
+        if self.provider in {"siliconflow", "silicon flow", "硅基流动"}:
+            effort = generation.reasoning_effort or "none"
+            extra_body.setdefault("enable_thinking", effort != "none")
+            if effort != "none":
+                payload["reasoning_effort"] = "high" if effort in {"low", "medium"} else effort
+        elif generation.reasoning_effort and generation.reasoning_effort != "none":
+            payload["reasoning_effort"] = generation.reasoning_effort
+        payload.update(extra_body)
+        return payload
+
+    def _extract_stream_delta(self, data: dict[str, Any]) -> str:
+        try:
+            choice = (data.get("choices") or [])[0]
+        except (IndexError, TypeError):
+            return ""
+        delta = choice.get("delta") or choice.get("message") or {}
+        content = delta.get("content", "") if isinstance(delta, dict) else ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "".join(
+                str(item.get("text", "")) for item in content if isinstance(item, dict) and item.get("text")
+            )
+        return ""
 
     # =====================================================
     # JSON / Structured Output
@@ -670,6 +900,7 @@ class HttpModelGateway:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
+            available=bool(raw_usage),
         )
 
     # =====================================================
@@ -717,6 +948,18 @@ class MockModelGateway:
             request_id="mock",
         )
 
+    async def stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float | None = None,
+    ) -> AsyncIterator[ModelStreamChunk]:
+        result = await self.chat(messages, temperature=temperature)
+        for index in range(0, len(result.content), 12):
+            await asyncio.sleep(0)
+            yield ModelStreamChunk(delta=result.content[index : index + 12])
+        yield ModelStreamChunk(usage=result.usage)
+
     async def structured(
         self,
         messages: list[dict[str, str]],
@@ -724,11 +967,23 @@ class MockModelGateway:
         *,
         temperature: float | None = None,
     ) -> tuple[T, ModelChatResult]:
-        from models.schemas import EvidenceEvaluation, Finding, PlanItem, ReportDraft, ReviewResult
+        from models.schemas import AgentPlan, EvidenceEvaluation, Finding, PlanItem, ReActAction, ReflectionResult, ReportDraft, ReviewResult
 
         goal = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "研究目标")
         if schema is PlanItem:
             value: Any = {"id": "Q1", "question": goal[:500], "source": "BOTH", "rationale": "先核对项目资料，再补充外部信息"}
+        elif schema is AgentPlan:
+            value = {
+                "summary": "先核对项目资料，再整理结论",
+                "steps": [
+                    {"id": "S1", "objective": "核对与问题相关的项目资料", "action": "SEARCH_INTERNAL", "query": goal[:500]},
+                    {"id": "S2", "objective": "整理最终回答", "action": "SYNTHESIZE", "query": ""},
+                ],
+            }
+        elif schema is ReActAction:
+            normalized_goal = goal.casefold()
+            source_markers = ("项目", "知识库", "文档", "资料", "文件", "数据库", "配置", "附件", "project", "knowledge", "document", "file", "database", "config", "repository")
+            value = {"action": "SEARCH_INTERNAL" if any(marker in normalized_goal for marker in source_markers) else "FINAL", "query": goal[:500], "note": "先核对与问题直接相关的项目资料"}
         elif schema is EvidenceEvaluation:
             has_evidence = "证据数量=0" not in goal and "没有可用证据" not in goal
             value = {"sufficient": has_evidence, "next_action": "ENOUGH" if has_evidence else "MORE_INTERNAL", "missing": [] if has_evidence else ["需要更多项目证据"], "conflicts": []}
@@ -738,6 +993,8 @@ class MockModelGateway:
             value = {"title": "研究报告", "executive_summary": "以下结论仅基于已检索且可追溯的项目证据。", "sections": [{"heading": "结论", "content": "已完成证据整理。", "evidence_ids": ["E1"]}], "recommendations": ["对关键结论进行人工复核"], "limitations": ["当前结果受可用资料范围限制"], "evidence_ids": ["E1"]}
         elif schema is ReviewResult:
             value = {"approved": True, "issues": [], "missing_citations": [], "rewrite_instructions": []}
+        elif schema is ReflectionResult:
+            value = {"approved": True, "issues": [], "corrections": [], "confidence": 0.9}
         else:
             value = {}
         raw = ModelChatResult(content=json.dumps(value, ensure_ascii=False), model=self.model)
@@ -750,6 +1007,7 @@ def build_model_gateway(
     base_url: str | None,
     api_key: str | None,
     model: str | None,
+    provider: str | None = None,
     timeout_seconds: float = 60,
     max_retries: int = 2,
     client: httpx.AsyncClient | None = None,
@@ -765,13 +1023,25 @@ def build_model_gateway(
         raise ValueError("LLM_MODE must be http, openai, compatible, langchain, or mock")
     if not base_url or not api_key or not model:
         return UnavailableModelGateway()
-    return LangChainModelGateway(
+    if normalized_mode == "langchain":
+        return LangChainModelGateway(
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            provider=provider,
+            timeout_seconds=timeout_seconds,
+            max_retries=max_retries,
+            client=client,
+            structured_output_method=structured_output_method,
+            generation=generation,
+        )
+    return HttpModelGateway(
+        client=client or httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds)),
         base_url=base_url,
         api_key=api_key,
         model=model,
+        provider=provider,
         timeout_seconds=timeout_seconds,
         max_retries=max_retries,
-        client=client,
-        structured_output_method=structured_output_method,
         generation=generation,
     )

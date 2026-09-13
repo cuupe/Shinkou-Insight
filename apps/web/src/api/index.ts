@@ -10,6 +10,8 @@ import { assetsApi } from "./assets";
 import { authApi } from "./auth";
 import { evaluationApi } from "./evaluation";
 import { projectApi } from "./projects";
+import { planningApi } from "./planning";
+import { reviewApi } from "./review";
 import { reportsApi } from "./reports";
 import { retrievalApi } from "./retrieval";
 import { runsApi } from "./runs";
@@ -27,6 +29,8 @@ export const api = {
   auth: authApi,
   workspace: workspaceApi,
   project: projectApi,
+  planning: planningApi,
+  review: reviewApi,
   assets: assetsApi,
   retrieval: retrievalApi,
   runs: runsApi,

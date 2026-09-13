@@ -13,9 +13,10 @@ import GeneralSettingsView from "@/views/settings/GeneralView.vue";
 import UserSettingsView from "@/views/settings/UserSettingsView.vue";
 import ModelsSettingsView from "@/views/settings/ModelsView.vue";
 import ToolsSettingsView from "@/views/settings/ToolsView.vue";
-import PromptsSettingsView from "@/views/settings/PromptsView.vue";
+import WebSearchSettingsView from "@/views/settings/WebSearchView.vue";
 import SecuritySettingsView from "@/views/settings/SecurityView.vue";
 import OverviewView from "@/views/project/OverviewView.vue";
+import PlanningView from "@/views/project/PlanningView.vue";
 import AssetsView from "@/views/project/AssetsView.vue";
 import AssetDetailView from "@/views/project/AssetDetailView.vue";
 import PlaygroundView from "@/views/project/PlaygroundView.vue";
@@ -24,6 +25,7 @@ import RunDetailView from "@/views/project/RunDetailView.vue";
 import ReportsView from "@/views/project/ReportsView.vue";
 import ActionItemsView from "@/views/project/ActionItemsView.vue";
 import EvaluationView from "@/views/project/EvaluationView.vue";
+import ReviewView from "@/views/project/ReviewView.vue";
 import AgentWorkspaceView from "@/views/project/AgentWorkspaceView.vue";
 import HelpCenterView from "@/views/help/HelpCenterView.vue";
 import NotificationsView from "@/views/workspace/NotificationsView.vue";
@@ -96,9 +98,9 @@ const router = createRouter({
           component: ToolsSettingsView,
         },
         {
-          path: "settings/prompts",
-          name: "settings-prompts",
-          component: PromptsSettingsView,
+          path: "settings/web-search",
+          name: "settings-web-search",
+          component: WebSearchSettingsView,
         },
         {
           path: "settings/security",
@@ -106,9 +108,19 @@ const router = createRouter({
           component: SecuritySettingsView,
         },
         {
+          path: "projects/:projectId",
+          name: "project-start",
+          redirect: { name: "project-agent-chat" },
+        },
+        {
           path: "projects/:projectId/overview",
           name: "project-overview",
           component: OverviewView,
+        },
+        {
+          path: "projects/:projectId/planning",
+          name: "project-planning",
+          component: PlanningView,
         },
         {
           path: "projects/:projectId/agent",
@@ -154,6 +166,11 @@ const router = createRouter({
           path: "projects/:projectId/evaluation",
           name: "project-evaluation",
           component: EvaluationView,
+        },
+        {
+          path: "projects/:projectId/review",
+          name: "project-review",
+          component: ReviewView,
         },
       ],
     },

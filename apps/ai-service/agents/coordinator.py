@@ -240,8 +240,6 @@ class AgentCoordinator:
             dispatch_payload["_runtime_model"] = state["runtime_model"]
         if state.get("runtime_web_search"):
             dispatch_payload["_runtime_web_search"] = state["runtime_web_search"]
-        if state.get("system_prompts"):
-            dispatch_payload["system_prompts"] = state["system_prompts"]
         if state.get("tool_max_calls") is not None:
             dispatch_payload["_tool_max_calls"] = state["tool_max_calls"]
         result = await self.bus.request(

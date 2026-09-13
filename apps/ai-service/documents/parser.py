@@ -14,7 +14,7 @@ SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".pdf", ".docx", ".html", ".
 @dataclass(slots=True)
 class ParsedDocument:
     documents: list[Document]
-    parser_version: str = "parser-v1"
+    parser_version: str = "parser-v2"
 
 
 class DocumentParser:
@@ -58,7 +58,17 @@ class DocumentParser:
         except ImportError as exc:
             raise RuntimeError("DOCX parsing requires python-docx") from exc
         document = DocxDocument(io.BytesIO(data))
-        text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        paragraphs: list[str] = []
+        for paragraph in document.paragraphs:
+            value = paragraph.text.strip()
+            if not value:
+                paragraphs.append("")
+                continue
+            style_name = str(getattr(paragraph.style, "name", "") or "")
+            heading = re.search(r"(\d+)", style_name) if "heading" in style_name.casefold() else None
+            prefix = "#" * min(int(heading.group(1)), 6) + " " if heading else ""
+            paragraphs.append(prefix + value)
+        text = "\n".join(paragraphs)
         return ParsedDocument([Document(page_content=self._clean(text), metadata={"source": file_name, "page": 1})])
 
     def _xlsx(self, data: bytes, file_name: str) -> ParsedDocument:

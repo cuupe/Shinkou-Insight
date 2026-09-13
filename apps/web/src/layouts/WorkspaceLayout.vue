@@ -741,6 +741,19 @@ const { mobileOpen } = useWorkspace();
   overflow: visible;
 }
 
+/* 规划与审查页由多个自然高度区块组成，不能套用工作台的等高 flex
+   规则；否则表单、门禁列表和检查记录会在下一行开始前被裁掉。 */
+.app-shell .page-content:has(> .planning-steps),
+.app-shell .page-content:has(> .review-metrics) {
+  overflow-y: auto;
+}
+
+.app-shell .page-content:has(> .planning-steps) > *,
+.app-shell .page-content:has(> .review-metrics) > * {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
 .page-content > .agent-workspace,
 .page-content > .agent-page,
 .page-content > .asset-table-panel,
@@ -1209,6 +1222,89 @@ const { mobileOpen } = useWorkspace();
 .dark .app-shell .chunk-row.active,
 .dark .app-shell .chunk-row:hover {
   background: color-mix(in oklab, var(--teal) 10%, var(--surface));
+}
+
+/* Agent execution inspector accents need their own dark-theme surfaces.
+   The inspector's live/completed states are intentionally softer than the
+   page accent, so they remain readable without turning into bright blocks. */
+.dark .app-shell .agent-page {
+  --teal-dark: #68e1d0;
+  --agent-accent-border: color-mix(
+    in oklab,
+    var(--teal) 42%,
+    var(--workspace-border)
+  );
+  --agent-accent-surface: color-mix(
+    in oklab,
+    var(--teal) 10%,
+    var(--surface-raised)
+  );
+  --agent-accent-surface-strong: color-mix(
+    in oklab,
+    var(--teal) 18%,
+    var(--surface-raised)
+  );
+  --agent-accent-surface-soft: color-mix(
+    in oklab,
+    var(--teal) 14%,
+    var(--surface-raised)
+  );
+  --agent-live-gradient-start: color-mix(
+    in oklab,
+    var(--teal) 12%,
+    var(--surface-raised)
+  );
+  --agent-live-gradient-end: var(--surface);
+  --agent-danger-text: #ffaaa8;
+  --agent-danger-fill: #ff8d8a;
+}
+
+.dark .app-shell .asset-table-panel {
+  --asset-status-indexed-text: #68e1d0;
+  --asset-status-indexed-bg: color-mix(in oklab, var(--teal) 16%, var(--surface));
+  --asset-status-indexing-text: #f2bd69;
+  --asset-status-indexing-bg: #3b3021;
+  --asset-status-failed-text: #ffaaa8;
+  --asset-status-failed-bg: #321f24;
+  --asset-progress-track: var(--workspace-divider);
+  --asset-progress-indexing: #f2bd69;
+  --asset-progress-failed: #ff8d8a;
+}
+
+.dark .app-shell .asset-table-panel .status-badge {
+  align-self: center;
+  justify-self: start;
+  width: fit-content;
+  padding: 0.25rem 0.4375rem;
+  border-radius: 0.375rem;
+  background: transparent;
+}
+
+.dark .app-shell .asset-table-panel .status-badge.status-indexed {
+  color: var(--asset-status-indexed-text);
+  background: var(--asset-status-indexed-bg);
+}
+
+.dark .app-shell .asset-table-panel .status-badge.status-indexing {
+  color: var(--asset-status-indexing-text);
+  background: var(--asset-status-indexing-bg);
+}
+
+.dark .app-shell .asset-table-panel .status-badge.status-failed {
+  color: var(--asset-status-failed-text);
+  background: var(--asset-status-failed-bg);
+}
+
+.dark .app-shell .asset-table-panel .progress-track {
+  background: var(--asset-progress-track);
+}
+
+.dark .app-shell .asset-table-panel .progress-track i.status-indexing {
+  background: var(--asset-progress-indexing);
+}
+
+.dark .app-shell .asset-table-panel .progress-track i.status-failed {
+  background: var(--asset-progress-failed);
 }
 
 @media (max-width: 47.5rem) {

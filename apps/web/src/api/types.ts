@@ -144,6 +144,56 @@ export interface Project {
   code?: string;
   description?: string;
   color?: string;
+  chunkingConfig?: ChunkingConfig | string;
+  [key: string]: unknown;
+}
+
+export interface ChunkingConfig {
+  strategy: "natural" | "paragraph" | "fixed" | string;
+  chunkSize: number;
+  chunkOverlap: number;
+  preserveSections: boolean;
+}
+
+export interface ProjectPlan {
+  projectId: number | string;
+  workspaceId: number | string;
+  objective: string;
+  problem?: string;
+  successMetrics?: string;
+  constraints?: string;
+  owner?: string;
+  deadline?: string | null;
+  updatedAt?: string;
+  [key: string]: unknown;
+}
+
+export interface ProjectReviewPolicy {
+  projectId: number | string;
+  workspaceId: number | string;
+  requireCitations: boolean;
+  verifyNumbers: boolean;
+  escalateConflicts: boolean;
+  labelExternal: boolean;
+  updatedAt?: string;
+  [key: string]: unknown;
+}
+
+export interface ProjectReviewRun {
+  id: number | string;
+  projectId: number | string;
+  workspaceId: number | string;
+  status: string;
+  blockedCount: number;
+  reviewCount: number;
+  indexedAssetCount: number;
+  assetCount: number;
+  researchRunCount: number;
+  reportCount: number;
+  evaluationCaseCount: number;
+  actionItemCount: number;
+  detail: string;
+  createdAt?: string;
   [key: string]: unknown;
 }
 
@@ -220,7 +270,7 @@ export interface KnowledgeAnswerResponse {
 export type AgentMessageRole = "user" | "assistant";
 
 export type AgentEventKind =
-  "plan" | "search" | "tool" | "evidence" | "synthesis";
+    "chat" | "plan" | "search" | "tool" | "evidence" | "synthesis" | "reflection";
 
 export type AgentEventStatus = "pending" | "running" | "completed" | "failed";
 
@@ -229,6 +279,9 @@ export interface AgentCitation {
   title: string;
   source: string;
   quote: string;
+  content?: string;
+  sourceType?: "internal" | "web" | string;
+  assetId?: number | string;
   score?: string;
   pageNumber?: number;
   url?: string;
@@ -306,6 +359,20 @@ export interface AgentThreadSummary {
   messageCount: number;
 }
 
+export interface AgentThreadHistory extends AgentThreadSummary {
+  messages: AgentMessage[];
+  events?: AgentEvent[];
+  eventHistory?: AgentEvent[];
+  citations?: AgentCitation[];
+  tokenUsage?: TokenUsage;
+  contextUsage?: ContextCompression;
+  status?: "idle" | "running" | "completed" | "failed" | string;
+  runId?: string | null;
+  runStartedAt?: string;
+  runFinishedAt?: string;
+  runDurationMs?: number;
+}
+
 export interface AgentSendMessagePayload {
   threadId: string;
   messageId: string;
@@ -322,17 +389,25 @@ export interface AgentSendMessagePayload {
       "id" | "name" | "kind" | "mimeType" | "size" | "uploadId"
     >
   >;
+  contextMessages?: Array<Pick<AgentMessage, "role" | "content">>;
 }
 
 export interface AgentRunConfig {
   allowWebSearch?: boolean;
+  reflectionEnabled?: boolean;
+  strategy?: "AUTO" | "REACT" | "PLAN_AND_SOLVE" | "REFLECTION";
   maxResearchRounds?: number;
   topK?: number;
   retrievalMode?: "VECTOR" | "KEYWORD" | "HYBRID";
   useReranker?: boolean;
   outputLanguage?: string;
+  temperature?: number;
+  topP?: number;
+  modelTopK?: number | null;
+  maxTokens?: number;
+  frequencyPenalty?: number;
+  reasoningEffort?: "none" | "low" | "medium" | "high";
   modelConfigId?: number | string;
-  webSearchToolId?: number | string;
 }
 
 export interface AgentRunAccepted {
@@ -342,15 +417,27 @@ export interface AgentRunAccepted {
   eventsUrl?: string;
 }
 
+export interface AgentRunMetrics {
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
+  latencyMs?: number;
+  usage?: TokenUsage;
+  contextCompression?: ContextCompression;
+  delta?: boolean;
+}
+
 export type AgentStreamEvent =
-  | { type: "run.started"; runId: string; data?: Record<string, unknown> }
+  | { type: "run.started"; runId: string; startedAt?: string; data?: AgentRunMetrics }
   | { type: "event.updated"; runId: string; event: AgentEvent }
   | { type: "message.delta"; runId: string; messageId: string; delta: string }
+  | { type: "message.replace"; runId: string; messageId: string; content: string }
   | { type: "citation.added"; runId: string; citation: AgentCitation }
   | { type: "media.added"; runId: string; messageId: string; media: AgentMedia }
   | { type: "message.completed"; runId: string; messageId: string }
-  | { type: "run.completed"; runId: string; data?: Record<string, unknown> }
-  | { type: "run.failed"; runId: string; message: string };
+  | { type: "usage.updated"; runId: string; usage?: TokenUsage; latencyMs?: number; delta?: boolean }
+  | { type: "run.completed"; runId: string; data?: AgentRunMetrics; startedAt?: string; finishedAt?: string; durationMs?: number; usage?: TokenUsage; contextCompression?: ContextCompression }
+  | { type: "run.failed"; runId: string; message: string; startedAt?: string; durationMs?: number };
 
 export type RunStatus =
   "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | string;
@@ -391,6 +478,58 @@ export interface ResearchRun {
   finalSummary?: string;
   eventsUrl?: string;
   [key: string]: unknown;
+}
+
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  model?: string;
+  available?: boolean;
+  estimated?: boolean;
+}
+
+export interface ContextCompression {
+  originalChars?: number;
+  finalChars?: number;
+  compressedMessages?: number;
+  originalTokenEstimate?: number;
+  finalTokenEstimate?: number;
+  finalMessageCount?: number;
+  compressedContextTokens?: number;
+}
+
+export interface TokenUsageSummary {
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  compressedContextTokens: number;
+  runCount: number;
+}
+
+export interface TokenUsageTrendPoint {
+  date: string;
+  tokens: number;
+  runs: number;
+}
+
+export interface TokenUsageUser {
+  userId: number | string;
+  userName: string;
+  totalTokens: number;
+  runCount: number;
+}
+
+export interface TokenUsageBreakdown {
+  projectId: number | string;
+  projectName: string;
+  userId: number | string;
+  userName: string;
+  modelName: string;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  runCount: number;
 }
 
 export interface RunEvent<T = Record<string, unknown>> {
@@ -483,4 +622,8 @@ export interface StatisticsResponse {
   runStatuses: StatisticsBreakdown[];
   assetStatuses: StatisticsBreakdown[];
   actionItemStatuses: StatisticsBreakdown[];
+  tokenUsage?: TokenUsageSummary;
+  tokenDaily?: TokenUsageTrendPoint[];
+  tokenUsers?: TokenUsageUser[];
+  tokenBreakdown?: TokenUsageBreakdown[];
 }

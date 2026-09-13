@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useWorkspace } from "@/composables/useWorkspace";
+import { getApiErrorMessage } from "@/api/core";
 import { settingsApi, type ProjectModelConfig } from "@/api/settings";
 import { projectApi } from "@/api/projects";
 
@@ -37,6 +38,9 @@ type ModelRecord = {
   modelId: string;
   endpoint: string;
   authType: string;
+  hasCredential: boolean;
+  testStatus: "idle" | "testing" | "success" | "error";
+  testMessage: string;
   credential: string;
   temperature: number;
   topP: number;
@@ -54,7 +58,7 @@ type ModelRecord = {
   retries: number;
   description: string;
   note: string;
-  scope: "PERSONAL" | "TEAM";
+  scope: "PERSONAL";
 };
 
 type EmbeddingMode = "local" | "api";
@@ -68,11 +72,11 @@ type EmbeddingForm = {
   credential: string;
   dimension: number;
   mode: EmbeddingMode;
-  scope: "PERSONAL" | "TEAM";
 };
 
 type NewModelForm = {
   name: string;
+  connectionKey: string;
   provider: string;
   modelId: string;
   use: string;
@@ -96,7 +100,6 @@ type NewModelForm = {
   retries: number;
   enabled: boolean;
   note: string;
-  scope: "PERSONAL" | "TEAM";
 };
 
 const { notify, workspaceId, projectId } = useWorkspace();
@@ -105,6 +108,7 @@ const providerEndpoints: Record<string, string> = {
   OpenAI: "https://api.openai.com/v1",
   Anthropic: "https://api.anthropic.com/v1",
   DashScope: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  SiliconFlow: "https://api.siliconflow.cn/v1",
   "Azure OpenAI":
     "https://{resource}.openai.azure.com/openai/deployments/{deployment}",
 };
@@ -113,6 +117,8 @@ const models = ref<ModelRecord[]>([]);
 const embeddingModel = ref<ProjectModelConfig | null>(null);
 const defaultModel = ref("");
 const addOpen = ref(false);
+const editingModelId = ref<number | string | null>(null);
+const editingModelHasCredential = ref(false);
 const advancedOpen = ref(false);
 const testingModel = ref("");
 const testingEmbedding = ref(false);
@@ -127,13 +133,13 @@ const embeddingForm = reactive<EmbeddingForm>({
   credential: "",
   dimension: 1536,
   mode: "local",
-  scope: "TEAM",
 });
 const externalEmbeddingActive = computed(
   () => embeddingForm.mode === "api" && Boolean(embeddingModel.value?.enabled),
 );
 const newModel = reactive<NewModelForm>({
   name: "",
+  connectionKey: "new",
   provider: "OpenAI",
   modelId: "",
   use: "",
@@ -157,8 +163,60 @@ const newModel = reactive<NewModelForm>({
   retries: 2,
   enabled: true,
   note: "",
-  scope: "TEAM" as "PERSONAL" | "TEAM",
 });
+type ProviderConnection = {
+  key: string;
+  provider: string;
+  endpoint: string;
+  authType: string;
+  hasCredential: boolean;
+  credentialSourceId: number | string;
+  models: ModelRecord[];
+};
+
+function connectionKey(model: Pick<ModelRecord, "provider" | "endpoint" | "authType">) {
+  return [model.provider, model.endpoint, model.authType]
+    .map((value) => value.trim().toLowerCase())
+    .join("|");
+}
+
+const providerConnections = computed<ProviderConnection[]>(() => {
+  const grouped = new Map<string, ProviderConnection>();
+  for (const model of models.value) {
+    if (model.id == null) continue;
+    const key = connectionKey(model);
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.models.push(model);
+      if (!existing.hasCredential && model.hasCredential) {
+        existing.hasCredential = true;
+        existing.credentialSourceId = model.id;
+      }
+      continue;
+    }
+    grouped.set(key, {
+      key,
+      provider: model.provider,
+      endpoint: model.endpoint,
+      authType: model.authType,
+      hasCredential: model.hasCredential,
+      credentialSourceId: model.id,
+      models: [model],
+    });
+  }
+  return [...grouped.values()];
+});
+
+const reusableConnections = computed(() =>
+  providerConnections.value.filter((item) => item.hasCredential),
+);
+const selectedConnection = computed(() =>
+  reusableConnections.value.find((item) => item.key === newModel.connectionKey),
+);
+const usingExistingConnection = computed(() => Boolean(selectedConnection.value));
+const editingModel = computed(() =>
+  models.value.find((model) => String(model.id) === String(editingModelId.value)),
+);
 const enabledCount = computed(
   () => models.value.filter((model) => model.enabled).length,
 );
@@ -190,7 +248,6 @@ function loadEmbeddingForm(model: ProjectModelConfig | null) {
       model.enabled && String(config.mode ?? "openai").toLowerCase() !== "hash"
         ? "api"
         : "local",
-    scope: model.scope === "PERSONAL" ? "PERSONAL" : "TEAM",
   });
 }
 
@@ -211,6 +268,9 @@ function fromApiModel(model: ProjectModelConfig): ModelRecord {
     modelId: model.modelId,
     endpoint: model.endpoint,
     authType: model.authType,
+    hasCredential: Boolean(model.hasCredential),
+    testStatus: "idle",
+    testMessage: "",
     credential: "",
     temperature: Number(config.temperature ?? 0.3),
     topP: Number(config.topP ?? 0.9),
@@ -228,7 +288,7 @@ function fromApiModel(model: ProjectModelConfig): ModelRecord {
     retries: Number(config.retries ?? 0),
     description: String(config.description || ""),
     note: String(config.note || ""),
-    scope: model.scope === "PERSONAL" ? "PERSONAL" : config.scope === "PERSONAL" ? "PERSONAL" : "TEAM",
+    scope: "PERSONAL",
   };
 }
 
@@ -264,7 +324,6 @@ function embeddingPayload(enabled: boolean) {
       ? { credential: embeddingForm.credential.trim() }
       : {}),
     enabled,
-    scope: embeddingForm.scope,
     config: JSON.stringify({
       use: "EMBEDDING",
       mode: "openai",
@@ -377,7 +436,6 @@ async function toggleModel(model: ModelRecord) {
           modelId: model.modelId,
           endpoint: model.endpoint,
           authType: model.authType,
-          scope: model.scope,
           enabled: model.enabled,
         },
       );
@@ -396,14 +454,26 @@ async function toggleModel(model: ModelRecord) {
 async function testConnection(model: ModelRecord) {
   if (!model.id) return;
   testingModel.value = model.name;
-  const started = performance.now();
+  model.testStatus = "testing";
+  model.testMessage = "正在通过后端调用该模型进行真实连接测试";
   try {
-    await settingsApi.models.test(workspaceId.value, settingsProjectId.value, model.id);
-    model.latency = `${Math.round(performance.now() - started)} ms`;
+    const result = await settingsApi.models.test(
+      workspaceId.value,
+      settingsProjectId.value,
+      model.id,
+    );
+    const latency = Number(result.latencyMs);
+    model.latency = Number.isFinite(latency) ? `${latency} ms` : "成功";
+    model.testStatus = "success";
+    model.testMessage = result.model
+      ? `已收到 ${result.model} 的有效响应`
+      : "已收到模型的有效响应";
     notify(`${model.name} 连接测试成功 · ${model.latency}`);
   } catch (error) {
     model.latency = "失败";
-    notify(error instanceof Error ? error.message : `${model.name} 连接测试失败`);
+    model.testStatus = "error";
+    model.testMessage = getApiErrorMessage(error, "模型连接测试失败，请检查服务地址、模型 ID 和凭证");
+    notify(`${model.name} 连接测试失败 · ${model.testMessage}`);
   } finally {
     testingModel.value = "";
   }
@@ -432,8 +502,11 @@ function saveDefaultModel() {
 }
 
 function resetNewModel() {
+  editingModelId.value = null;
+  editingModelHasCredential.value = false;
   Object.assign(newModel, {
     name: "",
+    connectionKey: "new",
     provider: "OpenAI",
     modelId: "",
     use: "",
@@ -457,7 +530,6 @@ function resetNewModel() {
     retries: 2,
     enabled: true,
     note: "",
-    scope: "TEAM",
   });
   formError.value = "";
   advancedOpen.value = false;
@@ -468,11 +540,71 @@ function openAddModel() {
   addOpen.value = true;
 }
 
+function openAddModelForConnection(connection: ProviderConnection) {
+  resetNewModel();
+  newModel.connectionKey = connection.key;
+  applyConnectionSelection();
+  addOpen.value = true;
+}
+
+function openEditModel(model: ModelRecord) {
+  if (model.id == null) return;
+  resetNewModel();
+  editingModelId.value = model.id;
+  editingModelHasCredential.value = model.hasCredential;
+  Object.assign(newModel, {
+    connectionKey: "new",
+    name: model.name,
+    provider: model.provider,
+    modelId: model.modelId,
+    use: model.use === "—" ? "" : model.use,
+    description: model.description,
+    endpoint: model.endpoint,
+    authType: model.authType,
+    credential: "",
+    temperature: model.temperature,
+    topP: model.topP,
+    topK: model.topK,
+    maxTokens: model.maxTokens,
+    contextWindow: model.contextWindow,
+    frequencyPenalty: model.frequencyPenalty,
+    presencePenalty: model.presencePenalty,
+    seed: model.seed,
+    stop: model.stop.join("\n"),
+    reasoningEffort: model.reasoningEffort,
+    structuredOutputMethod: model.structuredOutputMethod,
+    extraBody: model.extraBody,
+    timeout: model.timeout,
+    retries: model.retries,
+    enabled: model.enabled,
+    note: model.note,
+  });
+  advancedOpen.value = true;
+  addOpen.value = true;
+}
+
+function applyConnectionSelection() {
+  const connection = selectedConnection.value;
+  if (!connection) {
+    newModel.provider = "OpenAI";
+    newModel.endpoint = providerEndpoints.OpenAI ?? "";
+    newModel.authType = "API Key";
+    newModel.credential = "";
+    return;
+  }
+  newModel.provider = connection.provider;
+  newModel.endpoint = connection.endpoint;
+  newModel.authType = connection.authType;
+  newModel.credential = "";
+}
+
 function updateProviderDefaults() {
+  newModel.connectionKey = "new";
   newModel.endpoint = providerEndpoints[newModel.provider] ?? "";
 }
 
 async function saveModel() {
+  const isEditing = editingModelId.value != null;
   if (
     !newModel.name.trim() ||
     !newModel.provider ||
@@ -486,14 +618,15 @@ async function saveModel() {
     formError.value = "服务地址必须以 http:// 或 https:// 开头";
     return;
   }
-  if (!newModel.credential.trim()) {
-    formError.value = "请填写访问凭证，凭证只会保存在当前会话中";
+  if (!newModel.credential.trim() && !selectedConnection.value && !(isEditing && editingModelHasCredential.value)) {
+    formError.value = "新服务连接必须填写访问凭证；已有连接可直接复用已保存凭证";
     return;
   }
   if (
     models.value.some(
       (model) =>
-        model.name.toLowerCase() === newModel.name.trim().toLowerCase(),
+        model.name.toLowerCase() === newModel.name.trim().toLowerCase() &&
+        String(model.id) !== String(editingModelId.value),
     )
   ) {
     formError.value = "已存在同名模型，请换一个显示名称";
@@ -537,15 +670,16 @@ async function saveModel() {
 
   const savedName = newModel.name.trim();
   const endpoint = newModel.endpoint.trim();
+  const credentialSourceId = isEditing ? undefined : selectedConnection.value?.credentialSourceId;
   const payload = {
     name: savedName,
     provider: newModel.provider,
     modelId: newModel.modelId.trim(),
     endpoint,
     authType: newModel.authType,
-    credential: newModel.credential.trim(),
+    ...(newModel.credential.trim() ? { credential: newModel.credential.trim() } : {}),
+    ...(credentialSourceId != null ? { credentialSourceId } : {}),
     enabled: newModel.enabled,
-    scope: newModel.scope,
     config: JSON.stringify({
       use: newModel.use.trim(),
       temperature: newModel.temperature,
@@ -568,19 +702,25 @@ async function saveModel() {
   };
   let savedModel: ModelRecord;
   try {
-    savedModel = fromApiModel(
-      await settingsApi.models.create(
-        workspaceId.value,
-        settingsProjectId.value,
-        payload,
-      ),
-    );
+    const remoteModel = isEditing
+      ? await settingsApi.models.update(
+          workspaceId.value,
+          settingsProjectId.value,
+          editingModelId.value as number | string,
+          payload,
+        )
+      : await settingsApi.models.create(
+          workspaceId.value,
+          settingsProjectId.value,
+          payload,
+        );
+    savedModel = fromApiModel(remoteModel);
   } catch (error) {
     formError.value =
       error instanceof Error ? error.message : "模型配置保存失败";
     return;
   }
-  models.value.push({
+  const savedModelRecord: ModelRecord = {
     id: savedModel.id,
     name: savedName,
     provider: newModel.provider,
@@ -590,6 +730,9 @@ async function saveModel() {
     modelId: newModel.modelId.trim(),
     endpoint,
     authType: newModel.authType,
+    hasCredential: true,
+    testStatus: "idle",
+    testMessage: "",
     credential: newModel.credential.trim(),
     temperature: newModel.temperature,
     topP: newModel.topP,
@@ -607,11 +750,17 @@ async function saveModel() {
     retries: newModel.retries,
     description: newModel.description.trim(),
     note: newModel.note.trim(),
-    scope: newModel.scope,
-  });
+    scope: "PERSONAL",
+  };
+  if (isEditing) {
+    const index = models.value.findIndex((model) => String(model.id) === String(editingModelId.value));
+    if (index >= 0) models.value.splice(index, 1, savedModelRecord);
+  } else {
+    models.value.push(savedModelRecord);
+  }
   addOpen.value = false;
   resetNewModel();
-  notify(`${savedName} 配置已添加`);
+  notify(`${savedName} ${isEditing ? "配置已更新" : "配置已添加"}`);
 }
 </script>
 
@@ -619,7 +768,7 @@ async function saveModel() {
   <Layout
     eyebrow="WORKSPACE / SETTINGS"
     title="模型配置"
-    subtitle="配置工作区的模型、Embedding、默认模型和连接状态"
+    subtitle="配置当前用户的模型、Embedding、默认模型和连接状态"
   >
     <div class="settings-section model-overview">
       <div class="overview-copy">
@@ -657,7 +806,6 @@ async function saveModel() {
       </div>
       <p v-if="embeddingError" class="form-error" role="alert">{{ embeddingError }}</p>
       <div class="embedding-mode-picker" role="radiogroup" aria-label="向量化方式">
-        <span class="embedding-mode-title">向量化方式</span>
         <label class="embedding-mode-option" :class="{ active: embeddingForm.mode === 'local' }">
           <input v-model="embeddingForm.mode" type="radio" value="local" />
           <span><strong>本地向量化</strong><small>无需 API，适合本地开发</small></span>
@@ -672,12 +820,11 @@ async function saveModel() {
       </p>
       <div v-else class="embedding-form-grid">
         <label class="field-label">配置名称<input v-model="embeddingForm.name" maxlength="50" placeholder="例如：项目 Embedding" /></label>
-        <label class="field-label">提供方<input v-model="embeddingForm.provider" placeholder="例如：OpenAI、DashScope" /></label>
+        <label class="field-label">提供方<input v-model="embeddingForm.provider" placeholder="例如：OpenAI、DashScope、SiliconFlow" /></label>
         <label class="field-label">模型 ID<input v-model="embeddingForm.modelId" placeholder="例如：text-embedding-3-small" /></label>
         <label class="field-label">向量维度<input v-model.number="embeddingForm.dimension" type="number" min="1" step="1" /><small>必须和当前 Milvus 集合维度一致。</small></label>
         <label class="field-label field-wide">服务地址<input v-model="embeddingForm.endpoint" placeholder="https://api.openai.com/v1" /><small>支持 OpenAI 兼容 Embedding 接口。</small></label>
         <label class="field-label field-wide">访问凭证<input v-model="embeddingForm.credential" type="password" autocomplete="new-password" placeholder="首次配置必填；已有配置留空即可保留" /></label>
-        <label class="field-label">配置作用域<select v-model="embeddingForm.scope"><option value="TEAM">团队共享</option><option value="PERSONAL">仅自己可用</option></select></label>
       </div>
       <div class="embedding-actions">
         <span v-if="embeddingForm.mode === 'api'" class="dialog-security-note"><ShieldCheck :size="13" />凭证加密保存在后端，不会回显。</span>
@@ -689,66 +836,55 @@ async function saveModel() {
     <div class="settings-section">
       <div class="section-intro">
         <div>
-          <h2>已配置模型</h2>
-          <p>为不同任务选择合适的模型，并在变更前测试连接。</p>
+          <h2>模型服务与目录</h2>
+          <p>一个服务连接可以挂多个真实模型。先配置一次地址与凭证，再添加该平台提供的模型 ID。</p>
         </div>
         <button
           class="button button-secondary button-sm"
           type="button"
           @click="openAddModel"
         >
-          <Plus :size="15" />添加模型
+          <Plus :size="15" />添加模型服务
         </button>
       </div>
-      <div class="config-list model-list">
-        <div
-          v-for="model in models"
-          :key="model.name"
-          class="config-row model-row"
-        >
-          <span class="config-icon"><Cpu :size="17" /></span
-          ><span class="model-copy"
-            ><strong
-              >{{ model.name }}
-              <span v-if="defaultModel === model.name" class="default-tag"
-                ><Star :size="10" />默认</span
-              ></strong
-            ><small
-              >{{ model.provider }} · {{ model.scope === "PERSONAL" ? "个人" : "团队" }} · {{ model.use }} ·
-              {{ model.modelId }}</small
-            ></span
-          ><span class="latency"><Gauge :size="12" />{{ model.latency }}</span
-          ><button
-            class="switch-button"
-            :class="{ active: model.enabled }"
-            type="button"
-            :aria-label="`${model.name}${model.enabled ? '停用' : '启用'}`"
-            @click="toggleModel(model)"
-          >
-            <span /></button
-          ><button
-            class="text-button test-button"
-            type="button"
-            :disabled="testingModel === model.name"
-            @click="testConnection(model)"
-          >
-            <RefreshCw
-              :size="13"
-              :class="{ spinning: testingModel === model.name }"
-            />{{ testingModel === model.name ? "测试中" : "测试连接" }}
-          </button
-          ><button
-            class="text-button danger-text-button"
-            type="button"
-            @click="removeModel(model)"
-          >
-            删除
-          </button>
-        </div>
+      <div class="provider-list">
+        <article v-for="connection in providerConnections" :key="connection.key" class="provider-card">
+          <div class="provider-card-header">
+            <div class="provider-card-title">
+              <span class="config-icon"><KeyRound :size="16" /></span>
+              <div>
+                <strong>{{ connection.provider }}</strong>
+                <small>{{ connection.endpoint }} · {{ connection.models.length }} 个模型 · {{ connection.authType }} · {{ connection.hasCredential ? "凭证已保存" : "缺少凭证" }}</small>
+              </div>
+            </div>
+            <button v-if="connection.hasCredential" class="button button-secondary button-sm" type="button" @click="openAddModelForConnection(connection)">
+              <Plus :size="13" />为此服务添加模型
+            </button>
+          </div>
+          <div class="config-list model-list">
+            <div v-for="model in connection.models" :key="model.id || model.name" class="config-row model-row">
+              <span class="config-icon"><Cpu :size="17" /></span>
+              <span class="model-copy">
+                <strong>{{ model.name }} <span v-if="defaultModel === model.name" class="default-tag"><Star :size="10" />默认</span></strong>
+                <small>{{ model.use }} · {{ model.modelId }}</small>
+                <small v-if="model.testMessage" class="test-result" :title="model.testMessage" :class="`test-result-${model.testStatus}`">{{ model.testMessage }}</small>
+              </span>
+              <span class="latency" :class="`latency-${model.testStatus}`" :title="model.testMessage">
+                <Gauge :size="12" />{{ model.testStatus === "testing" ? "测试中" : model.latency }}
+              </span>
+              <button class="switch-button" :class="{ active: model.enabled }" type="button" :aria-label="`${model.name}${model.enabled ? '停用' : '启用'}`" @click="toggleModel(model)"><span /></button>
+              <button class="text-button test-button" type="button" :disabled="testingModel === model.name" @click="testConnection(model)">
+                <RefreshCw :size="13" :class="{ spinning: testingModel === model.name }" />{{ testingModel === model.name ? "测试中" : "测试连接" }}
+              </button>
+              <button class="text-button" type="button" @click="openEditModel(model)">编辑</button>
+              <button class="text-button danger-text-button" type="button" @click="removeModel(model)">删除</button>
+            </div>
+          </div>
+        </article>
         <div v-if="!models.length" class="empty-state">
           <Cpu :size="18" />
-          <strong>暂无模型配置</strong>
-          <span>添加模型后，这里会显示后端保存的模型配置。</span>
+          <strong>暂无模型服务</strong>
+          <span>先添加一个服务连接，再为它添加平台提供的真实模型 ID。</span>
         </div>
       </div>
     </div>
@@ -763,15 +899,38 @@ async function saveModel() {
     <Dialog v-model:open="addOpen"
       ><DialogContent class="model-dialog sm:max-w-4xl"
         ><DialogHeader
-          ><DialogTitle>添加模型配置</DialogTitle
+          ><DialogTitle>{{ editingModelId ? "编辑模型配置" : "添加模型到服务目录" }}</DialogTitle
           ><DialogDescription
-            >完整配置模型连接和生成参数后，再加入工作区模型池。</DialogDescription
+            >{{ editingModelId ? "修改当前模型的真实 ID、服务地址、生成参数或凭证。凭证留空表示保持原值。" : "服务地址与访问凭证属于平台连接；同一平台下可以添加多个真实模型，不需要重复录入 Key。" }}</DialogDescription
           ></DialogHeader
         >
         <div class="model-form-scroll">
           <p v-if="formError" class="form-error" role="alert">
             {{ formError }}
           </p>
+          <section class="model-form-section connection-section">
+            <div class="form-section-heading">
+              <span class="form-section-icon"><KeyRound :size="15" /></span>
+              <div>
+                <strong>服务连接</strong>
+                <small>选择已有平台连接，或创建一个新的 OpenAI 兼容连接</small>
+              </div>
+            </div>
+            <label v-if="!editingModelId" class="field-label field-wide">连接方式
+              <select v-model="newModel.connectionKey" @change="applyConnectionSelection">
+                <option value="new">新建服务连接</option>
+                <option v-for="connection in reusableConnections" :key="connection.key" :value="connection.key">
+                  复用 {{ connection.provider }} · {{ connection.endpoint }} · 已有 {{ connection.models.length }} 个模型
+                </option>
+              </select>
+            </label>
+            <p v-if="editingModelId" class="connection-reuse-note edit-connection-note">
+              <Settings2 :size="14" />正在编辑 {{ editingModel?.name || "当前模型" }} 的服务连接。修改地址或提供方只影响当前模型，不会自动修改同一平台下的其他模型。
+            </p>
+            <p v-if="usingExistingConnection" class="connection-reuse-note">
+              <ShieldCheck :size="14" />将复用服务端已保存的凭证，页面不会读取或回显 Key；你只需要填写新的真实模型 ID。
+            </p>
+          </section>
           <section class="model-form-section">
             <div class="form-section-heading">
               <span class="form-section-icon"><Settings2 :size="15" /></span>
@@ -785,27 +944,27 @@ async function saveModel() {
                 >显示名称<input
                   v-model="newModel.name"
                   maxlength="50"
-                  placeholder="例如：GPT-4.1 mini" /></label
+                  placeholder="例如：DeepSeek V4 Flash" /></label
               ><label class="field-label"
-                >提供方<select
+                >提供方<input
                   v-model="newModel.provider"
+                  list="model-provider-options"
                   @change="updateProviderDefaults"
-                >
-                  <option>OpenAI</option>
-                  <option>Anthropic</option>
-                  <option>DashScope</option>
-                  <option>Azure OpenAI</option>
-                </select></label
-              ><label class="field-label"
-                >配置作用域<select v-model="newModel.scope">
-                  <option value="TEAM">团队共享</option>
-                  <option value="PERSONAL">仅自己可用</option>
-                </select><small>个人配置只对创建者可见，团队配置按项目成员权限使用。</small></label
+                  :disabled="usingExistingConnection"
+                  placeholder="例如：SiliconFlow" />
+                <datalist id="model-provider-options">
+                  <option value="OpenAI" />
+                  <option value="Anthropic" />
+                  <option value="DashScope" />
+                  <option value="SiliconFlow" />
+                  <option value="Azure OpenAI" />
+                </datalist>
+              </label
               ><label class="field-label"
                 >模型 ID<input
                   v-model="newModel.modelId"
-                  placeholder="例如：gpt-4.1-mini"
-                /><small>发送请求时使用的真实模型标识。</small></label
+                  placeholder="从平台模型目录复制真实模型 ID"
+                /><small>必须填写平台实际提供的模型标识，不使用系统猜测或虚构值。</small></label
               ><label class="field-label"
                 >使用场景<input
                   v-model="newModel.use"
@@ -831,7 +990,7 @@ async function saveModel() {
             </div>
             <div class="model-form-grid">
               <label class="field-label"
-                >认证方式<select v-model="newModel.authType">
+                >认证方式<select v-model="newModel.authType" :disabled="usingExistingConnection">
                   <option>API Key</option>
                   <option>OAuth 2.0</option>
                   <option>Workspace Token</option>
@@ -840,13 +999,15 @@ async function saveModel() {
                 >服务地址<input
                   v-model="newModel.endpoint"
                   placeholder="https://api.example.com/v1"
-                /><small>支持 OpenAI 兼容接口或厂商原生接口。</small></label
+                  :disabled="usingExistingConnection"
+                /><small>支持 OpenAI 兼容接口；硅基流动默认使用 https://api.siliconflow.cn/v1。</small></label
               ><label class="field-label field-wide"
                 >访问凭证<input
                   v-model="newModel.credential"
                   type="password"
                   autocomplete="new-password"
-                  placeholder="输入 API Key、Token 或 OAuth 凭证"
+                  :disabled="usingExistingConnection"
+                  :placeholder="editingModelId && editingModelHasCredential ? '留空保持现有凭证；需要更换时再输入' : usingExistingConnection ? '复用已有服务凭证，无需重复填写' : '输入 API Key、Token 或 OAuth 凭证'"
               /></label>
             </div>
           </section>
@@ -948,7 +1109,7 @@ async function saveModel() {
             type="button"
             @click="saveModel"
           >
-            保存并添加
+            {{ editingModelId ? "保存修改" : "保存并添加" }}
           </button></DialogFooter
         ></DialogContent
       ></Dialog
@@ -1009,14 +1170,6 @@ async function saveModel() {
   align-items: stretch;
   gap: 0.5rem;
   margin-bottom: 0.875rem;
-}
-.embedding-mode-title {
-  display: flex;
-  min-width: 5rem;
-  align-items: center;
-  color: var(--workspace-muted);
-  font-size: 0.5625rem;
-  font-weight: 650;
 }
 .embedding-mode-option {
   position: relative;
@@ -1159,6 +1312,66 @@ async function saveModel() {
 .model-list {
   max-width: none;
 }
+.provider-list {
+  display: grid;
+  gap: 0.75rem;
+}
+.provider-card {
+  overflow: hidden;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.625rem;
+  background: var(--surface);
+}
+.provider-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-bottom: 0.0625rem solid var(--workspace-divider);
+  background: color-mix(in oklab, var(--teal) 5%, var(--surface));
+}
+.provider-card-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.625rem;
+}
+.provider-card-title > div {
+  display: grid;
+  min-width: 0;
+  gap: 0.1875rem;
+}
+.provider-card-title strong {
+  color: var(--workspace-text);
+  font-size: 0.6875rem;
+}
+.provider-card-title small {
+  overflow: hidden;
+  color: var(--workspace-muted);
+  font-size: 0.5rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.provider-card .config-list {
+  border: 0;
+  border-radius: 0;
+}
+.connection-reuse-note {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin: 0.75rem 0 0;
+  padding: 0.625rem 0.75rem;
+  border: 0.0625rem solid color-mix(in oklab, var(--teal) 24%, var(--workspace-border));
+  border-radius: 0.4375rem;
+  color: var(--teal-dark);
+  background: color-mix(in oklab, var(--teal) 7%, var(--surface));
+  font-size: 0.5625rem;
+}
+.connection-reuse-note svg {
+  flex: 0 0 auto;
+}
 .model-row {
   min-height: 4.25rem;
 }
@@ -1182,6 +1395,23 @@ async function saveModel() {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.model-copy .test-result {
+  display: block;
+  max-width: 42rem;
+  color: var(--workspace-muted);
+  line-height: 1.45;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.model-copy .test-result-success {
+  color: var(--teal-dark);
+}
+.model-copy .test-result-error {
+  color: #b55656;
+}
+.model-copy .test-result-testing {
+  color: #a56d19;
+}
 .default-tag {
   display: inline-flex;
   align-items: center;
@@ -1198,6 +1428,15 @@ async function saveModel() {
   min-width: 3.5rem;
   color: var(--workspace-muted);
   font-size: 0.5625rem;
+}
+.latency-success {
+  color: var(--teal-dark);
+}
+.latency-error {
+  color: #b55656;
+}
+.latency-testing {
+  color: #a56d19;
 }
 .switch-button {
   width: 2.125rem;
@@ -1425,6 +1664,10 @@ async function saveModel() {
   }
   .model-row .test-button {
     margin-left: 2.625rem;
+  }
+  .provider-card-header {
+    align-items: flex-start;
+    flex-direction: column;
   }
   .latency {
     margin-left: auto;

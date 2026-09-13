@@ -28,4 +28,3 @@ class ResearchState(TypedDict, total=False):
     cancelled: bool
     review_attempts: int
     prompt_snapshot: dict[str, str]
-    system_prompts: dict[str, str]

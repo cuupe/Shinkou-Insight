@@ -27,3 +27,35 @@ async def test_document_parse_chunk_embed_and_graph_pipeline():
 async def test_file_parser_rejects_unsupported_type():
     with pytest.raises(ValueError, match="Unsupported document type"):
         DocumentParser().parse_bytes(b"binary", file_name="archive.zip")
+
+
+def test_chunker_keeps_markdown_section_title_with_each_section():
+    document = DocumentParser().parse_bytes(
+        b"# Overview\nFirst paragraph.\n\n## Details\nSecond paragraph.",
+        file_name="notes.md",
+        mime_type="text/markdown",
+    ).documents[0]
+
+    chunks = DocumentChunker(chunk_size=200, chunk_overlap=20).split([document])
+
+    assert [chunk.section_title for chunk in chunks] == ["Overview", "Details"]
+    assert all("paragraph" in chunk.content for chunk in chunks)
+
+
+@pytest.mark.asyncio
+async def test_indexer_applies_project_chunking_config():
+    embedding = HashEmbeddingProvider(dimension=32)
+    store = InMemoryKnowledgeStore(embedding)
+    indexer = KnowledgeIndexer(DocumentParser(), DocumentChunker(), embedding, store)
+    result = await indexer.index_bytes(
+        data=("第一段内容。" * 30).encode(),
+        file_name="config.txt",
+        mime_type="text/plain",
+        workspace_id=1,
+        project_id=2,
+        asset_id=3,
+        chunking={"strategy": "fixed", "chunk_size": 40, "chunk_overlap": 0, "preserve_sections": False},
+    )
+
+    assert result["chunk_count"] > 1
+    assert all(len(item.chunk.content) <= 40 for item in store.items)

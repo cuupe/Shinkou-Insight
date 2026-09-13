@@ -38,6 +38,23 @@ export const projectApi = {
       ),
     ),
 
+  updateChunking: (
+    workspaceId: number | string,
+    projectId: number,
+    payload: {
+      strategy: string;
+      chunkSize: number;
+      chunkOverlap: number;
+      preserveSections: boolean;
+    },
+  ) =>
+    unwrap<Project>(
+      anet.patch<ApiResponse<Project>>(
+        `${projectPath(workspaceId, projectId)}/chunking`,
+        payload,
+      ),
+    ),
+
   remove: (workspaceId: number | string, projectId: number) =>
     unwrap<void>(
       anet.delete<ApiResponse<void>>(projectPath(workspaceId, projectId)),

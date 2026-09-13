@@ -8,6 +8,7 @@ import {
 } from "@lucide/vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
+import TokenUsageChart from "@/components/common/TokenUsageChart.vue";
 
 const {
   router,
@@ -55,6 +56,15 @@ const trendTotal = computed(() =>
 const trendReportTotal = computed(() =>
   trendPoints.value.reduce((total, point) => total + (Number(point.reports) || 0), 0),
 );
+const tokenBreakdown = computed(() => statistics.value?.tokenBreakdown || []);
+const tokenChartItems = computed(() => tokenBreakdown.value.map((item) => ({
+  label: `${item.projectName || "未命名项目"} · ${item.userName || `用户 ${item.userId}`}`,
+  detail: `${item.modelName || "模型未标注"} · ${item.runCount} 次运行`,
+  tokens: Number(item.totalTokens) || 0,
+})));
+function formatTokens(value: number | string | undefined) {
+  return Number(value || 0).toLocaleString("zh-CN");
+}
 const greeting = computed(() => {
   const hour = new Date().getHours();
   if (hour < 5) return "夜深了";
@@ -175,6 +185,32 @@ function focusIcon(icon: string) {
       </div>
     </section>
   </div>
+  <section class="panel workspace-token-panel">
+    <div class="panel-heading">
+      <div>
+        <h2>Token 使用明细</h2>
+        <p>按项目、成员和模型查看真实运行消耗</p>
+      </div>
+      <span class="statistics-source">工作区范围</span>
+    </div>
+    <div v-if="tokenChartItems.length" class="workspace-token-content">
+      <TokenUsageChart :items="tokenChartItems" />
+      <div class="workspace-token-table">
+        <div class="workspace-token-row workspace-token-header"><span>项目 / 成员</span><span>模型</span><span>输入 / 输出</span><span>合计</span></div>
+        <div v-for="item in tokenBreakdown" :key="`${item.projectId}-${item.userId}-${item.modelName}`" class="workspace-token-row">
+          <span><strong>{{ item.projectName || "未命名项目" }}</strong><small>{{ item.userName || `用户 ${item.userId}` }} · {{ item.runCount }} 次运行</small></span>
+          <span class="model-label">{{ item.modelName || "模型未标注" }}</span>
+          <span>{{ formatTokens(item.inputTokens) }} / {{ formatTokens(item.outputTokens) }}</span>
+          <strong>{{ formatTokens(item.totalTokens) }}</strong>
+        </div>
+      </div>
+    </div>
+    <div v-else class="empty-state workspace-token-empty">
+      <Activity :size="20" />
+      <strong>暂无真实 Token 记录</strong>
+      <span>完成一次 Agent 运行后，这里会按项目、成员和模型展示用量。</span>
+    </div>
+  </section>
   <div class="two-column-grid">
     <section class="panel table-panel" aria-labelledby="recent-runs-title">
       <div class="panel-heading">
@@ -567,6 +603,73 @@ function focusIcon(icon: string) {
   color: var(--teal-dark);
   background: color-mix(in oklab, var(--teal) 14%, var(--surface));
 }
+.workspace-token-panel {
+  margin-bottom: 1.125rem;
+}
+.workspace-token-content {
+  display: grid;
+  grid-template-columns: minmax(20rem, 1fr) minmax(24rem, 1.1fr);
+  gap: 1rem;
+  padding: 0 1.5rem 1.25rem;
+}
+.workspace-token-table {
+  display: grid;
+  align-content: start;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  border: 0.0625rem solid var(--workspace-divider);
+  border-radius: 0.625rem;
+  background: var(--surface-raised);
+}
+.workspace-token-row {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1.25fr) minmax(7rem, 1fr) minmax(6rem, 0.8fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  min-height: 2.25rem;
+  border-bottom: 0.0625rem solid var(--workspace-divider);
+  color: var(--workspace-muted);
+  font-size: 0.5rem;
+}
+.workspace-token-row:last-child {
+  border-bottom: 0;
+}
+.workspace-token-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-token-row strong {
+  display: block;
+  overflow: hidden;
+  color: var(--workspace-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-token-row small {
+  display: block;
+  margin-top: 0.125rem;
+  overflow: hidden;
+  color: var(--workspace-subtle);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-token-header {
+  min-height: 1.75rem;
+  color: var(--workspace-subtle);
+  font-size: 0.4375rem;
+}
+.workspace-token-header strong {
+  color: var(--workspace-subtle);
+}
+.workspace-token-empty {
+  min-height: 12rem;
+  margin: 0 1.5rem 1.25rem;
+  border: 0.0625rem dashed var(--workspace-border);
+  border-radius: 0.625rem;
+}
 .two-column-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(18.75rem, 0.9fr);
@@ -759,6 +862,7 @@ function focusIcon(icon: string) {
 
 @media (max-width: 68.75rem) {
   .dashboard-grid,
+  .workspace-token-content,
   .two-column-grid {
     grid-template-columns: 1fr;
   }
@@ -772,6 +876,18 @@ function focusIcon(icon: string) {
   .dashboard-grid,
   .two-column-grid {
     grid-template-columns: 1fr;
+  }
+
+  .workspace-token-content {
+    padding-inline: 0.875rem;
+  }
+
+  .workspace-token-row {
+    grid-template-columns: minmax(7rem, 1fr) minmax(6rem, 1fr) auto;
+  }
+
+  .workspace-token-row > span:nth-child(3) {
+    display: none;
   }
 
   .chart-summary {

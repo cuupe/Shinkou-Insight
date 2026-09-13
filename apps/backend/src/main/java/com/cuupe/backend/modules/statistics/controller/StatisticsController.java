@@ -51,6 +51,10 @@ public class StatisticsController {
         response.setRunStatuses(statisticsMapper.findRunStatuses(workspaceId, projectId, userId));
         response.setAssetStatuses(statisticsMapper.findAssetStatuses(workspaceId, projectId, userId));
         response.setActionItemStatuses(statisticsMapper.findActionItemStatuses(workspaceId, projectId, userId));
+        response.setTokenUsage(statisticsMapper.findTokenUsageSummary(workspaceId, projectId, userId));
+        response.setTokenDaily(statisticsMapper.findTokenUsageTrend(workspaceId, projectId, userId, normalizedDays));
+        response.setTokenUsers(statisticsMapper.findTokenUsageUsers(workspaceId, projectId, userId));
+        response.setTokenBreakdown(statisticsMapper.findTokenUsageBreakdown(workspaceId, projectId, userId));
         return response;
     }
 

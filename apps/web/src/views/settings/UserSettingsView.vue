@@ -265,7 +265,7 @@ async function handleLogout() {
   try {
     await authApi.logout();
   } catch {
-    // The local demo can still leave the authenticated area when no API is running.
+    // If the API rejects the session, return to the authenticated entry point.
   } finally {
     loggingOut.value = false;
     notify("已退出登录");

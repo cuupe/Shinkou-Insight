@@ -165,10 +165,10 @@ async function createProject() {
     createOpen.value = false;
     resetProjectForm();
 
-    notify("项目已创建，正在打开项目概览");
+    notify("项目已创建，正在打开项目启动工作台");
 
     await router.push({
-      name: "project-overview",
+      name: "project-agent-chat",
       params: {
         workspaceId: workspaceId.value,
         projectId: project.id,
@@ -397,14 +397,14 @@ onMounted(loadProjects);
       <RouterLink
         class="project-card-link"
         :to="{
-          name: 'project-overview',
+          name: 'project-agent-chat',
           params: {
             workspaceId,
             projectId: project.id,
           },
         }"
       >
-        打开项目
+        启动项目
         <ArrowRight :size="15" />
       </RouterLink>
     </article>

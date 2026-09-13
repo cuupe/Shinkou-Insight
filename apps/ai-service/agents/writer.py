@@ -14,13 +14,7 @@ class ReportWriterAgent:
         payload = message.payload
         evidence = [Evidence.model_validate(item) for item in payload.get("evidence", [])]
         valid_ids = {item.id for item in evidence}
-        messages = report_prompt(
-            payload["goal"],
-            payload.get("findings", []),
-            [item.model_dump() for item in evidence],
-            payload.get("output_language", "zh-CN"),
-            system_prompts=payload.get("system_prompts"),
-        )
+        messages = report_prompt(payload["goal"], payload.get("findings", []), [item.model_dump() for item in evidence], payload.get("output_language", "zh-CN"))
         if payload.get("review_result"):
             messages.append(
                 {

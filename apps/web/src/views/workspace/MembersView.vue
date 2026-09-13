@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Plus, Users } from "@lucide/vue";
-import { computed, onMounted, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import SearchField from "@/components/common/SearchField.vue";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import {
 import { dateFormatWithseconds } from "@/lib/utils";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { workspaceApi } from "@/api/workspace";
+import { getApiErrorMessage } from "@/api/core";
 const { notify, workspaceId, currentUser } = useWorkspace();
 type MemberRow = {
   id?: number | string;
@@ -47,6 +48,9 @@ const inviteTitle = ref("");
 const inviteNote = ref("");
 const inviteRole = ref("MEMBER");
 const inviteError = ref("");
+const loading = ref(false);
+const loadError = ref("");
+let loadRequestActive = false;
 const roleOptions = ["OWNER", "ADMIN", "MEMBER"];
 function memberDisplayFields(member: { department?: string; title?: string }) {
   return {
@@ -65,6 +69,10 @@ function memberActivityFields(member: { lastActiveAt?: string; status?: string }
   };
 }
 async function loadMembers() {
+  if (!workspaceId.value || workspaceId.value === "-1" || loadRequestActive) return;
+  loadRequestActive = true;
+  loading.value = true;
+  loadError.value = "";
   try {
     const remoteMembers = await workspaceApi.members(workspaceId.value);
     members.value = remoteMembers.map((member) => ({
@@ -95,11 +103,16 @@ async function loadMembers() {
           : member.status || "暂无",
       },
     */ }));
-  } catch {
-    notify("成员列表加载失败");
+  } catch (error) {
+    loadError.value = getApiErrorMessage(error, "成员列表加载失败，请稍后重试");
+  } finally {
+    loading.value = false;
+    loadRequestActive = false;
   }
 }
-onMounted(loadMembers);
+watch(workspaceId, (value) => {
+  if (value && value !== "-1") void loadMembers();
+}, { immediate: true });
 function isCurrentUser(member: (typeof members.value)[number]) {
   const me = currentUser.value;
   if (!me) return false;
@@ -283,7 +296,18 @@ function memberRoleOptions(member: (typeof members.value)[number]) {
         </Select>
       </div>
     </div>
-    <div class="data-table member-table">
+    <div v-if="loading && !members.length" class="member-load-state" role="status">
+      <Users :size="20" />
+      <strong>正在读取成员列表</strong>
+      <span>正在同步当前工作区的成员与权限。</span>
+    </div>
+    <div v-else-if="loadError" class="member-load-state member-load-error" role="alert">
+      <Users :size="20" />
+      <strong>{{ loadError }}</strong>
+      <span>请确认当前会话有效，或稍后重新加载。</span>
+      <button class="button button-secondary button-compact" type="button" @click="loadMembers">重新加载</button>
+    </div>
+    <div v-else class="data-table member-table">
       <div class="table-row table-header">
         <span>成员 / 手机号</span><span>部门 / 职位</span><span>角色</span
         ><span>加入时间</span><span>最后活跃</span>
@@ -334,7 +358,7 @@ function memberRoleOptions(member: (typeof members.value)[number]) {
         ><span class="muted-cell member-active-cell">{{ member.active }}</span>
       </div>
     </div>
-    <div v-if="!filteredMembers.length" class="empty-state panel-empty-state">
+    <div v-if="!loading && !loadError && !filteredMembers.length" class="empty-state panel-empty-state">
       <Users :size="20" />
       <strong>{{ members.length ? "没有匹配的成员" : "暂无成员数据" }}</strong>
       <span>{{ members.length ? "试试其他关键词或角色筛选条件。" : "后端返回成员后会显示在这里。" }}</span>
@@ -477,6 +501,34 @@ function memberRoleOptions(member: (typeof members.value)[number]) {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem;
+}
+
+.member-load-state {
+  display: grid;
+  min-height: 12rem;
+  place-items: center;
+  align-content: center;
+  gap: 0.5rem;
+  padding: 2rem;
+  color: var(--workspace-muted);
+  text-align: center;
+}
+
+.member-load-state svg {
+  color: var(--teal-dark);
+}
+
+.member-load-state strong {
+  color: var(--workspace-text);
+  font-size: 0.75rem;
+}
+
+.member-load-state span {
+  font-size: 0.625rem;
+}
+
+.member-load-error svg {
+  color: #c15b5b;
 }
 
 .invite-form textarea {

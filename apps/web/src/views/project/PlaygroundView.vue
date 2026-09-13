@@ -205,7 +205,7 @@ function openEvidence(result: RetrievalResult) {
         <span>{{
           isSearching
             ? "检索完成后会在这里显示后端返回的证据片段。"
-            : "输入问题并运行检索；没有命中时不会展示演示数据。"
+            : "输入问题并运行检索；没有命中时保持真实空状态。"
         }}</span>
       </div>
     </section>

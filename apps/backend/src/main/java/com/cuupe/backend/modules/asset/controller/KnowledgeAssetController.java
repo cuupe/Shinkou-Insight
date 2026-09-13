@@ -8,6 +8,8 @@ import com.cuupe.backend.modules.asset.mapper.KnowledgeAssetMapper;
 import com.cuupe.backend.modules.ai.AiIndexingClient;
 import com.cuupe.backend.modules.ai.RuntimeConfigResolver;
 import com.cuupe.backend.modules.notification.service.NotificationService;
+import com.cuupe.backend.modules.project.entity.Project;
+import com.cuupe.backend.modules.project.mapper.ProjectMapper;
 import com.cuupe.backend.modules.storage.ObjectStorageService;
 import com.cuupe.backend.modules.user.security.UserLoginByPassword;
 import jakarta.servlet.http.HttpServletRequest;
@@ -29,6 +31,7 @@ public class KnowledgeAssetController {
     private final ObjectStorageService objectStorageService;
     private final AiIndexingClient aiIndexingClient;
     private final RuntimeConfigResolver runtimeConfigResolver;
+    private final ProjectMapper projectMapper;
     private final AuditLogService auditLogService;
 
     @GetMapping public Result<List<KnowledgeAsset>> list(@PathVariable Long projectId, Authentication auth) { return Result.success(assetMapper.findByProject(projectId, userId(auth))); }
@@ -47,15 +50,17 @@ public class KnowledgeAssetController {
         asset.setStorageKey(storageKey);
         if (file.getContentType() != null && (file.getContentType().startsWith("text/") || file.getOriginalFilename().toLowerCase().endsWith(".md"))) asset.setContent(new String(file.getBytes(), StandardCharsets.UTF_8));
         try {
-            assetMapper.insert(asset); createChunks(asset);
+            assetMapper.insert(asset);
             assetMapper.markIndexing(asset.getId(), projectId);
             KnowledgeAsset indexedAsset = asset;
             Long workspace = workspaceId;
             Long user = userId(auth);
             Map<String, Object> runtimeEmbedding = runtimeConfigResolver.resolveEmbeddingPayload(projectId, user, null);
+            Project project = projectMapper.findAccessibleById(workspaceId, projectId, user);
+            String chunkingConfig = project == null ? null : project.getChunkingConfig();
             Thread.startVirtualThread(() -> {
                 try {
-                    aiIndexingClient.index(indexedAsset, workspace, user, runtimeEmbedding);
+                    aiIndexingClient.index(indexedAsset, workspace, user, runtimeEmbedding, chunkingConfig);
                     assetMapper.markIndexed(indexedAsset.getId(), indexedAsset.getProjectId());
                 } catch (Exception exception) {
                     assetMapper.markIndexFailed(indexedAsset.getId(), indexedAsset.getProjectId(), exception.getMessage());
@@ -70,7 +75,7 @@ public class KnowledgeAssetController {
         return Result.success(required(projectId, asset.getId(), auth));
     }
     @DeleteMapping("/{assetId}") public Result<Void> remove(@PathVariable Long workspaceId, @PathVariable Long projectId, @PathVariable Long assetId, Authentication auth) { Long user=userId(auth); if (assetMapper.markDeleted(assetId, projectId, user) == 0) throw notFound(); auditLogService.record(workspaceId, projectId, user, "ASSET_DELETED", "ASSET", assetId); return Result.success(); }
-    @PostMapping("/{assetId}/reindex") public Result<KnowledgeAsset> reindex(@PathVariable Long workspaceId, @PathVariable Long projectId, @PathVariable Long assetId, Authentication auth) { Long user=userId(auth); if (assetMapper.resetIndex(assetId, projectId, user) == 0) throw notFound(); KnowledgeAsset asset=required(projectId,assetId,auth); createChunks(asset); assetMapper.markIndexing(assetId, projectId); Map<String, Object> runtimeEmbedding=runtimeConfigResolver.resolveEmbeddingPayload(projectId, user, null); Thread.startVirtualThread(() -> { try { aiIndexingClient.index(asset, workspaceId, user, runtimeEmbedding); assetMapper.markIndexed(assetId, projectId); } catch (Exception exception) { assetMapper.markIndexFailed(assetId, projectId, exception.getMessage()); } }); auditLogService.record(workspaceId, projectId, user, "ASSET_REINDEX_REQUESTED", "ASSET", assetId); return Result.success(required(projectId, assetId, auth)); }
+    @PostMapping("/{assetId}/reindex") public Result<KnowledgeAsset> reindex(@PathVariable Long workspaceId, @PathVariable Long projectId, @PathVariable Long assetId, Authentication auth) { Long user=userId(auth); if (assetMapper.resetIndex(assetId, projectId, user) == 0) throw notFound(); assetMapper.deleteChunks(assetId); KnowledgeAsset asset=required(projectId,assetId,auth); assetMapper.markIndexing(assetId, projectId); Map<String, Object> runtimeEmbedding=runtimeConfigResolver.resolveEmbeddingPayload(projectId, user, null); Project project=projectMapper.findAccessibleById(workspaceId, projectId, user); String chunkingConfig=project == null ? null : project.getChunkingConfig(); Thread.startVirtualThread(() -> { try { aiIndexingClient.index(asset, workspaceId, user, runtimeEmbedding, chunkingConfig); assetMapper.markIndexed(assetId, projectId); } catch (Exception exception) { assetMapper.markIndexFailed(assetId, projectId, exception.getMessage()); } }); auditLogService.record(workspaceId, projectId, user, "ASSET_REINDEX_REQUESTED", "ASSET", assetId); return Result.success(required(projectId, assetId, auth)); }
     @GetMapping("/{assetId}/chunks") public Result<List<Map<String,Object>>> chunks(@PathVariable Long projectId, @PathVariable Long assetId, Authentication auth) { required(projectId,assetId,auth); return Result.success(assetMapper.findChunks(assetId,projectId,userId(auth))); }
     @GetMapping("/{assetId}/content") public Result<String> content(@PathVariable Long projectId, @PathVariable Long assetId, Authentication auth) { KnowledgeAsset asset=required(projectId,assetId,auth); return Result.success(asset.getContent() == null ? "" : asset.getContent()); }
 
@@ -80,5 +85,4 @@ public class KnowledgeAssetController {
     private String typeOf(String filename) { if(filename==null) return "FILE"; int dot=filename.lastIndexOf('.'); return dot<0 ? "FILE" : filename.substring(dot+1).toUpperCase(); }
     private String hex(byte[] bytes) { StringBuilder result=new StringBuilder(); for(byte value:bytes) result.append(String.format("%02x",value)); return result.toString(); }
     private String safeFileName(String value) { String name=value==null||value.isBlank()?"file":value.replaceAll("[\\r\\n\\\\/]", "_").trim(); return name.length()<=255?name:name.substring(0,255); }
-    private void createChunks(KnowledgeAsset asset) { assetMapper.deleteChunks(asset.getId()); if (asset.getContent() == null || asset.getContent().isBlank()) return; int size=1200; for(int start=0,index=0;start<asset.getContent().length();start+=size,index++) assetMapper.insertChunk(asset.getId(),index,asset.getContent().substring(start,Math.min(start+size,asset.getContent().length()))); }
 }

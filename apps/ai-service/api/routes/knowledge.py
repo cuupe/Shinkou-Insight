@@ -42,6 +42,7 @@ def _model_for_request(config: RuntimeModelConfig | None, http_request: Request)
         base_url=config.base_url,
         api_key=config.api_key,
         model=config.model,
+        provider=config.provider,
         timeout_seconds=config.timeout_seconds,
         max_retries=config.retries,
         client=client,
@@ -159,6 +160,7 @@ async def index_asset(asset_id: str, request: IndexAssetRequest, http_request: R
             project_id=request.project_id,
             asset_id=request.asset_id,
             embedding=embedding,
+            chunking=request.chunking.model_dump() if request.chunking else None,
         )
     except FileNotFoundError as exc:
         raise HTTPException(404, "asset content not found") from exc

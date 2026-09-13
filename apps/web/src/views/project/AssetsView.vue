@@ -12,8 +12,7 @@ import {
   Upload,
   X,
 } from "@lucide/vue";
-import { computed, ref } from "vue";
-import { onMounted } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import SearchField from "@/components/common/SearchField.vue";
 import {
@@ -28,6 +27,8 @@ import { useWorkspace } from "@/composables/useWorkspace";
 import { assetTabs } from "@/data/options";
 import type { AssetStatus } from "@/data/options";
 import { assetsApi } from "@/api/assets";
+import { projectApi } from "@/api/projects";
+import { getApiErrorMessage } from "@/api/core";
 
 const {
   filteredAssets,
@@ -44,7 +45,71 @@ const {
   notify,
   workspaceId,
   projectId,
+  selectedProject,
 } = useWorkspace();
+
+let indexPollTimer: number | undefined;
+let assetsLoading = false;
+const chunkingConfig = reactive({
+  strategy: "natural",
+  chunkSize: 1200,
+  chunkOverlap: 180,
+  preserveSections: true,
+});
+const chunkingSaving = ref(false);
+const chunkingError = ref("");
+
+function syncChunkingConfig(project: typeof selectedProject.value) {
+  const raw = project?.chunkingConfig;
+  let parsed: Record<string, unknown> = {};
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      parsed = {};
+    }
+  } else if (raw && typeof raw === "object") {
+    parsed = raw as Record<string, unknown>;
+  }
+  chunkingConfig.strategy = String(parsed.strategy || "natural");
+  chunkingConfig.chunkSize = Number(parsed.chunkSize || parsed.chunk_size || 1200);
+  chunkingConfig.chunkOverlap = Number(parsed.chunkOverlap || parsed.chunk_overlap || 180);
+  chunkingConfig.preserveSections = parsed.preserveSections !== false && parsed.preserve_sections !== false;
+  chunkingError.value = "";
+}
+
+watch(selectedProject, syncChunkingConfig, { immediate: true });
+
+async function saveChunkingConfig() {
+  if (!selectedProject.value || projectId.value <= 0) return;
+  const chunkSize = Math.round(Number(chunkingConfig.chunkSize));
+  const chunkOverlap = Math.round(Number(chunkingConfig.chunkOverlap));
+  if (chunkSize < 400 || chunkSize > 4000) {
+    chunkingError.value = "每块长度需在 400–4000 之间";
+    return;
+  }
+  if (chunkOverlap < 0 || chunkOverlap >= chunkSize) {
+    chunkingError.value = "重叠长度需大于等于 0 且小于每块长度";
+    return;
+  }
+  chunkingSaving.value = true;
+  chunkingError.value = "";
+  try {
+    const saved = await projectApi.updateChunking(workspaceId.value, projectId.value, {
+      strategy: chunkingConfig.strategy,
+      chunkSize,
+      chunkOverlap,
+      preserveSections: chunkingConfig.preserveSections,
+    });
+    Object.assign(chunkingConfig, { strategy: chunkingConfig.strategy, chunkSize, chunkOverlap, preserveSections: chunkingConfig.preserveSections });
+    Object.assign(selectedProject.value, saved);
+    notify("切分设置已保存；对已有资料重新索引后生效");
+  } catch (error) {
+    chunkingError.value = getApiErrorMessage(error, "切分设置保存失败，请稍后重试");
+  } finally {
+    chunkingSaving.value = false;
+  }
+}
 
 function mapAsset(asset: Awaited<ReturnType<typeof assetsApi.detail>>) {
   const status =
@@ -67,15 +132,43 @@ function mapAsset(asset: Awaited<ReturnType<typeof assetsApi.detail>>) {
   };
 }
 
-async function loadAssets() {
+function stopIndexPolling() {
+  if (indexPollTimer === undefined) return;
+  window.clearInterval(indexPollTimer);
+  indexPollTimer = undefined;
+}
+
+function startIndexPolling() {
+  if (indexPollTimer !== undefined) return;
+  indexPollTimer = window.setInterval(() => {
+    if (!assets.some((asset) => asset.status === "indexing")) {
+      stopIndexPolling();
+      return;
+    }
+    void loadAssets({ silent: true });
+  }, 1500);
+}
+
+async function loadAssets(options: { silent?: boolean } = {}) {
+  if (assetsLoading) return;
+  assetsLoading = true;
   try {
     const remoteAssets = await assetsApi.list(
       workspaceId.value,
       projectId.value,
     );
     assets.splice(0, assets.length, ...remoteAssets.map(mapAsset));
+    if (assets.some((asset) => asset.status === "indexing")) {
+      startIndexPolling();
+    } else {
+      stopIndexPolling();
+    }
   } catch (error) {
-    notify(error instanceof Error ? error.message : "知识库加载失败");
+    if (!options.silent) {
+      notify(error instanceof Error ? error.message : "知识库加载失败");
+    }
+  } finally {
+    assetsLoading = false;
   }
 }
 
@@ -84,13 +177,26 @@ async function onFilesSelected(event: Event) {
   const files = Array.from(input.files || []);
   if (!files.length) return;
   try {
-    const uploaded = await Promise.all(
+    const results = await Promise.allSettled(
       files.map((file) =>
         assetsApi.upload(workspaceId.value, projectId.value, file),
       ),
     );
-    assets.unshift(...uploaded.map(mapAsset));
-    notify(`已上传 ${uploaded.length} 个资料`);
+    const uploaded = results.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
+    );
+    const failed = results.length - uploaded.length;
+    if (uploaded.length) {
+      assets.unshift(...uploaded.map(mapAsset));
+      startIndexPolling();
+    }
+    notify(
+      failed
+        ? uploaded.length
+          ? `已上传 ${uploaded.length} 个资料，${failed} 个上传失败`
+          : "资料上传失败"
+        : `已上传 ${uploaded.length} 个资料，正在建立索引`,
+    );
   } catch (error) {
     notify(error instanceof Error ? error.message : "资料上传失败");
   } finally {
@@ -192,13 +298,14 @@ function clearSelection() {
 
 function retrySelected() {
   const targets = selectedAssets.value.filter(
-    (asset) => asset.status !== "indexed",
+    (asset) => asset.status === "failed",
   );
   if (!targets.length) {
-    notify("当前选中的资料都已完成索引");
+    notify("当前选中的资料没有可重试的失败项");
     return;
   }
   targets.forEach((asset) => retryAsset(asset.name));
+  startIndexPolling();
   notify(`已提交 ${targets.length} 个资料的重新索引`);
   clearSelection();
 }
@@ -234,7 +341,10 @@ async function confirmDelete() {
   if (removeCount) notify(`已移除 ${removeCount} 个知识库资料`);
 }
 
-onMounted(loadAssets);
+onMounted(() => {
+  void loadAssets();
+});
+onUnmounted(stopIndexPolling);
 </script>
 
 <template>
@@ -310,6 +420,48 @@ onMounted(loadAssets);
         ><small>{{ failedCount ? "建议尽快重新索引" : "当前没有异常" }}</small>
       </div>
     </article>
+  </section>
+
+  <section class="panel chunking-settings-panel">
+    <div class="panel-heading">
+      <div>
+        <h2>资料切分设置</h2>
+        <p>按项目保存默认规则，避免每次上传都重新选择。</p>
+      </div>
+      <span class="settings-scope-label">项目级</span>
+    </div>
+    <div class="chunking-settings-grid">
+      <label>
+        <span>切分方式</span>
+        <select v-model="chunkingConfig.strategy" aria-label="选择资料切分方式">
+          <option value="natural">自然段落与句子</option>
+          <option value="paragraph">优先保持完整段落</option>
+          <option value="fixed">固定长度</option>
+        </select>
+      </label>
+      <label>
+        <span>每块长度</span>
+        <input v-model.number="chunkingConfig.chunkSize" type="number" min="400" max="4000" step="50" aria-label="设置每块长度" />
+        <small>400–4000 字符</small>
+      </label>
+      <label>
+        <span>上下文重叠</span>
+        <input v-model.number="chunkingConfig.chunkOverlap" type="number" min="0" max="1200" step="20" aria-label="设置上下文重叠长度" />
+        <small>必须小于每块长度</small>
+      </label>
+      <label class="chunking-checkbox">
+        <input v-model="chunkingConfig.preserveSections" type="checkbox" />
+        <span>保留标题层级</span>
+        <small>让检索结果带回章节语境</small>
+      </label>
+    </div>
+    <div class="chunking-settings-footer">
+      <p v-if="chunkingError" class="chunking-error" role="alert">{{ chunkingError }}</p>
+      <p v-else>保存后只影响新的索引任务；已有资料请点击“重新索引”应用新规则。</p>
+      <button class="button button-secondary button-compact" type="button" :disabled="chunkingSaving" @click="saveChunkingConfig">
+        {{ chunkingSaving ? "保存中…" : "保存切分设置" }}
+      </button>
+    </div>
   </section>
 
   <section class="panel asset-table-panel">
@@ -444,7 +596,10 @@ onMounted(loadAssets);
             ></span
           >
         </div>
-        <span class="status-badge" :class="statusClass(asset.status)"
+        <span
+          class="status-badge"
+          :class="statusClass(asset.status)"
+          :title="asset.reason || undefined"
           ><i />{{ statusLabel(asset.status) }}</span
         >
         <span class="muted-cell">{{ asset.chunks || "—" }}</span>
@@ -469,7 +624,7 @@ onMounted(loadAssets);
             <ArrowUpRight :size="15" />
           </button>
           <button
-            v-if="asset.status !== 'indexed'"
+            v-if="asset.status === 'failed'"
             class="icon-button small"
             type="button"
             :aria-label="`重新索引 ${asset.name}`"
@@ -542,12 +697,12 @@ onMounted(loadAssets);
         }}</DialogTitle>
         <DialogDescription
           >移除后资料不会再参与 Agent
-          检索。已上传的原文件不会被下载到本地演示环境，后端接入后可改为软删除。</DialogDescription
+          检索，后端会同步处理数据库中的资料记录。</DialogDescription
         >
       </DialogHeader>
       <div class="delete-warning">
         <AlertTriangle :size="17" /><span
-          >这是一个不可逆的本地演示操作，请确认选择范围。</span
+          >这是一个不可逆的删除操作，请确认选择范围。</span
         >
       </div>
       <DialogFooter>
@@ -681,6 +836,86 @@ onMounted(loadAssets);
 }
 .asset-table-panel {
   overflow: visible;
+  --asset-status-indexed-text: #0d9586;
+  --asset-status-indexed-bg: color-mix(in oklab, var(--teal) 12%, var(--surface));
+  --asset-status-indexing-text: #bc7d1d;
+  --asset-status-indexing-bg: color-mix(in oklab, #efa92e 14%, var(--surface));
+  --asset-status-failed-text: #ce5b5b;
+  --asset-status-failed-bg: color-mix(in oklab, #dc6a6a 14%, var(--surface));
+  --asset-progress-track: #edf1f1;
+  --asset-progress-indexing: #efa92e;
+  --asset-progress-failed: #dc6a6a;
+}
+.chunking-settings-panel {
+  margin-bottom: 0.75rem;
+}
+.chunking-settings-grid {
+  display: grid;
+  grid-template-columns: 1.35fr repeat(2, minmax(8rem, 1fr)) 1.4fr;
+  gap: 0.75rem;
+  padding: 0 1.25rem 0.75rem;
+}
+.chunking-settings-grid label {
+  display: grid;
+  align-content: start;
+  gap: 0.3125rem;
+  min-width: 0;
+}
+.chunking-settings-grid label > span {
+  color: var(--workspace-text);
+  font-size: 0.5625rem;
+  font-weight: 650;
+}
+.chunking-settings-grid input,
+.chunking-settings-grid select {
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.375rem 0.5rem;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.375rem;
+  background: var(--surface);
+  color: var(--workspace-text);
+  font: inherit;
+  font-size: 0.5625rem;
+}
+.chunking-settings-grid small {
+  color: var(--workspace-subtle);
+  font-size: 0.5rem;
+}
+.chunking-checkbox {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 0.375rem;
+  padding-top: 1.125rem;
+}
+.chunking-checkbox input {
+  width: 0.875rem;
+  min-height: 0.875rem;
+  accent-color: var(--teal);
+}
+.chunking-checkbox small {
+  grid-column: 2;
+}
+.settings-scope-label {
+  color: var(--teal-dark);
+  font-size: 0.5625rem;
+}
+.chunking-settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  border-top: 0.0625rem solid var(--workspace-divider);
+}
+.chunking-settings-footer p {
+  margin: 0;
+  color: var(--workspace-muted);
+  font-size: 0.5rem;
+  line-height: 1.45;
+}
+.chunking-settings-footer .chunking-error {
+  color: #c15b5b;
 }
 .library-toolbar {
   padding: 1rem 1.25rem 0;
@@ -931,6 +1166,38 @@ onMounted(loadAssets);
 .row-actions {
   white-space: nowrap;
 }
+.asset-row > .status-badge {
+  align-self: center;
+  justify-self: start;
+  width: fit-content;
+  padding: 0.25rem 0.4375rem;
+  border-radius: 0.375rem;
+  background: transparent;
+}
+.asset-row > .status-badge.status-indexed {
+  color: var(--asset-status-indexed-text);
+  background: var(--asset-status-indexed-bg);
+}
+.asset-row > .status-badge.status-indexing {
+  color: var(--asset-status-indexing-text);
+  background: var(--asset-status-indexing-bg);
+}
+.asset-row > .status-badge.status-failed {
+  color: var(--asset-status-failed-text);
+  background: var(--asset-status-failed-bg);
+}
+
+.asset-row > .status-badge.status-indexing i {
+  animation: asset-indexing-pulse 1.25s ease-in-out infinite;
+}
+
+@keyframes asset-indexing-pulse {
+  50% {
+    opacity: 0.45;
+    transform: scale(0.78);
+  }
+}
+
 .file-type {
   display: grid;
   width: 1.75rem;
@@ -960,7 +1227,7 @@ onMounted(loadAssets);
 .progress-track {
   width: 4.375rem;
   height: 0.3125rem;
-  background: #edf1f1;
+  background: var(--asset-progress-track);
 }
 .progress-track i {
   display: block;
@@ -968,10 +1235,10 @@ onMounted(loadAssets);
   background: var(--teal);
 }
 .progress-track i.status-indexing {
-  background: #efa92e;
+  background: var(--asset-progress-indexing);
 }
 .progress-track i.status-failed {
-  background: #dc6a6a;
+  background: var(--asset-progress-failed);
 }
 .progress-cell small {
   color: #98a5a8;
@@ -1042,6 +1309,9 @@ onMounted(loadAssets);
   .knowledge-health-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .chunking-settings-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .health-card-primary {
     grid-column: span 2;
   }
@@ -1051,6 +1321,18 @@ onMounted(loadAssets);
   }
 }
 @media (max-width: 47.5rem) {
+  .chunking-settings-grid {
+    grid-template-columns: 1fr;
+    padding-inline: 1.125rem;
+  }
+  .chunking-checkbox {
+    padding-top: 0;
+  }
+  .chunking-settings-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    padding-inline: 1.125rem;
+  }
   .library-toolbar {
     padding-inline: 1.125rem;
   }

@@ -10,4 +10,8 @@ public class StatisticsResponse {
     private List<StatisticsBreakdown> runStatuses;
     private List<StatisticsBreakdown> assetStatuses;
     private List<StatisticsBreakdown> actionItemStatuses;
+    private TokenUsageSummary tokenUsage;
+    private List<TokenUsageTrendPoint> tokenDaily;
+    private List<TokenUsageUser> tokenUsers;
+    private List<TokenUsageBreakdown> tokenBreakdown;
 }

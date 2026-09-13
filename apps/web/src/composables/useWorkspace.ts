@@ -14,7 +14,6 @@ import {
   Network,
   Search,
   Settings2,
-  SlidersHorizontal,
   ShieldCheck,
   UserRound,
   Users,
@@ -138,7 +137,7 @@ const workspaceNav = [
 ];
 const projectNav = [
   { label: "项目概览", icon: Gauge, name: "project-overview" },
-  { label: "Agent 对话", icon: MessageCircle, name: "project-agent-chat" },
+  { label: "项目启动", icon: MessageCircle, name: "project-agent-chat" },
   { label: "知识库", icon: Database, name: "project-assets" },
   { label: "检索 Playground", icon: Search, name: "project-playground" },
   { label: "Agent 任务队列", icon: Activity, name: "project-runs" },
@@ -151,7 +150,7 @@ const settingsNav = [
   { label: "工作区设置", icon: Settings2, name: "workspace-settings" },
   { label: "模型配置", icon: Cpu, name: "settings-models" },
   { label: "工具与连接器", icon: Network, name: "settings-tools" },
-  { label: "Prompt 版本", icon: SlidersHorizontal, name: "settings-prompts" },
+  { label: "联网搜索", icon: Search, name: "settings-web-search" },
   { label: "安全审计", icon: ShieldCheck, name: "settings-security" },
 ];
 
@@ -355,10 +354,11 @@ export function useWorkspace() {
           "user-settings": "个人信息设置",
           "settings-models": "模型配置",
           "settings-tools": "工具与连接器",
-          "settings-prompts": "Prompt 版本",
+          "settings-web-search": "联网搜索",
           "settings-security": "安全审计",
           "project-overview": "项目概览",
-          "project-agent-chat": "Agent 对话",
+          "project-planning": "规划与审查 · 规划",
+          "project-agent-chat": "项目启动 / Agent",
           "project-assets": "知识库",
           "project-asset-detail": "知识库详情",
           "project-playground": "检索 Playground",
@@ -367,6 +367,7 @@ export function useWorkspace() {
           "project-reports": "报告",
           "project-action-items": "行动项",
           "project-evaluation": "评估",
+          "project-review": "规划与审查 · 审查",
         }) as Record<string, string>
       )[currentName.value] || "工作台",
   );
@@ -437,6 +438,22 @@ export function useWorkspace() {
         })),
       );
 
+      // Project pages must always carry a real project ID. When navigation
+      // starts from a workspace-level page, the previous implementation kept
+      // the sentinel -1 in the URL while rendering the first project as a
+      // fallback. That made every project-scoped request return 404.
+      const firstProject = projectData[0]?.project;
+      if (isProject.value && projectId.value <= 0 && firstProject) {
+        await router.replace({
+          name: currentName.value,
+          params: {
+            workspaceId: workspaceId.value,
+            projectId: firstProject.id,
+          },
+        });
+        return;
+      }
+
       const currentProjectData = projectData.find(
         ({ project }) => project.id === projectId.value,
       );
@@ -493,6 +510,9 @@ export function useWorkspace() {
   onMounted(loadWorkspaceData);
   watch(workspaceId, (next, previous) => {
     if (next && next !== previous) void loadWorkspaceData();
+  });
+  watch(projectId, (next, previous) => {
+    if (next !== previous && next > 0) void loadWorkspaceData();
   });
 
   function routeTo(name: string) {

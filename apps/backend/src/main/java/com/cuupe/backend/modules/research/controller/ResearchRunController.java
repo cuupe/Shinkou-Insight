@@ -8,8 +8,6 @@ import com.cuupe.backend.modules.research.mapper.ResearchRunMapper;
 import com.cuupe.backend.modules.ai.AiIndexingClient;
 import com.cuupe.backend.modules.ai.RuntimeConfigResolver;
 import com.cuupe.backend.modules.notification.service.NotificationService;
-import com.cuupe.backend.modules.settings.entity.PromptVersion;
-import com.cuupe.backend.modules.settings.mapper.PromptVersionMapper;
 import com.cuupe.backend.modules.user.security.UserLoginByPassword;
 import com.cuupe.backend.modules.workspace.entity.Workspace;
 import com.cuupe.backend.modules.workspace.mapper.WorkspaceMapper;
@@ -33,7 +31,6 @@ public class ResearchRunController {
     private final NotificationService notificationService;
     private final AiIndexingClient aiClient;
     private final RuntimeConfigResolver runtimeConfigResolver;
-    private final PromptVersionMapper promptVersionMapper;
     private final AuditLogService auditLogService;
     private final WorkspaceMapper workspaceMapper;
 
@@ -102,7 +99,7 @@ public class ResearchRunController {
 
     private String toConfig(Map<String, Object> body) {
         Map<String, Object> config = new LinkedHashMap<>();
-        for (String key : List.of("allowWebSearch", "maxResearchRounds", "reportTemplate", "outputLanguage", "topK", "retrievalMode", "useReranker", "modelConfigId", "webSearchToolId")) {
+        for (String key : List.of("allowWebSearch", "maxResearchRounds", "reportTemplate", "outputLanguage", "topK", "retrievalMode", "useReranker", "modelConfigId")) {
             if (body.containsKey(key)) config.put(key, body.get(key));
         }
         try {
@@ -124,26 +121,12 @@ public class ResearchRunController {
             try {
                 Map<String, Object> runtime = runtimeConfigResolver.resolve(run.getProjectId(), userId, requestConfig);
                 Map<String, Object> config = readConfig(run.getConfig());
-                Map<String, String> systemPrompts = activeSystemPrompts(resolvedWorkspaceId, userId);
-                if (!systemPrompts.isEmpty()) config.put("systemPrompts", systemPrompts);
                 config.putAll(agentPolicy(resolvedWorkspaceId, userId));
                 aiClient.executeRun(run.getId(), resolvedWorkspaceId, run.getProjectId(), userId, run.getGoal(), objectMapper.writeValueAsString(config), runtime);
             } catch (Exception exception) {
                 mapper.updateStatus(run.getId(), run.getProjectId(), userId, "FAILED");
             }
         });
-    }
-
-    private Map<String, String> activeSystemPrompts(Long workspaceId, Long userId) {
-        Map<String, String> prompts = new LinkedHashMap<>();
-        for (PromptVersion prompt : promptVersionMapper.findByWorkspace(workspaceId, userId)) {
-            if (!"ACTIVE".equalsIgnoreCase(String.valueOf(prompt.getStatus()).trim())) continue;
-            String scene = String.valueOf(prompt.getScene() == null ? "" : prompt.getScene()).trim().toLowerCase(Locale.ROOT);
-            String systemPrompt = String.valueOf(prompt.getSystemPrompt() == null ? "" : prompt.getSystemPrompt()).trim();
-            if (scene.isBlank() || systemPrompt.isBlank()) continue;
-            prompts.putIfAbsent(scene, systemPrompt);
-        }
-        return prompts;
     }
 
     @SuppressWarnings("unchecked")

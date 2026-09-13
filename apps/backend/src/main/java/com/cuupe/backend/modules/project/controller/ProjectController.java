@@ -3,6 +3,7 @@ package com.cuupe.backend.modules.project.controller;
 import com.cuupe.backend.common.Result;
 import com.cuupe.backend.modules.audit.service.AuditLogService;
 import com.cuupe.backend.modules.project.dto.ProjectRequest;
+import com.cuupe.backend.modules.project.dto.ChunkingConfigRequest;
 import com.cuupe.backend.modules.project.entity.Project;
 import com.cuupe.backend.modules.project.service.ProjectService;
 import com.cuupe.backend.modules.user.security.UserLoginByPassword;
@@ -44,6 +45,13 @@ public class ProjectController {
         Project project = projectService.update(workspaceId, projectId, userId, request);
         auditLogService.record(workspaceId, projectId, userId, "PROJECT_UPDATED", "PROJECT", projectId, Map.of("name", project.getName()));
         return Result.success(project);
+    }
+
+    @PatchMapping("/{projectId}/chunking")
+    public Result<Project> updateChunking(@PathVariable Long workspaceId, @PathVariable Long projectId,
+                                          @Valid @RequestBody ChunkingConfigRequest request, Authentication authentication) {
+        Long userId = userId(authentication);
+        return Result.success(projectService.updateChunking(workspaceId, projectId, userId, request));
     }
 
     @DeleteMapping("/{projectId}")

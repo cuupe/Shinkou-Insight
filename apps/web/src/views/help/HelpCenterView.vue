@@ -8,7 +8,6 @@ import {
   ChevronDown,
   CircleHelp,
   FileText,
-  Gauge,
   HelpCircle,
   MessageCircle,
   Network,
@@ -68,7 +67,7 @@ const articles: HelpArticle[] = [
     icon: Sparkles,
     tags: ["入门", "工作流"],
     content: [
-      "Shinkou Insight 的核心流程是：准备知识库 → 查看调研运行 → 验证结论 → 沉淀报告。建议先从项目概览页查看当前项目状态。",
+      "Shinkou Insight 的项目流程从项目启动工作台开始：先和 Agent 描述目标，再由 Agent 串联规划、资料搜集、市场比较、审查和报告输出。",
       "先在项目中上传 PDF、Markdown 或 TXT 资料。资料完成索引后，可以前往检索 Playground 验证召回结果，再到 Agent 任务队列查看已有运行。",
       "调研完成后，报告会出现在报告页面。你可以编辑摘要、发布报告，并从报告中继续创建行动项。",
     ],
@@ -140,7 +139,7 @@ const articles: HelpArticle[] = [
     content: [
       "在检索 Playground 输入完整的问题，而不是只输入几个关键词。这样更接近 Agent 实际使用知识库的场景。",
       "Hybrid 模式会综合语义和关键词召回，Vector 模式更偏向语义相似度。Top K 决定返回的候选数量，Rerank 会对候选结果二次排序。",
-      "没有召回结果时，页面不会展示演示数据。可以先检查资料是否已完成索引，再逐步调整参数。",
+      "没有召回结果时，页面会保持空状态。可以先检查资料是否已完成索引，再逐步调整参数。",
     ],
   },
   {
@@ -167,7 +166,7 @@ const articles: HelpArticle[] = [
     tags: ["排查", "错误", "故障"],
     content: [
       "先确认当前账号仍处于登录状态，并且 URL 中的工作区和项目是当前账号有权限访问的对象。",
-      "如果页面显示为空，优先检查后端是否返回数据；空状态不会使用演示数据填充。对于索引、检索或评估问题，先查看页面上的状态提示。",
+      "如果页面显示为空，优先检查后端是否返回数据；空状态不会使用静态业务记录填充。对于索引、检索或评估问题，先查看页面上的状态提示。",
       "如果任务进入失败状态，请打开运行详情查看错误信息，记录任务编号和发生时间，再进行重试或调整配置。",
     ],
   },
@@ -207,7 +206,7 @@ const faqs = [
 ];
 
 const shortcuts = [
-  { label: "项目概览", detail: "查看当前项目健康度", icon: Gauge, route: "project-overview" },
+  { label: "项目启动", detail: "从 Agent 对话发起项目流程", icon: MessageCircle, route: "project-agent-chat" },
   { label: "知识库", detail: "管理资料和索引", icon: FileText, route: "project-assets" },
   { label: "报告", detail: "阅读和发布报告", icon: BarChart3, route: "project-reports" },
   { label: "成员与权限", detail: "管理工作区成员", icon: Users, route: "workspace-members" },

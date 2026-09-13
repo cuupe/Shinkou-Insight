@@ -37,6 +37,7 @@ async def run(request: HarnessRequest, http_request: Request) -> dict[str, Any]:
             base_url=request.runtime_model.base_url,
             api_key=request.runtime_model.api_key,
             model=request.runtime_model.model,
+            provider=request.runtime_model.provider,
             timeout_seconds=request.runtime_model.timeout_seconds,
             max_retries=request.runtime_model.retries,
             structured_output_method=request.runtime_model.structured_output_method,

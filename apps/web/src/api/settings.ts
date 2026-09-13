@@ -13,7 +13,7 @@ export interface ProjectModelConfig {
   hasCredential: boolean;
   config?: string;
   enabled: boolean;
-  scope?: "PERSONAL" | "TEAM" | string;
+  scope?: "PERSONAL" | string;
 }
 
 export interface ProjectToolConfig {
@@ -29,36 +29,20 @@ export interface ProjectToolConfig {
   scope?: "PERSONAL" | "TEAM" | string;
 }
 
+export interface WebSearchConfig {
+  id?: number | string;
+  projectId: number;
+  provider: "brave" | "duckduckgo" | string;
+  baseUrl: string;
+  language: string;
+  hasCredential: boolean;
+  enabled: boolean;
+}
+
 const settingsPath = (workspaceId: number | string, projectId: number) =>
   `${projectPath(workspaceId, projectId)}/settings`;
 
 export const settingsApi = {
-  prompts: {
-    list: (workspaceId: number | string) =>
-      unwrap<Record<string, unknown>[]>(
-        anet.get<ApiResponse<Record<string, unknown>[]>>(
-          `/workspaces/${workspaceId}/settings/prompts`,
-        ),
-      ),
-    create: (workspaceId: number | string, payload: Record<string, unknown>) =>
-      unwrap<Record<string, unknown>>(
-        anet.post<ApiResponse<Record<string, unknown>>>(
-          `/workspaces/${workspaceId}/settings/prompts`,
-          payload,
-        ),
-      ),
-    update: (
-      workspaceId: number | string,
-      id: number | string,
-      payload: Record<string, unknown>,
-    ) =>
-      unwrap<Record<string, unknown>>(
-        anet.patch<ApiResponse<Record<string, unknown>>>(
-          `/workspaces/${workspaceId}/settings/prompts/${id}`,
-          payload,
-        ),
-      ),
-  },
   models: {
     list: (workspaceId: number | string, projectId: number) =>
       unwrap<ProjectModelConfig[]>(
@@ -142,6 +126,31 @@ export const settingsApi = {
       unwrap<void>(
         anet.delete<ApiResponse<void>>(
           `${settingsPath(workspaceId, projectId)}/tools/${id}`,
+        ),
+      ),
+  },
+  webSearch: {
+    get: (workspaceId: number | string, projectId: number) =>
+      unwrap<WebSearchConfig | null>(
+        anet.get<ApiResponse<WebSearchConfig | null>>(
+          `${settingsPath(workspaceId, projectId)}/web-search`,
+        ),
+      ),
+    save: (
+      workspaceId: number | string,
+      projectId: number,
+      payload: Record<string, unknown>,
+    ) =>
+      unwrap<WebSearchConfig>(
+        anet.put<ApiResponse<WebSearchConfig>>(
+          `${settingsPath(workspaceId, projectId)}/web-search`,
+          payload,
+        ),
+      ),
+    test: (workspaceId: number | string, projectId: number) =>
+      unwrap<{ status: string; provider?: string; resultCount?: number; latencyMs?: number }>(
+        anet.post<ApiResponse<{ status: string; provider?: string; resultCount?: number; latencyMs?: number }>>(
+          `${settingsPath(workspaceId, projectId)}/web-search/test`,
         ),
       ),
   },

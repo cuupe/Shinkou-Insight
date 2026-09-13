@@ -1,12 +1,57 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 from embeddings.providers import EmbeddingProvider
 from models.schemas import RetrievalItem
 from rag.indexer import rrf
 from rag.reranker import LexicalReranker
+
+
+def _keyword_terms(question: str, max_terms: int = 64) -> list[str]:
+    """Extract searchable terms without treating a Chinese question as one token.
+
+    PostgreSQL's ``simple`` text search configuration does not segment Chinese
+    naturally. A query such as ``乎古哀是什么时代的人`` can therefore become a
+    single lexeme that never matches the standalone name ``乎古哀`` in a chunk.
+    Keep exact short runs and add Chinese n-grams so entity names remain
+    discoverable even when the surrounding question is longer.
+    """
+
+    normalized = re.sub(r"\s+", " ", str(question or "").casefold()).strip()
+    terms: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: str) -> None:
+        value = value.strip()
+        if len(value) < 2 or value in seen or len(terms) >= max_terms:
+            return
+        seen.add(value)
+        terms.append(value)
+
+    for token in re.findall(r"[a-z0-9][a-z0-9._/-]{1,}|[\u4e00-\u9fff]+", normalized):
+        if re.fullmatch(r"[\u4e00-\u9fff]+", token):
+            if len(token) <= 6:
+                add(token)
+            for width in (3, 2):
+                for index in range(max(0, len(token) - width + 1)):
+                    add(token[index : index + width])
+        else:
+            add(token)
+        if len(terms) >= max_terms:
+            break
+    return terms
+
+
+def _like_patterns(terms: list[str]) -> list[str]:
+    return [
+        "%"
+        + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        + "%"
+        for term in terms
+    ]
 
 
 class MilvusKnowledgeStore:
@@ -145,6 +190,7 @@ class MilvusKnowledgeStore:
         asset_name: str,
         chunks: list[Any],
         embedding: EmbeddingProvider | None = None,
+        parser_version: str = "parser-v2",
     ) -> int:
         pool, client = self._require_started()
         numeric_asset_id = self._asset_id(asset_id)
@@ -187,8 +233,8 @@ class MilvusKnowledgeStore:
                             chunk.section_title,
                             chunk.start_offset,
                             chunk.end_offset,
-                            "parser-v1",
-                            "chunker-v1",
+                            parser_version,
+                            "chunker-v2",
                             chunk.checksum,
                             embedding.model_name,
                         ),
@@ -342,7 +388,10 @@ class MilvusKnowledgeStore:
             search_params={"metric_type": "COSINE", "params": {}},
         )
         return [
-            {"id": hit.get("id"), "score": hit.get("distance", hit.get("score", 0.0))}
+            {
+                "id": hit.get("id", hit.get("chunk_id")),
+                "score": hit.get("distance", hit.get("score", 0.0)),
+            }
             for hit in (response[0] if response else [])
         ]
 
@@ -383,25 +432,32 @@ class MilvusKnowledgeStore:
         asset_ids: list[int],
         limit: int,
     ) -> list[tuple]:
+        patterns = _like_patterns(_keyword_terms(question))
         base = """
             FROM asset_chunks c
             JOIN knowledge_assets a ON a.id = c.asset_id
             JOIN projects p ON p.id = a.project_id
             WHERE p.workspace_id = %s AND p.id = %s
               AND a.index_status IN ('SUCCESS','INDEXED')
-              AND c.search_vector @@ plainto_tsquery('simple', %s)
+              AND (
+                    c.search_vector @@ plainto_tsquery('simple', %s)
+                    OR c.content ILIKE ANY(%s)
+              )
         """
-        params: list[Any] = [workspace_id, project_id, question]
+        params: list[Any] = [workspace_id, project_id, question, patterns]
         if asset_ids:
             base += " AND c.asset_id = ANY(%s)"
             params.append(asset_ids)
         sql = (
             "SELECT c.id,c.asset_id,a.name,c.page_number,c.section_title,c.content,"
-            "ts_rank_cd(c.search_vector, plainto_tsquery('simple', %s)) AS score "
+            "GREATEST("
+            "ts_rank_cd(c.search_vector, plainto_tsquery('simple', %s)),"
+            "CASE WHEN c.content ILIKE ANY(%s) THEN 0.1 ELSE 0 END"
+            ") AS score "
             + base
-            + " ORDER BY score DESC LIMIT %s"
+            + " ORDER BY score DESC, c.chunk_index LIMIT %s"
         )
-        params = [question, *params, limit]
+        params = [question, patterns, *params, limit]
         async with pool.connection() as connection:
             async with connection.cursor() as cursor:
                 await cursor.execute(sql, params)

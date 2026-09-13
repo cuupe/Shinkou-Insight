@@ -16,6 +16,14 @@
             AND wm.user_id = #{userId} AND wm.status = 'ACTIVE'
         WHERE t.thread_key = #{threadKey} AND t.project_id = #{projectId} AND t.created_by = #{userId}
     </select>
+    <select id="findThreads" resultType="com.cuupe.backend.modules.agent.entity.AgentThread">
+        SELECT t.id, t.workspace_id, t.project_id, t.created_by, t.thread_key, t.title, t.created_at, t.updated_at
+        FROM agent_threads t
+        JOIN workspace_members wm ON wm.workspace_id = t.workspace_id
+            AND wm.user_id = #{userId} AND wm.status = 'ACTIVE'
+        WHERE t.project_id = #{projectId} AND t.created_by = #{userId}
+        ORDER BY t.updated_at DESC, t.id DESC
+    </select>
     <insert id="insertThread" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO agent_threads(workspace_id, project_id, created_by, thread_key, title)
         VALUES(#{workspaceId}, #{projectId}, #{createdBy}, #{threadKey}, #{title})
@@ -23,6 +31,19 @@
     <update id="touchThread">
         UPDATE agent_threads SET title = #{title}, updated_at = CURRENT_TIMESTAMP WHERE id = #{id}
     </update>
+    <select id="hasRunningRun" resultType="boolean">
+        SELECT EXISTS (
+            SELECT 1 FROM agent_runs
+            WHERE thread_id = #{threadId} AND status = 'RUNNING'
+        )
+    </select>
+    <delete id="deleteThread">
+        DELETE FROM agent_threads
+        WHERE id = #{id}
+          AND workspace_id = #{workspaceId}
+          AND project_id = #{projectId}
+          AND created_by = #{userId}
+    </delete>
     <insert id="insertMessage" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO agent_messages(thread_id, client_message_id, role, content, status, attachments)
         VALUES(#{threadId}, #{clientMessageId}, #{role}, #{content}, #{status}, CAST(#{attachments} AS jsonb))
@@ -32,6 +53,27 @@
     </update>
     <select id="findMessageKey" resultType="string">
         SELECT client_message_id FROM agent_messages WHERE id = #{id}
+    </select>
+    <select id="findMessages" resultType="com.cuupe.backend.modules.agent.entity.AgentMessage">
+        SELECT m.id, m.thread_id, m.client_message_id, m.role, m.content, m.status,
+               m.attachments::text AS attachments, m.created_at
+        FROM agent_messages m
+        JOIN agent_threads t ON t.id = m.thread_id
+        JOIN workspace_members wm ON wm.workspace_id = t.workspace_id
+            AND wm.user_id = #{userId} AND wm.status = 'ACTIVE'
+        WHERE m.thread_id = #{threadId} AND t.project_id = #{projectId}
+        ORDER BY m.created_at, m.id
+    </select>
+    <select id="findFirstUserMessage" resultType="com.cuupe.backend.modules.agent.entity.AgentMessage">
+        SELECT m.id, m.thread_id, m.client_message_id, m.role, m.content, m.status,
+               m.attachments::text AS attachments, m.created_at
+        FROM agent_messages m
+        JOIN agent_threads t ON t.id = m.thread_id
+        JOIN workspace_members wm ON wm.workspace_id = t.workspace_id
+            AND wm.user_id = #{userId} AND wm.status = 'ACTIVE'
+        WHERE m.thread_id = #{threadId} AND t.project_id = #{projectId} AND m.role = 'USER'
+        ORDER BY m.created_at, m.id
+        LIMIT 1
     </select>
     <insert id="insertRun" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO agent_runs(run_key, thread_id, user_message_id, assistant_message_id, status)
@@ -46,15 +88,49 @@
             AND wm.user_id = #{userId} AND wm.status = 'ACTIVE'
         WHERE r.run_key = #{runKey} AND t.project_id = #{projectId}
     </select>
+    <select id="findRunsByThread" resultType="com.cuupe.backend.modules.agent.entity.AgentRun">
+        SELECT id, run_key, thread_id, user_message_id, assistant_message_id,
+               status, error_message, started_at, finished_at, created_at
+        FROM agent_runs
+        WHERE thread_id = #{threadId}
+        ORDER BY created_at
+    </select>
+    <select id="findTokenUsage" resultType="com.cuupe.backend.modules.agent.entity.AgentTokenUsage">
+        SELECT id, workspace_id, project_id, user_id, run_id, run_key,
+               model_name,
+               input_tokens, output_tokens, total_tokens,
+               compressed_context_tokens, context_message_count
+        FROM agent_token_usage
+        WHERE run_key = #{runKey}
+        LIMIT 1
+    </select>
     <update id="updateRun">
         UPDATE agent_runs
         SET status = #{status}, error_message = #{errorMessage},
-            finished_at = CASE WHEN #{status} IN ('COMPLETED', 'FAILED') THEN CURRENT_TIMESTAMP ELSE finished_at END
+            finished_at = CASE WHEN #{status} IN ('COMPLETED', 'FAILED', 'CANCELLED') THEN CURRENT_TIMESTAMP ELSE finished_at END
         WHERE id = #{id}
     </update>
     <insert id="insertEvent" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO agent_run_events(run_id, event_type, payload)
         VALUES(#{runId}, #{eventType}, CAST(#{payload} AS jsonb))
+    </insert>
+    <insert id="upsertTokenUsage">
+        INSERT INTO agent_token_usage(
+            workspace_id, project_id, user_id, run_id, run_key, model_name,
+            input_tokens, output_tokens, total_tokens,
+            compressed_context_tokens, context_message_count
+        ) VALUES(
+            #{workspaceId}, #{projectId}, #{userId}, #{runId}, #{runKey}, #{modelName},
+            #{inputTokens}, #{outputTokens}, #{totalTokens},
+            #{compressedContextTokens}, #{contextMessageCount}
+        )
+        ON CONFLICT (run_key) DO UPDATE SET
+            input_tokens = EXCLUDED.input_tokens,
+            output_tokens = EXCLUDED.output_tokens,
+            total_tokens = EXCLUDED.total_tokens,
+            model_name = EXCLUDED.model_name,
+            compressed_context_tokens = EXCLUDED.compressed_context_tokens,
+            context_message_count = EXCLUDED.context_message_count
     </insert>
     <select id="findEvents" resultType="com.cuupe.backend.modules.agent.entity.AgentRunEvent">
         SELECT e.id, e.run_id, e.event_type, e.payload::text AS payload

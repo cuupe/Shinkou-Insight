@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -16,11 +18,14 @@ from models.schemas import (
     LlmChatResponse,
     RuntimeEmbeddingConfig,
     RuntimeModelConfig,
+    RuntimeWebSearchConfig,
 )
 from tools.mcp_bridge import MCPToolBridge
+from tools.web import BraveWebSearch, DuckDuckGoWebSearch
 
 router = APIRouter(tags=["system"])
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -109,6 +114,7 @@ async def test_llm(request: RuntimeModelConfig, http_request: Request) -> dict[s
         base_url=request.base_url,
         api_key=request.api_key,
         model=request.model,
+        provider=request.provider,
         timeout_seconds=request.timeout_seconds,
         max_retries=request.retries,
         structured_output_method=request.structured_output_method,
@@ -117,14 +123,13 @@ async def test_llm(request: RuntimeModelConfig, http_request: Request) -> dict[s
     try:
         result = await gateway.chat([{"role": "user", "content": "Reply with OK."}])
     except ModelGatewayError as exc:
+        logger.warning("LLM connection test failed: %s", exc)
         raise http_model_error(exc) from exc
     return {"status": "ok", "model": result.model, "latencyMs": result.latency_ms}
 
 
 @router.post("/internal/embedding/test", dependencies=[Depends(verify_internal_api_key)])
 async def test_embedding(request: RuntimeEmbeddingConfig, http_request: Request) -> dict[str, Any]:
-    import time
-
     started = time.perf_counter()
     try:
         embedding = http_request.app.state.container.embedding_factory(request.model_dump())
@@ -135,5 +140,36 @@ async def test_embedding(request: RuntimeEmbeddingConfig, http_request: Request)
         "status": "ok",
         "model": embedding.model_name,
         "dimension": len(vectors[0]) if vectors else embedding.dimension,
+        "latencyMs": int((time.perf_counter() - started) * 1000),
+    }
+
+
+@router.post("/internal/web-search/test", dependencies=[Depends(verify_internal_api_key)])
+async def test_web_search(request: RuntimeWebSearchConfig, http_request: Request) -> dict[str, Any]:
+    client = http_request.app.state.container.http_client
+    if client is None:
+        raise HTTPException(500, "Web search HTTP client is not available")
+    provider_name = request.provider.lower()
+    if provider_name not in {"brave", "duckduckgo"}:
+        raise HTTPException(400, "Supported web search providers are Brave and DuckDuckGo")
+    started = time.perf_counter()
+    try:
+        provider = (
+            DuckDuckGoWebSearch(client=client, base_url=request.base_url, search_language=request.language)
+            if provider_name == "duckduckgo"
+            else BraveWebSearch(
+                client=client,
+                api_key=request.api_key,
+                base_url=request.base_url,
+                search_language=request.language,
+            )
+        )
+        results = await provider.search("Shinkou Insight connection test", top_k=1)
+    except Exception as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {
+        "status": "ok",
+        "provider": request.provider,
+        "resultCount": len(results),
         "latencyMs": int((time.perf_counter() - started) * 1000),
     }

@@ -13,11 +13,19 @@ public class AgentMessageRequest {
     private String content;
     private List<Map<String, Object>> attachments = new ArrayList<>();
     private Boolean allowWebSearch;
+    private Boolean reflectionEnabled;
+    private String strategy;
     private Integer maxResearchRounds;
     private Integer topK;
     private String retrievalMode;
     private Boolean useReranker;
     private String outputLanguage;
+    private Double temperature;
+    private Double topP;
+    private Integer modelTopK;
+    private Integer maxTokens;
+    private Double frequencyPenalty;
+    private String reasoningEffort;
     private Long modelConfigId;
-    private Long webSearchToolId;
+    private List<Map<String, Object>> contextMessages = new ArrayList<>();
 }

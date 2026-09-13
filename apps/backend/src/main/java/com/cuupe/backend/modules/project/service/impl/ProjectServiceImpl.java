@@ -2,9 +2,11 @@ package com.cuupe.backend.modules.project.service.impl;
 
 import com.cuupe.backend.common.exception.ApiException;
 import com.cuupe.backend.modules.project.dto.ProjectRequest;
+import com.cuupe.backend.modules.project.dto.ChunkingConfigRequest;
 import com.cuupe.backend.modules.project.entity.Project;
 import com.cuupe.backend.modules.project.mapper.ProjectMapper;
 import com.cuupe.backend.modules.project.service.ProjectService;
+import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -17,6 +19,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class ProjectServiceImpl implements ProjectService {
     private final ProjectMapper projectMapper;
+    private final ObjectMapper objectMapper;
 
     @Override public List<Project> list(Long workspaceId, Long userId) { return projectMapper.findAccessible(workspaceId, userId); }
 
@@ -47,6 +50,35 @@ public class ProjectServiceImpl implements ProjectService {
         if (request.color() != null) project.setColor(normalizeColor(request.color()));
         if (request.visibility() != null) project.setVisibility(normalizeVisibility(request.visibility()));
         projectMapper.update(project);
+        return required(workspaceId, projectId, userId);
+    }
+
+    @Override @Transactional
+    public Project updateChunking(Long workspaceId, Long projectId, Long userId, ChunkingConfigRequest request) {
+        Project project = required(workspaceId, projectId, userId);
+        ensureWriteAccess(workspaceId, projectId, userId);
+        String strategy = request.strategy() == null || request.strategy().isBlank()
+                ? "natural" : request.strategy().trim().toLowerCase(Locale.ROOT);
+        if (!strategy.equals("natural") && !strategy.equals("paragraph") && !strategy.equals("fixed")) {
+            throw ApiException.badRequest("INVALID_CHUNKING_STRATEGY", "分块策略不正确");
+        }
+        int chunkSize = request.chunkSize() == null ? 1200 : request.chunkSize();
+        int chunkOverlap = request.chunkOverlap() == null ? 180 : request.chunkOverlap();
+        if (chunkOverlap >= chunkSize) throw ApiException.badRequest("INVALID_CHUNKING_OVERLAP", "重叠长度必须小于分块长度");
+        boolean preserveSections = request.preserveSections() == null || request.preserveSections();
+        try {
+            String config = objectMapper.writeValueAsString(java.util.Map.of(
+                    "strategy", strategy,
+                    "chunkSize", chunkSize,
+                    "chunkOverlap", chunkOverlap,
+                    "preserveSections", preserveSections
+            ));
+            if (projectMapper.updateChunkingConfig(workspaceId, projectId, userId, config) == 0) throw notFound();
+        } catch (ApiException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new IllegalStateException("分块配置保存失败", exception);
+        }
         return required(workspaceId, projectId, userId);
     }
 

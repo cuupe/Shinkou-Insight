@@ -14,11 +14,7 @@ class PlannerAgent:
         goal = str(message.payload["goal"])
         language = str(message.payload.get("output_language", "zh-CN"))
         item, _ = await context.model_for(self.name).structured(
-            planner_prompt(
-                goal,
-                language,
-                system_prompts=message.payload.get("system_prompts"),
-            ),
+            planner_prompt(goal, language),
             PlanItem,
         )
         return AgentResult(

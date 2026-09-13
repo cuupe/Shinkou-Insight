@@ -13,6 +13,7 @@ public class Project {
     private String color;
     private String visibility;
     private String status;
+    private String chunkingConfig;
     private LocalDateTime archivedAt;
     private Long createdBy;
     private LocalDateTime createdAt;

@@ -129,4 +129,68 @@
         WHERE i.project_id IN (SELECT id FROM scope_projects)
         GROUP BY i.status ORDER BY count DESC, i.status
     </select>
+
+    <select id="findTokenUsageSummary" resultType="com.cuupe.backend.modules.statistics.dto.TokenUsageSummary">
+        WITH scope_projects AS (<include refid="scopeProjects" />)
+        SELECT
+          COALESCE(SUM(u.total_tokens), 0) AS totalTokens,
+          COALESCE(SUM(u.input_tokens), 0) AS inputTokens,
+          COALESCE(SUM(u.output_tokens), 0) AS outputTokens,
+          COALESCE(SUM(u.compressed_context_tokens), 0) AS compressedContextTokens,
+          COUNT(u.id) AS runCount
+        FROM agent_token_usage u
+        WHERE u.project_id IN (SELECT id FROM scope_projects)
+    </select>
+
+    <select id="findTokenUsageTrend" resultType="com.cuupe.backend.modules.statistics.dto.TokenUsageTrendPoint">
+        WITH scope_projects AS (<include refid="scopeProjects" />),
+        days AS (
+          SELECT (CURRENT_DATE - series.day_offset)::date AS day
+          FROM generate_series(0, #{days} - 1) AS series(day_offset)
+        ),
+        usage_by_day AS (
+          SELECT u.created_at::date AS day, SUM(u.total_tokens) AS tokens, COUNT(*) AS runs
+          FROM agent_token_usage u
+          WHERE u.project_id IN (SELECT id FROM scope_projects)
+            AND u.created_at >= CURRENT_DATE - (#{days} - 1)
+          GROUP BY u.created_at::date
+        )
+        SELECT to_char(days.day, 'YYYY-MM-DD') AS date,
+               COALESCE(usage_by_day.tokens, 0) AS tokens,
+               COALESCE(usage_by_day.runs, 0) AS runs
+        FROM days
+        LEFT JOIN usage_by_day ON usage_by_day.day = days.day
+        ORDER BY days.day
+    </select>
+
+    <select id="findTokenUsageUsers" resultType="com.cuupe.backend.modules.statistics.dto.TokenUsageUser">
+        WITH scope_projects AS (<include refid="scopeProjects" />)
+        SELECT u.user_id AS userId, usr.user_name AS userName,
+               COALESCE(SUM(u.total_tokens), 0) AS totalTokens,
+               COUNT(*) AS runCount
+        FROM agent_token_usage u
+        JOIN users usr ON usr.id = u.user_id
+        WHERE u.project_id IN (SELECT id FROM scope_projects)
+        GROUP BY u.user_id, usr.user_name
+        ORDER BY totalTokens DESC, usr.user_name
+    </select>
+
+    <select id="findTokenUsageBreakdown" resultType="com.cuupe.backend.modules.statistics.dto.TokenUsageBreakdown">
+        WITH scope_projects AS (<include refid="scopeProjects" />)
+        SELECT u.project_id AS projectId,
+               p.name AS projectName,
+               u.user_id AS userId,
+               usr.user_name AS userName,
+               COALESCE(NULLIF(u.model_name, ''), '模型未标注') AS modelName,
+               COALESCE(SUM(u.total_tokens), 0) AS totalTokens,
+               COALESCE(SUM(u.input_tokens), 0) AS inputTokens,
+               COALESCE(SUM(u.output_tokens), 0) AS outputTokens,
+               COUNT(*) AS runCount
+        FROM agent_token_usage u
+        JOIN scope_projects sp ON sp.id = u.project_id
+        JOIN projects p ON p.id = u.project_id
+        JOIN users usr ON usr.id = u.user_id
+        GROUP BY u.project_id, p.name, u.user_id, usr.user_name, u.model_name
+        ORDER BY totalTokens DESC, p.name, usr.user_name, modelName
+    </select>
 </mapper>

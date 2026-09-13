@@ -12,6 +12,10 @@ spring:
   application:
     name: Shinkou-Insight
 
+  # 本地开发时允许从项目根目录 .env 读取 SHINKOU_* 配置；密钥文件不提交到仓库。
+  config:
+    import: optional:file:./.env[.properties],optional:file:../.env[.properties],optional:file:../../.env[.properties]
+
   servlet:
     multipart:
       max-file-size: 50MB
@@ -55,9 +59,9 @@ shinkou:
       username: ${SHINKOU_NEO4J_USERNAME:neo4j}
       password: ${SHINKOU_NEO4J_PASSWORD:shinkou_graph_password}
   ai:
-    base-url: ${SHINKOU_AI_SERVICE_URL:http://localhost:8000}
+    base-url: ${SHINKOU_AI_SERVICE_URL:http://localhost:8003}
     internal-api-key: ${SHINKOU_AI_INTERNAL_API_KEY:local-dev-key}
-    callback-base-url: ${SHINKOU_AI_CALLBACK_BASE_URL:http://localhost:8081}
+    callback-base-url: ${SHINKOU_AI_CALLBACK_BASE_URL:http://localhost:8080}
   security:
     environment: ${SHINKOU_ENVIRONMENT:development}
     # Vite 默认使用 5173，4173/4174 用于本地预览或端口自动切换。

@@ -86,8 +86,12 @@ function isPublicAuthRequest(config?: AxiosError["config"]) {
 function handleAuthFailure(reason: "unauthorized" | "backend-unavailable") {
   if (authFailureInProgress) return;
   authFailureInProgress = true;
-  markSessionInvalid();
-  clearCsrfCookie();
+  // 后端不可用不代表当前登录会话失效。测试连接、网络抖动或后端重启
+  // 都可能暂时返回 502/503；保留当前页面和会话，交给业务页面展示错误。
+  if (reason === "unauthorized") {
+    markSessionInvalid();
+    clearCsrfCookie();
+  }
   authFailureHandler?.(reason);
 
   // Allow a later, genuine session failure to be handled after the current

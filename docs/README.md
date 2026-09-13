@@ -89,6 +89,11 @@ RAG / Prompt / Tool Registry / Evaluation / Optional LoRA
 | `docs/16-resume-interview.md` | 简历描述、面试讲法和技术亮点 |
 | `docs/17-demo-script.md` | 演示数据、录屏流程和展示要求 |
 | `docs/18-backlog.md` | 可直接转成 GitHub Issues 的任务清单 |
+| `docs/19-agent-workspace-api.md` | Agent 工作台消息、SSE 与引用接口 |
+| `docs/20-agent-task-queue-api.md` | Agent 任务队列与暂停状态 |
+| `docs/21-docker-infrastructure.md` | 本地 Docker 基础设施与服务依赖 |
+| `docs/22-reasoning-workflows.md` | 对话处理方式、自动选择与三条执行路径 |
+| `docs/23-production-operations.md` | Token 明细、项目级 Chunk 配置与上线运行约定 |
 
 ## 5. MVP 范围
 
