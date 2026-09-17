@@ -14,6 +14,7 @@ from models.schemas import (
     ModelGenerationConfig,
     TokenUsage,
 )
+from prompts.search_prompts import MODEL_GRAPH_HINTS, MODEL_SOURCE_HINTS
 
 T = TypeVar(
     "T",
@@ -80,6 +81,125 @@ class ModelResponseError(ModelGatewayError):
     """
 
     pass
+
+
+_CONTEXT_WINDOW_KEYS = (
+    "context_length",
+    "context_window",
+    "contextWindow",
+    "max_context_length",
+    "maxContextLength",
+    "max_model_len",
+    "maxModelLen",
+    "max_input_tokens",
+    "maxInputTokens",
+    "input_token_limit",
+    "inputTokenLimit",
+    "model_context_length",
+    "modelContextLength",
+    "max_position_embeddings",
+)
+
+
+def _positive_int(value: Any) -> int | None:
+    try:
+        number = int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return None
+    return number if 1 <= number <= 2_000_000 else None
+
+
+def _metadata_context_window(value: Any) -> int | None:
+    if not isinstance(value, dict):
+        return None
+    for key in _CONTEXT_WINDOW_KEYS:
+        candidate = _positive_int(value.get(key))
+        if candidate is not None:
+            return candidate
+    for key in ("top_provider", "topProvider", "limits", "metadata", "model_info", "modelInfo"):
+        candidate = _metadata_context_window(value.get(key))
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def extract_model_context_window(payload: Any, model: str) -> int | None:
+    """Read context metadata from common OpenAI-compatible model catalogs."""
+
+    if not isinstance(payload, dict):
+        return None
+    raw_models = payload.get("data")
+    candidates = raw_models if isinstance(raw_models, list) else []
+    requested = str(model or "").strip().casefold()
+    matching = [
+        item
+        for item in candidates
+        if isinstance(item, dict)
+        and any(str(item.get(key) or "").strip().casefold() == requested for key in ("id", "model", "name"))
+    ]
+    if matching:
+        return _metadata_context_window(matching[0])
+    if len(candidates) == 1:
+        return _metadata_context_window(candidates[0])
+    return _metadata_context_window(payload)
+
+
+async def fetch_model_context_window(
+    client: httpx.AsyncClient,
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    timeout_seconds: float = 30,
+) -> dict[str, Any]:
+    """Fetch provider metadata without sending a billable completion request."""
+
+    started_at = time.perf_counter()
+    url = f"{base_url.rstrip('/')}/models"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
+    }
+    try:
+        response = await client.get(url, headers=headers, timeout=timeout_seconds)
+    except httpx.TimeoutException:
+        return {
+            "status": "unavailable",
+            "available": False,
+            "model": model,
+            "detail": "模型目录请求超时，保留当前手动配置的上下文窗口",
+            "latencyMs": int((time.perf_counter() - started_at) * 1000),
+        }
+    except httpx.RequestError as exc:
+        return {
+            "status": "unavailable",
+            "available": False,
+            "model": model,
+            "detail": f"模型目录请求失败：{str(exc)[:240]}",
+            "latencyMs": int((time.perf_counter() - started_at) * 1000),
+        }
+
+    latency_ms = int((time.perf_counter() - started_at) * 1000)
+    if response.status_code in {401, 403}:
+        return {"status": "unavailable", "available": False, "model": model, "detail": "模型目录认证失败，请检查凭证", "latencyMs": latency_ms}
+    if response.is_error:
+        return {"status": "unavailable", "available": False, "model": model, "detail": f"模型目录不支持查询（HTTP {response.status_code}）", "latencyMs": latency_ms}
+    try:
+        payload = response.json()
+    except ValueError:
+        return {"status": "unavailable", "available": False, "model": model, "detail": "模型目录返回的不是有效 JSON", "latencyMs": latency_ms}
+
+    context_window = extract_model_context_window(payload, model)
+    if context_window is None:
+        return {"status": "unavailable", "available": False, "model": model, "detail": "该服务未公开模型最大上下文窗口，请手动填写", "latencyMs": latency_ms}
+    return {
+        "status": "ok",
+        "available": True,
+        "model": model,
+        "contextWindow": context_window,
+        "source": "provider-model-catalog",
+        "latencyMs": latency_ms,
+    }
 
 
 # =========================================================
@@ -973,17 +1093,21 @@ class MockModelGateway:
         if schema is PlanItem:
             value: Any = {"id": "Q1", "question": goal[:500], "source": "BOTH", "rationale": "先核对项目资料，再补充外部信息"}
         elif schema is AgentPlan:
+            first_action = "SEARCH_GRAPH" if any(marker in goal.casefold() for marker in MODEL_GRAPH_HINTS) else "SEARCH_INTERNAL"
             value = {
                 "summary": "先核对项目资料，再整理结论",
                 "steps": [
-                    {"id": "S1", "objective": "核对与问题相关的项目资料", "action": "SEARCH_INTERNAL", "query": goal[:500]},
+                    {"id": "S1", "objective": "核对项目实体关系" if first_action == "SEARCH_GRAPH" else "核对与问题相关的项目资料", "action": first_action, "query": goal[:500]},
                     {"id": "S2", "objective": "整理最终回答", "action": "SYNTHESIZE", "query": ""},
                 ],
             }
         elif schema is ReActAction:
             normalized_goal = goal.casefold()
-            source_markers = ("项目", "知识库", "文档", "资料", "文件", "数据库", "配置", "附件", "project", "knowledge", "document", "file", "database", "config", "repository")
-            value = {"action": "SEARCH_INTERNAL" if any(marker in normalized_goal for marker in source_markers) else "FINAL", "query": goal[:500], "note": "先核对与问题直接相关的项目资料"}
+            if any(marker in normalized_goal for marker in MODEL_GRAPH_HINTS):
+                action = "SEARCH_GRAPH"
+            else:
+                action = "SEARCH_INTERNAL" if any(marker in normalized_goal for marker in MODEL_SOURCE_HINTS) else "FINAL"
+            value = {"action": action, "query": goal[:500], "note": "先核对项目实体关系" if action == "SEARCH_GRAPH" else "先核对与问题直接相关的项目资料"}
         elif schema is EvidenceEvaluation:
             has_evidence = "证据数量=0" not in goal and "没有可用证据" not in goal
             value = {"sufficient": has_evidence, "next_action": "ENOUGH" if has_evidence else "MORE_INTERNAL", "missing": [] if has_evidence else ["需要更多项目证据"], "conflicts": []}

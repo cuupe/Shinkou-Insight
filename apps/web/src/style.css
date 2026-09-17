@@ -15,6 +15,9 @@ html {
 @theme inline {
   --font-sans: "Geist Variable", sans-serif;
   --font-heading: var(--font-sans);
+  /* Keep compact controls readable: 12px is the minimum UI text size. */
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.25rem;
   --color-brand: var(--brand);
   --color-brand-foreground: var(--brand-foreground);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -195,12 +198,12 @@ html {
 
 .panel-empty-state strong {
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 
 .panel-empty-state span {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   line-height: 1.6;
 }
 
@@ -281,7 +284,7 @@ html {
 .button-sm {
   min-height: 1.875rem;
   padding-inline: 0.625rem;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 
 .full-button {
@@ -299,7 +302,7 @@ html {
   background: none;
   color: var(--teal-dark);
   font: inherit;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   font-weight: 650;
   cursor: pointer;
   white-space: nowrap;
@@ -349,7 +352,7 @@ html {
   background: var(--surface);
   color: var(--workspace-muted);
   font: inherit;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -390,7 +393,7 @@ html {
 .panel-heading p {
   margin: 0.3125rem 0 0;
   color: var(--workspace-muted);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 
 .heading-actions,
@@ -410,7 +413,7 @@ html {
   gap: 0.75rem;
   padding: 0 1.25rem;
   border-top: 0.0625rem solid var(--workspace-divider);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 
 .table-row.table-header {
@@ -418,7 +421,7 @@ html {
   border-top: 0;
   background: var(--surface-raised);
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 
 .data-table {
@@ -457,7 +460,7 @@ html {
   display: block;
   margin-top: 0.25rem;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 
 .run-icon,
@@ -475,7 +478,7 @@ html {
 
 .muted-cell {
   color: var(--workspace-muted);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 
 .status-badge {
@@ -483,7 +486,7 @@ html {
   align-items: center;
   gap: 0.3125rem;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   white-space: nowrap;
 }
 

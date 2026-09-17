@@ -94,7 +94,7 @@ public class AiIndexingClient {
         post("/internal/research/runs/" + runId + "/execute", payload);
     }
 
-    public void executeAgentRun(String runKey, Long workspaceId, Long projectId, Long userId, String messageId, String goal, Map<String, Object> config, Map<String, Object> runtime, List<Map<String, Object>> contextMessages) throws IOException {
+    public void executeAgentRun(String runKey, Long workspaceId, Long projectId, Long userId, String messageId, String goal, Map<String, Object> config, Map<String, Object> runtime, List<Map<String, Object>> contextMessages, List<Map<String, Object>> attachments) throws IOException {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("runId", runKey);
         payload.put("workspaceId", workspaceId);
@@ -103,6 +103,7 @@ public class AiIndexingClient {
         payload.put("goal", goal);
         payload.put("agentMessageId", messageId);
         payload.put("contextMessages", contextMessages == null ? List.of() : contextMessages);
+        payload.put("attachments", attachments == null ? List.of() : attachments);
         payload.put("config", config == null ? Map.of() : config);
         if (runtime != null && runtime.get("model") != null) payload.put("runtimeModel", runtime.get("model"));
         if (runtime != null && runtime.get("webSearch") != null) payload.put("runtimeWebSearch", runtime.get("webSearch"));
@@ -119,8 +120,16 @@ public class AiIndexingClient {
         post("/internal/research/runs/" + runId + "/cancel", Map.of());
     }
 
+    public Map<String, Object> updatePlan(String runId, Map<String, Object> payload) throws IOException {
+        return patch("/internal/research/runs/" + runId + "/plan", payload);
+    }
+
     public Map<String, Object> testModel(Map<String, Object> model) throws IOException {
         return post("/internal/llm/test", model);
+    }
+
+    public Map<String, Object> modelContext(Map<String, Object> model) throws IOException {
+        return post("/internal/llm/context", model);
     }
 
     public Map<String, Object> testEmbedding(Map<String, Object> embedding) throws IOException {
@@ -129,6 +138,21 @@ public class AiIndexingClient {
 
     public Map<String, Object> testWebSearch(Map<String, Object> webSearch) throws IOException {
         return post("/internal/web-search/test", webSearch);
+    }
+
+    public Map<String, Object> runDetail(String runId) throws IOException {
+        return get("/internal/research/runs/" + runId);
+    }
+
+    public Map<String, Object> localTools() throws IOException {
+        Map<String, Object> result = get("/internal/tools");
+        result.put("files", get("/internal/files/tools"));
+        return result;
+    }
+
+    public Map<String, Object> reloadLocalTools() throws IOException {
+        post("/internal/tools/custom/reload", Map.of());
+        return localTools();
     }
 
     public Map<String, Object> runSecurityHarness(Long workspaceId, Long projectId, List<String> caseIds,
@@ -147,6 +171,42 @@ public class AiIndexingClient {
                 .url(baseUrl + path)
                 .header("X-Internal-Api-Key", internalApiKey)
                 .post(RequestBody.create(objectMapper.writeValueAsBytes(payload), JSON))
+                .build();
+        try (Response response = client.newCall(request).execute()) {
+            String body = response.body() == null ? "{}" : response.body().string();
+            if (!response.isSuccessful()) {
+                String detail = body.replaceAll("[\\r\\n\\t]+", " ").trim();
+                if (detail.length() > 1600) detail = detail.substring(0, 1600) + "…";
+                throw new IOException("AI service failed with HTTP " + response.code() + " at " + request.url()
+                        + (detail.isBlank() ? "" : ": " + detail));
+            }
+            return objectMapper.readValue(body, Map.class);
+        }
+    }
+
+    private Map<String, Object> get(String path) throws IOException {
+        Request request = new Request.Builder()
+                .url(baseUrl + path)
+                .header("X-Internal-Api-Key", internalApiKey)
+                .get()
+                .build();
+        try (Response response = client.newCall(request).execute()) {
+            String body = response.body() == null ? "{}" : response.body().string();
+            if (!response.isSuccessful()) {
+                String detail = body.replaceAll("[\\r\\n\\t]+", " ").trim();
+                if (detail.length() > 1600) detail = detail.substring(0, 1600) + "…";
+                throw new IOException("AI service failed with HTTP " + response.code() + " at " + request.url()
+                        + (detail.isBlank() ? "" : ": " + detail));
+            }
+            return objectMapper.readValue(body, Map.class);
+        }
+    }
+
+    private Map<String, Object> patch(String path, Map<String, Object> payload) throws IOException {
+        Request request = new Request.Builder()
+                .url(baseUrl + path)
+                .header("X-Internal-Api-Key", internalApiKey)
+                .patch(RequestBody.create(objectMapper.writeValueAsBytes(payload), JSON))
                 .build();
         try (Response response = client.newCall(request).execute()) {
             String body = response.body() == null ? "{}" : response.body().string();

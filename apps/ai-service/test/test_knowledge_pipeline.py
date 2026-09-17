@@ -1,4 +1,5 @@
 import pytest
+from io import BytesIO
 
 from documents.chunker import DocumentChunker
 from documents.parser import DocumentParser
@@ -40,6 +41,34 @@ def test_chunker_keeps_markdown_section_title_with_each_section():
 
     assert [chunk.section_title for chunk in chunks] == ["Overview", "Details"]
     assert all("paragraph" in chunk.content for chunk in chunks)
+
+
+def test_docx_parser_extracts_tables_and_keeps_document_metadata():
+    from docx import Document as DocxDocument
+
+    source = DocxDocument()
+    source.add_heading("项目结论", level=1)
+    source.add_paragraph("正文内容")
+    table = source.add_table(rows=1, cols=2)
+    table.rows[0].cells[0].text = "指标"
+    table.rows[0].cells[1].text = "结果"
+    buffer = BytesIO()
+    source.save(buffer)
+
+    parsed = DocumentParser().parse_bytes(buffer.getvalue(), file_name="report.docx")
+
+    assert parsed.documents
+    assert "项目结论" in parsed.text
+    assert "指标\t结果" in parsed.text
+    assert parsed.metadata["tableCount"] == 1
+
+
+def test_media_parser_degrades_with_explicit_tool_warning():
+    parsed = DocumentParser().parse_bytes(b"not-an-image", file_name="diagram.png", mime_type="image/png")
+
+    assert parsed.metadata["kind"] == "image"
+    assert parsed.documents
+    assert parsed.warnings or "未识别到" in parsed.text
 
 
 @pytest.mark.asyncio

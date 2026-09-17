@@ -458,7 +458,7 @@ function memberRoleOptions(member: (typeof members.value)[number]) {
   background: #f3f6f6;
   border-radius: 0.3125rem;
   padding: 0.3125rem 0.4375rem;
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   width: fit-content;
   letter-spacing: 0.04em;
 }
@@ -478,13 +478,13 @@ function memberRoleOptions(member: (typeof members.value)[number]) {
 
 .member-org strong {
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   font-weight: 600;
 }
 
 .member-org small {
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 
 .invite-dialog form {
@@ -524,7 +524,7 @@ function memberRoleOptions(member: (typeof members.value)[number]) {
 }
 
 .member-load-state span {
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 
 .member-load-error svg {
@@ -583,7 +583,7 @@ function memberRoleOptions(member: (typeof members.value)[number]) {
 
 .member-summary span {
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 
 .member-summary strong {
@@ -597,7 +597,7 @@ function memberRoleOptions(member: (typeof members.value)[number]) {
 
 .permission-hint {
   color: var(--workspace-muted);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 
 .members-toolbar {
@@ -618,7 +618,7 @@ function memberRoleOptions(member: (typeof members.value)[number]) {
 .role-readonly {
   width: 6.5rem;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-weight: 650;
   letter-spacing: 0.04em;
 }

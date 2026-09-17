@@ -102,5 +102,15 @@ async def register_mcp_tools(registry: Any, bridge: MCPToolBridge) -> list[MCPTo
             return await bridge.call(_name, arguments)
 
         from tools.registry import ToolSpec
-        registry.register(ToolSpec(name=f"mcp.{definition.name}", permission="READ", timeout_seconds=bridge.timeout_seconds, input_schema=definition.input_schema), handler)
+        registry.register(
+            ToolSpec(
+                name=f"mcp.{definition.name}",
+                description=definition.description,
+                permission="READ",
+                timeout_seconds=bridge.timeout_seconds,
+                input_schema=definition.input_schema,
+            ),
+            handler,
+            source="mcp",
+        )
     return definitions

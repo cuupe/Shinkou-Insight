@@ -30,7 +30,7 @@ public class KnowledgeController {
         Map<String, Object> payload = new LinkedHashMap<>(body);
         payload.put("workspaceId", workspaceId);
         payload.put("projectId", projectId);
-        Map<String, Object> runtime = runtimeConfigResolver.resolveEmbeddingPayload(projectId, userId, body.get("embeddingConfigId"));
+        Map<String, Object> runtime = runtimeConfigResolver.resolveEmbeddingPayload(workspaceId, projectId, userId, body.get("embeddingConfigId"));
         if (runtime.get("embedding") != null) payload.put("runtimeEmbedding", runtime.get("embedding"));
         Map<String, Object> response = aiClient.knowledge("/internal/knowledge/search", payload);
         Object data = response.get("data");
@@ -44,7 +44,7 @@ public class KnowledgeController {
         Map<String, Object> payload = new LinkedHashMap<>(body);
         payload.put("workspaceId", workspaceId);
         payload.put("projectId", projectId);
-        Map<String, Object> runtime = runtimeConfigResolver.resolve(projectId, userId, body);
+        Map<String, Object> runtime = runtimeConfigResolver.resolve(workspaceId, projectId, userId, body);
         if (runtime.get("model") != null) payload.put("runtimeModel", runtime.get("model"));
         if (runtime.get("embedding") != null) payload.put("runtimeEmbedding", runtime.get("embedding"));
         Map<String, Object> response = aiClient.knowledge("/internal/knowledge/answer", payload);

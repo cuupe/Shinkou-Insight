@@ -12,6 +12,7 @@ from typing import Any, Protocol
 from langgraph.graph import END, START, StateGraph
 
 from core.events import EventBus
+from agents.reviewer import apply_review_guards
 from models.llm import ModelGateway
 from models.schemas import Evidence, EvidenceEvaluation, Finding, PlanItem, ReportDraft, ReviewResult
 from prompts.agent_prompts import (
@@ -199,9 +200,7 @@ def build_qa_graph(runtime: GraphRuntime, *, checkpointer: Any | None = None):
             review_prompt(sorted(referenced), sorted(valid_ids), state.get("output_language", "zh-CN")), ReviewResult
         )
         review.missing_citations = invalid
-        review.approved = not invalid
-        if invalid:
-            review.issues = [f"引用不存在的证据：{', '.join(invalid)}"]
+        review = apply_review_guards(review, draft, state.get("evidence", []), state.get("review_policy"))
         await done(state, "REVIEW_REPORT", "Reviewer 审核引用与边界", "通过" if review.approved else "需要重写")
         return {"review_result": review.model_dump(), "review_attempts": state.get("review_attempts", 0) + 1}
 

@@ -12,6 +12,24 @@ $pythonPath = Join-Path $serviceRoot ".venv\Scripts\python.exe"
 $logRoot = Join-Path $projectRoot "logs"
 $logPath = Join-Path $logRoot "ai-service.log"
 
+# Prefer the project-local optional file-analysis toolchain when present.
+# This keeps OCR/PDF/Office support working without requiring system-wide
+# installation or a user-managed PATH on Windows.
+$bundledToolDirs = @((Join-Path $projectRoot "tools\runtime\tesseract"))
+$popplerRoot = Join-Path $projectRoot "tools\runtime\poppler"
+$bundledToolDirs += Get-ChildItem -LiteralPath $popplerRoot -Directory -ErrorAction SilentlyContinue |
+    ForEach-Object { Join-Path $_.FullName "Library\bin" } |
+    Where-Object { Test-Path -LiteralPath $_ }
+$bundledToolDirs += Join-Path $projectRoot "tools\runtime\libreoffice\program"
+$bundledToolDirs = $bundledToolDirs | Where-Object { Test-Path -LiteralPath $_ }
+if ($bundledToolDirs.Count -gt 0) {
+    $env:Path = (($bundledToolDirs -join [IO.Path]::PathSeparator) + [IO.Path]::PathSeparator + $env:Path)
+}
+$bundledTessData = Join-Path $projectRoot "tools\runtime\tesseract\tessdata"
+if (Test-Path -LiteralPath $bundledTessData) {
+    $env:TESSDATA_PREFIX = $bundledTessData
+}
+
 if (-not (Test-Path -LiteralPath $pythonPath)) {
     throw "AI service virtual environment not found: $pythonPath. Install requirements.txt first."
 }
@@ -22,7 +40,8 @@ if ($listener) {
         $health = Invoke-RestMethod -Uri "http://localhost:$Port/health" -Method Get -TimeoutSec 3
         $openapi = Invoke-RestMethod -Uri "http://localhost:$Port/openapi.json" -Method Get -TimeoutSec 3
         $hasTestRoute = $openapi.paths.PSObject.Properties.Name -contains "/internal/llm/test"
-        if ($health.service -eq "ai-service" -and $hasTestRoute) {
+        $hasContextRoute = $openapi.paths.PSObject.Properties.Name -contains "/internal/llm/context"
+        if ($health.service -eq "ai-service" -and $hasTestRoute -and $hasContextRoute) {
             Write-Host "Shinkou AI Service is already running on port $Port."
             Write-Host "Health check: http://localhost:$Port/health"
             exit 0
@@ -39,9 +58,10 @@ if ($listener) {
 
 New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
 
-if ($NoReload) {
+if (-not $Reload -or $NoReload) {
     # The custom runner is needed because Uvicorn's regular asyncio runner
-    # selects ProactorEventLoop on Windows when reload is disabled.
+    # selects ProactorEventLoop on Windows, while psycopg's async pool needs
+    # SelectorEventLoop.
     $arguments = @(
         "server.py",
         "--host",

@@ -137,7 +137,7 @@ function closeMenu() {
         <ChevronRight :size="14" />
       </div>
 
-      <nav class="side-nav">
+      <nav v-if="selectedProject?.id" class="side-nav">
         <RouterLink
           v-for="item in projectNav"
           :key="item.name"
@@ -245,7 +245,7 @@ function closeMenu() {
 .sidebar-brand span {
   margin-top: 0.3125rem;
   color: #6f7f8a;
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.22em;
 }
@@ -337,7 +337,7 @@ function closeMenu() {
 .workspace-menu-heading {
   padding: 0.5rem 0.5625rem 0.375rem;
   color: var(--sidebar-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-weight: 700;
 }
 
@@ -369,7 +369,7 @@ function closeMenu() {
   border-radius: 0.5rem;
   background: #dff7f3;
   color: #0b756b;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   font-weight: 800;
 }
 
@@ -388,14 +388,14 @@ function closeMenu() {
 }
 
 .workspace-menu-copy strong {
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 
 .workspace-menu-copy small,
 .workspace-menu-current,
 .workspace-menu-empty {
   color: var(--sidebar-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .workspace-menu-current {
@@ -421,7 +421,7 @@ function closeMenu() {
   background: #dff7f3;
   color: #0b756b;
 
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-weight: 800;
 }
 
@@ -444,7 +444,7 @@ function closeMenu() {
 .workspace-switcher-copy small {
   margin-top: 0.1875rem;
   color: var(--sidebar-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .sidebar-scroll {
@@ -461,7 +461,7 @@ function closeMenu() {
 
   color: #5e707e;
 
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-weight: 700;
 
   letter-spacing: 0.11em;
@@ -524,7 +524,7 @@ function closeMenu() {
 
   color: #cad5da;
 
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 
 .project-dot {
@@ -566,7 +566,7 @@ function closeMenu() {
 
   color: #9aaab3;
 
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 
 .usage-track {

@@ -740,7 +740,7 @@ onMounted(loadProjects);
   color: var(--workspace-text);
 
   font: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 
   text-align: left;
 
@@ -782,7 +782,7 @@ onMounted(loadProjects);
 .project-card p {
   color: var(--workspace-muted);
 
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   line-height: 1.65;
 
   height: 2.375rem;
@@ -812,7 +812,7 @@ onMounted(loadProjects);
 
   color: var(--workspace-muted);
 
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .project-metrics strong {
@@ -836,7 +836,7 @@ onMounted(loadProjects);
 
   color: var(--teal-dark);
 
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-weight: 650;
 
   text-decoration: none;
@@ -883,7 +883,7 @@ onMounted(loadProjects);
   color: var(--workspace-text);
 
   font: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 
   cursor: pointer;
 
@@ -944,7 +944,7 @@ onMounted(loadProjects);
 .create-project-form .field-label small {
   color: var(--workspace-subtle);
 
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   line-height: 1.4;
 }
 
@@ -965,7 +965,7 @@ onMounted(loadProjects);
   background: var(--surface);
 
   font: inherit;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 
 .create-project-form textarea {
@@ -1002,7 +1002,7 @@ onMounted(loadProjects);
 
   color: var(--workspace-muted);
 
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 
 .color-picker-row input[type="color"] {
@@ -1029,7 +1029,7 @@ onMounted(loadProjects);
   color: #a14d4d;
   background: #fff5f5;
 
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 
 .create-project-form .button:disabled {

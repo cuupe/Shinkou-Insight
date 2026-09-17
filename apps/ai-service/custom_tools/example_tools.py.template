@@ -1,0 +1,14 @@
+from tools.custom import custom_tool
+
+
+@custom_tool(
+    "custom.example",
+    description="自定义工具示例",
+    input_schema={
+        "type": "object",
+        "required": ["value"],
+        "properties": {"value": {"type": "string", "maxLength": 2000}},
+    },
+)
+async def example(*, value: str) -> dict[str, str]:
+    return {"value": value}

@@ -20,7 +20,8 @@ from models.schemas import (
     RetrievalResponse,
     RuntimeModelConfig,
 )
-from prompts.security import render_evidence_context, sanitize_untrusted_text
+from prompts.search_prompts import knowledge_answer_prompt
+from rag.hybrid import build_query_variants
 
 router = APIRouter(tags=["knowledge"])
 settings = get_settings()
@@ -67,8 +68,29 @@ async def search_knowledge(request: KnowledgeSearchRequest, http_request: Reques
         retrieval_mode=request.retrieval_mode,
         use_reranker=request.use_reranker,
         embedding=embedding,
+        fusion_method=request.fusion_method,
+        candidate_k=request.candidate_k,
+        rank_constant=request.rank_constant,
+        vector_weight=request.vector_weight,
+        keyword_weight=request.keyword_weight,
+        diversity_lambda=request.diversity_lambda,
+        rerank_top_k=request.rerank_top_k,
     )
-    return RetrievalResponse(query=request.query, items=items)
+    return RetrievalResponse(
+        query=request.query,
+        rewritten_queries=build_query_variants(request.query),
+        items=items,
+        search_trace={
+            "mode": request.retrieval_mode,
+            "fusionMethod": request.fusion_method,
+            "candidateK": request.candidate_k,
+            "rankConstant": request.rank_constant,
+            "weights": {"vector": request.vector_weight, "keyword": request.keyword_weight},
+            "reranker": request.use_reranker,
+            "rerankTopK": request.rerank_top_k,
+            "diversityLambda": request.diversity_lambda,
+        },
+    )
 
 
 @router.post(
@@ -87,6 +109,13 @@ async def answer_knowledge(request: KnowledgeAnswerRequest, http_request: Reques
         retrieval_mode=request.retrieval_mode,
         use_reranker=request.use_reranker,
         embedding=embedding,
+        fusion_method=request.fusion_method,
+        candidate_k=request.candidate_k,
+        rank_constant=request.rank_constant,
+        vector_weight=request.vector_weight,
+        keyword_weight=request.keyword_weight,
+        diversity_lambda=request.diversity_lambda,
+        rerank_top_k=request.rerank_top_k,
     )
     if not items:
         message = (
@@ -96,17 +125,7 @@ async def answer_knowledge(request: KnowledgeAnswerRequest, http_request: Reques
         )
         return KnowledgeAnswerResponse(answer=message, citations=[], insufficient_evidence=True)
     evidence = [item.model_dump() for item in items]
-    query = sanitize_untrusted_text(request.query, max_chars=4_000)
-    prompt = [
-        {
-            "role": "system",
-            "content": f"Answer only from the supplied evidence. Do not invent facts. Return a concise answer in {request.answer_language}. Cite supporting evidence by exact id in evidence_ids. If support is insufficient, say so.",
-        },
-        {
-            "role": "user",
-            "content": f"Question:\n{query}\n\nEvidence:\n{render_evidence_context(evidence, max_chars=18_000)}",
-        },
-    ]
+    prompt = knowledge_answer_prompt(request.query, request.answer_language, evidence)
     try:
         draft, _ = await _model_for_request(request.runtime_model, http_request).structured(
             prompt,
@@ -174,6 +193,9 @@ async def index_asset(asset_id: str, request: IndexAssetRequest, http_request: R
         embedding_model=result["embedding_model"],
         embedding_dimension=result["embedding_dimension"],
         graph_entities=result["graph_entities"],
+        warnings=result.get("warnings", []),
+        tools=result.get("tools", []),
+        metadata=result.get("metadata", {}),
     )
 
 

@@ -15,6 +15,7 @@ public class AgentMessageRequest {
     private Boolean allowWebSearch;
     private Boolean reflectionEnabled;
     private String strategy;
+    private String multiAgentMode;
     private Integer maxResearchRounds;
     private Integer topK;
     private String retrievalMode;

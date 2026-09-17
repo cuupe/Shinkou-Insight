@@ -87,7 +87,7 @@ public class SecurityHarnessController {
     private void execute(SecurityHarnessRun run, StartRequest request, Long userId) {
         try {
             Map<String, Object> runtime = Boolean.TRUE.equals(request.includeModelProbes())
-                    ? runtimeConfigResolver.resolveModelPayload(run.getProjectId(), userId, null)
+                    ? runtimeConfigResolver.resolveModelPayload(run.getWorkspaceId(), run.getProjectId(), userId, null)
                     : Map.of();
             Map<String, Object> response = aiClient.runSecurityHarness(run.getWorkspaceId(), run.getProjectId(), request.caseIds(), Boolean.TRUE.equals(request.includeModelProbes()), runtime);
             Map<String, Object> summary = response;

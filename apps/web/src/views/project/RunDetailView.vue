@@ -1,15 +1,14 @@
 <script setup lang="ts">
-import { ArrowLeft, Copy, FileText, X } from "@lucide/vue";
+import { ArrowLeft, Copy, FileText, Pause, Play, Plus, X } from "@lucide/vue";
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { runsApi } from "@/api/runs";
+import type { ResearchPlanStep } from "@/api/types";
 import PageHeader from "@/components/common/PageHeader.vue";
 const router = useRouter();
 const route = useRoute();
 const {
-  copied,
-  copyEvidence,
   notify,
   statusClass,
   statusLabel,
@@ -30,6 +29,8 @@ type RunInfo = {
   tokens: string;
   progress: number;
   errorMessage: string;
+  planVersion: number;
+  paused: boolean;
 };
 
 const run = ref<RunInfo>({
@@ -44,17 +45,27 @@ const run = ref<RunInfo>({
   tokens: "—",
   progress: 0,
   errorMessage: "",
+  planVersion: 0,
+  paused: false,
 });
+
+const plan = ref<ResearchPlanStep[]>([]);
+const planSummary = ref("");
+const planVersion = ref(0);
+const planSaving = ref(false);
+const newStep = ref({ objective: "", action: "SEARCH_INTERNAL" as ResearchPlanStep["action"], query: "" });
 
 type EvidenceItem = {
   code: string;
   title: string;
   source: string;
   assetId: string;
+  excerpt: string;
+  pageNumber: number | string | null;
 };
 const evidence = ref<EvidenceItem[]>([]);
 const evidenceExcerpt = ref("");
-const evidenceLoading = ref(false);
+const copied = ref(false);
 
 const metrics = computed(() => [
   { label: "当前状态", value: run.value.statusLabel },
@@ -71,8 +82,23 @@ const summaryText = computed(() => {
 });
 
 function selectEvidence(index: number) {
+  const item = evidence.value[index];
+  if (!item) return;
   selectedEvidence.value = index;
-  evidenceExcerpt.value = "当前运行没有后端返回的证据片段。";
+  evidenceExcerpt.value = item.excerpt || "当前证据没有可展示的摘录。";
+}
+
+async function copySelectedEvidence() {
+  if (!evidenceExcerpt.value) return;
+  try {
+    await navigator.clipboard.writeText(evidenceExcerpt.value);
+    copied.value = true;
+    window.setTimeout(() => {
+      copied.value = false;
+    }, 1800);
+  } catch {
+    notify("复制失败，请手动选择引用内容");
+  }
 }
 
 onMounted(async () => {
@@ -94,13 +120,77 @@ onMounted(async () => {
       tokens: String(detail.tokens || "—"),
       progress: Math.min(100, Math.max(0, Number(detail.progress || 0))),
       errorMessage: String(detail.errorMessage || ""),
+      planVersion: Number(detail.planVersion || 0),
+      paused: Boolean(detail.paused),
     };
+    const rawPlan = (detail.plan || {}) as { summary?: string; steps?: ResearchPlanStep[] };
+    plan.value = Array.isArray(rawPlan.steps) ? rawPlan.steps.map((step) => ({ ...step })) : [];
+    planSummary.value = String(rawPlan.summary || "");
+    planVersion.value = Number(detail.planVersion || 0);
+    const detailRecord = detail as unknown as Record<string, unknown>;
+    const rawEvidence = Array.isArray(detailRecord.evidence)
+      ? detailRecord.evidence
+      : [];
+    evidence.value = rawEvidence.map((raw, index) => {
+      const item = (raw || {}) as Record<string, unknown>;
+      const sourceName = String(item.source_name ?? item.sourceName ?? item.asset_name ?? item.assetName ?? "项目资料");
+      const pageNumber = (item.page_number ?? item.pageNumber ?? null) as number | string | null;
+      const pageLabel = pageNumber != null && String(pageNumber) !== "" ? `第${pageNumber}页` : "";
+      return {
+        code: String(item.id ?? item.chunk_id ?? item.chunkId ?? `E${String(index + 1).padStart(2, "2")}`),
+        title: String(item.section_title ?? item.sectionTitle ?? item.asset_name ?? item.assetName ?? sourceName),
+        source: [sourceName, pageLabel].filter(Boolean).join(" · "),
+        assetId: String(item.asset_id ?? item.assetId ?? ""),
+        excerpt: String(item.content ?? item.excerpt ?? ""),
+        pageNumber,
+      };
+    });
   } catch (error) {
     notify(error instanceof Error ? error.message : "运行详情加载失败");
   }
 });
 
-function generateReport() {
+async function appendPlanStep() {
+  const objective = newStep.value.objective.trim();
+  if (!objective || planSaving.value) return;
+  planSaving.value = true;
+  try {
+    const response = await runsApi.updatePlan(workspaceId.value, projectId.value, String(route.params.runId), {
+      mode: "APPEND",
+      expectedVersion: planVersion.value,
+      steps: [{ id: `U${Date.now()}`, objective, action: newStep.value.action, query: newStep.value.query.trim() || objective }],
+    });
+    const updated = (response.plan || {}) as { summary?: string; steps?: ResearchPlanStep[] };
+    plan.value = Array.isArray(updated.steps) ? updated.steps : plan.value;
+    planSummary.value = String(updated.summary || planSummary.value);
+    planVersion.value = Number(response.planVersion || planVersion.value + 1);
+    newStep.value = { objective: "", action: "SEARCH_INTERNAL", query: "" };
+    notify("计划步骤已加入，任务会在下一个安全检查点执行");
+  } catch (error) {
+    notify(error instanceof Error ? error.message : "计划更新失败，可能已被其他人修改");
+  } finally {
+    planSaving.value = false;
+  }
+}
+
+async function togglePlanPause() {
+  if (planSaving.value) return;
+  planSaving.value = true;
+  try {
+    const response = await runsApi.updatePlan(workspaceId.value, projectId.value, String(route.params.runId), {
+      mode: run.value.paused ? "RESUME" : "PAUSE",
+      expectedVersion: planVersion.value,
+    });
+    run.value.paused = Boolean(response.paused);
+    notify(run.value.paused ? "任务已请求暂停" : "任务已恢复执行");
+  } catch (error) {
+    notify(error instanceof Error ? error.message : "任务控制失败");
+  } finally {
+    planSaving.value = false;
+  }
+}
+
+function exportSummary() {
   const content = `# ${run.value.title}\n\n${summaryText.value}\n`;
   const url = URL.createObjectURL(new Blob([content], { type: "text/markdown" }));
   const link = document.createElement("a");
@@ -108,7 +198,7 @@ function generateReport() {
   link.download = `${run.value.title}.md`;
   link.click();
   URL.revokeObjectURL(url);
-  notify("报告已生成并下载");
+  notify("摘要已导出");
 }
 </script>
 
@@ -125,16 +215,6 @@ function generateReport() {
       <span class="status-badge" :class="statusClass(run.status)"><i />{{ run.statusLabel }}</span>
     </template>
   </PageHeader>
-  <div v-if="false" class="run-detail-top">
-    <div>
-      <p class="eyebrow">AGENT / TASK DETAIL</p>
-      <h1>{{ run.title }}</h1>
-      <p class="page-subtitle">
-        {{ run.id }} · {{ run.project }} · {{ run.time }}
-      </p>
-    </div>
-    <span class="status-badge" :class="statusClass(run.status)"><i />{{ run.statusLabel }}</span>
-  </div>
   <div class="run-metrics">
     <div v-for="metric in metrics" :key="metric.label">
       <span>{{ metric.label }}</span><strong>{{ metric.value }}</strong>
@@ -148,9 +228,9 @@ function generateReport() {
       <button
         class="button button-secondary button-sm"
         type="button"
-        @click="generateReport"
+        @click="exportSummary"
       >
-        <FileText :size="14" />生成报告
+        <FileText :size="14" />导出摘要
       </button>
     </section>
     <aside class="panel evidence-panel">
@@ -180,14 +260,14 @@ function generateReport() {
           <span class="eyebrow">EVIDENCE</span>
           <h2>{{ evidence[selectedEvidence]?.title }}</h2>
           <p>
-            {{ evidenceLoading ? "正在加载引用片段…" : evidenceExcerpt }}
+            {{ evidenceExcerpt }}
           </p>
         </div>
         <div>
           <button
             class="button button-secondary button-sm"
             type="button"
-            @click="copyEvidence"
+            @click="copySelectedEvidence"
           >
             <Copy :size="14" />{{ copied ? "已复制" : "复制引用" }}</button
           ><button
@@ -201,6 +281,22 @@ function generateReport() {
       </div>
     </aside>
   </div>
+  <section class="panel run-plan-panel">
+    <div class="panel-heading">
+      <div><span class="eyebrow">VERSIONED PLAN</span><h2>执行计划 <small>v{{ planVersion }}</small></h2><p>{{ planSummary || "计划由 Agent 根据目标自动生成，可在运行中追加。" }}</p></div>
+      <button class="button button-secondary button-sm" type="button" :disabled="planSaving || !['running','pending','paused'].includes(run.status)" @click="togglePlanPause"><Play v-if="run.paused" :size="14" /><Pause v-else :size="14" />{{ run.paused ? "继续执行" : "暂停任务" }}</button>
+    </div>
+    <div class="run-plan-list">
+      <div v-for="(step, index) in plan" :key="step.id" class="run-plan-step"><span>{{ index + 1 }}</span><div><strong>{{ step.objective }}</strong><small>{{ step.action }} · {{ step.query || "无需查询" }}</small></div></div>
+      <p v-if="!plan.length" class="empty-state">计划将在任务开始后生成。</p>
+    </div>
+    <form class="run-plan-form" @submit.prevent="appendPlanStep">
+      <input v-model="newStep.objective" type="text" maxlength="500" placeholder="追加一个研究步骤，例如：核对竞品定价" aria-label="追加计划步骤" />
+      <select v-model="newStep.action" aria-label="计划动作"><option value="SEARCH_INTERNAL">项目资料</option><option value="SEARCH_GRAPH">知识图谱</option><option value="SEARCH_WEB">外部搜索</option><option value="SYNTHESIZE">整理结论</option></select>
+      <input v-model="newStep.query" type="text" maxlength="2000" placeholder="查询语句（可选）" aria-label="计划查询语句" />
+      <button class="button button-primary button-sm" type="submit" :disabled="planSaving || !newStep.objective.trim()"><Plus :size="14" />追加</button>
+    </form>
+  </section>
 </template>
 
 <style scoped>
@@ -214,7 +310,7 @@ function generateReport() {
   gap: 0.875rem;
   margin-top: 0.6875rem;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .run-metrics {
   display: flex;
@@ -238,7 +334,7 @@ function generateReport() {
 }
 .run-metrics span {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .run-metrics strong {
   color: var(--workspace-text);
@@ -251,6 +347,17 @@ function generateReport() {
   gap: 0.9375rem;
   align-items: start;
 }
+.run-plan-panel { margin-top: 0.9375rem; }
+.run-plan-panel h2 { display:flex; align-items:center; gap:.375rem; margin:0; color:var(--workspace-text); font-size:.875rem; }
+.run-plan-panel h2 small { color:var(--teal-dark); font-size:.7rem; font-weight:500; }
+.run-plan-panel p { margin:.3125rem 0 0; color:var(--workspace-muted); font-size:.75rem; }
+.run-plan-list { display:grid; gap:.5rem; padding:0 1.25rem 1rem; }
+.run-plan-step { display:flex; align-items:center; gap:.625rem; padding:.625rem .75rem; border:.0625rem solid var(--workspace-divider); border-radius:.5rem; background:var(--surface-soft); }
+.run-plan-step > span { display:grid; place-items:center; width:1.5rem; height:1.5rem; flex:0 0 auto; border-radius:50%; color:var(--teal-dark); background:color-mix(in oklab,var(--teal) 14%,var(--surface)); font-size:.7rem; }
+.run-plan-step div { display:grid; min-width:0; gap:.2rem; }.run-plan-step strong { color:var(--workspace-text); font-size:.75rem; }.run-plan-step small { overflow:hidden; color:var(--workspace-muted); font-size:.7rem; text-overflow:ellipsis; white-space:nowrap; }
+.run-plan-form { display:grid; grid-template-columns:1.1fr 8rem 1.1fr auto; gap:.5rem; padding:1rem 1.25rem; border-top:.0625rem solid var(--workspace-divider); background:var(--surface-soft); }
+.run-plan-form input,.run-plan-form select { min-width:0; padding:.5rem .625rem; border:.0625rem solid var(--workspace-border); border-radius:.4375rem; color:var(--workspace-text); background:var(--surface); font:inherit; font-size:.75rem; outline:0; }
+@media (max-width:47.5rem) { .run-plan-form { grid-template-columns:1fr; } }
 .timeline-panel,
 .event-panel,
 .evidence-panel {
@@ -258,7 +365,7 @@ function generateReport() {
 }
 .live-indicator {
   color: var(--teal-dark);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   letter-spacing: 0.08em;
   display: inline-flex;
   align-items: center;
@@ -322,14 +429,14 @@ function generateReport() {
 }
 .timeline-copy strong {
   color: var(--workspace-text);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .timeline-item.active .timeline-copy strong {
   color: #b4771e;
 }
 .timeline-copy small {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   line-height: 1.5;
   margin-top: 0.3125rem;
 }
@@ -371,11 +478,11 @@ function generateReport() {
 }
 .event-row strong {
   color: var(--workspace-text);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .event-row p {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   margin: 0.3125rem 0 0;
   line-height: 1.5;
 }
@@ -420,13 +527,13 @@ function generateReport() {
 }
 .evidence-card strong {
   color: var(--workspace-text);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .evidence-card small,
 .evidence-card p {
   display: block;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   margin: 0.4375rem 0 0;
 }
 .evidence-card p {
@@ -465,7 +572,7 @@ function generateReport() {
 }
 .evidence-drawer small {
   color: #8ab4af;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .evidence-drawer > div:last-child {
   display: flex;

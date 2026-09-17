@@ -426,7 +426,7 @@ async function savePreferences() {
 }
 .field-error {
   color: #c55b5b;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .preference-list {
   display: grid;
@@ -455,12 +455,12 @@ async function savePreferences() {
 }
 .preference-row strong {
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .preference-row small {
   margin-top: 0.25rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .preference-row select {
   border: 0.0625rem solid var(--workspace-border);
@@ -469,7 +469,7 @@ async function savePreferences() {
   color: var(--workspace-text);
   background: var(--surface-soft);
   font: inherit;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .switch-input {
   position: absolute;
@@ -530,7 +530,7 @@ async function savePreferences() {
   border-radius: 0.4375rem;
   color: #9d5757;
   background: #fff6f6;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .danger-confirm strong {
   color: #b64c4c;
@@ -545,7 +545,7 @@ async function savePreferences() {
   color: #6f4646;
   background: #fff;
   font: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .danger-confirm input:focus {
   border-color: #c87979;
@@ -554,7 +554,7 @@ async function savePreferences() {
   display: grid;
   gap: 0.375rem;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .delete-target-field select {
   width: 100%;
@@ -565,12 +565,12 @@ async function savePreferences() {
   color: var(--workspace-text);
   background: var(--surface);
   font: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .delete-target-hint {
   margin: 0;
   color: #9d5757;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 .danger-dialog .button-danger:disabled {

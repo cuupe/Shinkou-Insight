@@ -91,6 +91,9 @@ const {
   stopRun,
 } = useAgentWorkspace();
 const projectAssetCount = ref(0);
+const canSubmitMessage = computed(
+  () => Boolean(draft.value.trim() || pendingAttachments.value.length) && !hasRunningThread.value,
+);
 const contextLoading = ref(false);
 const conversationScroll = ref<HTMLElement | null>(null);
 const attachmentInput = ref<HTMLInputElement | null>(null);
@@ -102,6 +105,7 @@ const deleting = ref(false);
 const modelOptions = ref<ProjectModelConfig[]>([]);
 const webSearchConfig = ref<WebSearchConfig | null>(null);
 const selectedModelId = ref<number | string>("");
+const multiAgentMode = ref<"AUTO" | "ON" | "OFF">("AUTO");
 type ChatGenerationForm = {
   strategy: "AUTO" | "REACT" | "PLAN_AND_SOLVE" | "REFLECTION";
   retrievalTopK: number;
@@ -117,7 +121,7 @@ const generationOpen = ref(false);
 const reflectionEnabled = ref(true);
 const generation = reactive<ChatGenerationForm>({
   strategy: "AUTO",
-  retrievalTopK: 8,
+  retrievalTopK: 1,
   maxTokens: 4096,
   temperature: 0.3,
   topP: 0.9,
@@ -137,6 +141,7 @@ const agentConfig = computed(() => ({
   allowWebSearch: allowWeb.value && webSearchReady.value,
   reflectionEnabled: reflectionEnabled.value,
   strategy: generation.strategy,
+  multiAgentMode: multiAgentMode.value,
   maxResearchRounds: 3,
   topK: generation.retrievalTopK,
   retrievalMode: "HYBRID" as const,
@@ -286,7 +291,7 @@ onUnmounted(() => {
 const contextUsage = computed(() => activeThread.value.contextUsage);
 const tokenUsage = computed(() => activeThread.value.tokenUsage);
 const contextSourceCount = computed(
-  () => projectAssetCount.value + citations.value.length,
+  () => projectAssetCount.value + sourceCitations.value.length,
 );
 const processEvents = computed(() =>
   eventHistory.value.length ? eventHistory.value : events.value,
@@ -396,9 +401,11 @@ const eventIcons = {
   plan: ListChecks,
   search: Search,
   tool: Wrench,
+  file: FileText,
   evidence: FileCheck2,
   synthesis: Sparkles,
   reflection: CheckCircle2,
+  multi_agent: Bot,
 };
 
 function eventIcon(kind: AgentEventKind) {
@@ -420,6 +427,41 @@ function citationForMarker(message: AgentMessage, marker: string) {
   return undefined;
 }
 
+function citationSourceKey(citation: MessageCitation) {
+  if (citation.url) return `web:${citation.url.trim().toLowerCase()}`;
+  if (citation.assetId != null) return `asset:${String(citation.assetId)}`;
+  const source = (citation.source || citation.title || "").replace(
+    /\s*[·•|]\s*第\s*\d+\s*页\s*$/i,
+    "",
+  );
+  return `${citation.sourceType || "internal"}:${source.trim().toLowerCase()}`;
+}
+
+function uniqueCitations(citationsForDisplay: MessageCitation[]) {
+  const seen = new Set<string>();
+  return citationsForDisplay.filter((citation) => {
+    const key = citationSourceKey(citation);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function messageCitations(message: AgentMessage) {
+  const citationsForMessage = message.citations || [];
+  if (!citationsForMessage.length || !message.content) return [];
+  const referenced: MessageCitation[] = [];
+  const markerPattern = /(?:\[([^\]\r\n]{1,100})\]|【([^】\r\n]{1,100})】)/g;
+  let match: RegExpExecArray | null;
+  while ((match = markerPattern.exec(message.content))) {
+    const citation = citationForMarker(message, match[1] || match[2] || "");
+    if (citation && !referenced.some((item) => item.id === citation.id)) {
+      referenced.push(citation);
+    }
+  }
+  return uniqueCitations(referenced);
+}
+
 function messageParagraphs(message: AgentMessage): MessageSegment[][] {
   const markerPattern = /(?:\[([^\]\r\n]{1,100})\]|【([^】\r\n]{1,100})】)/g;
   const parsed = message.content
@@ -427,6 +469,7 @@ function messageParagraphs(message: AgentMessage): MessageSegment[][] {
     .filter(Boolean)
     .map((line) => {
       const segments: MessageSegment[] = [];
+      const renderedSources = new Set<string>();
       let cursor = 0;
       let match: RegExpExecArray | null;
       while ((match = markerPattern.exec(line))) {
@@ -434,7 +477,11 @@ function messageParagraphs(message: AgentMessage): MessageSegment[][] {
         if (!citation) continue;
         if (match.index > cursor)
           segments.push({ text: line.slice(cursor, match.index) });
-        segments.push({ text: match[0], citation });
+        const sourceKey = citationSourceKey(citation);
+        if (!renderedSources.has(sourceKey)) {
+          segments.push({ text: match[0], citation });
+          renderedSources.add(sourceKey);
+        }
         cursor = match.index + match[0].length;
       }
       markerPattern.lastIndex = 0;
@@ -458,9 +505,10 @@ function messageParagraphs(message: AgentMessage): MessageSegment[][] {
     .map((segment) => segment.text)
     .join("")
     .trim();
-  const trailingLabel = /^(参考|引用|来源|参考资料|参考来源|sources?|references?|citations?)(?:列表|如下)?[：:\s]*$/i.test(
-    lastText,
-  );
+  const trailingLabel =
+    /^(参考|引用|来源|参考资料|参考来源|sources?|references?|citations?)(?:列表|如下)?[：:\s]*$/i.test(
+      lastText,
+    );
   const trailingCitationList =
     parsed.length > 1 &&
     explicitCitations.length >= 2 &&
@@ -472,86 +520,24 @@ function messageParagraphs(message: AgentMessage): MessageSegment[][] {
     explicitCitations.splice(0, explicitCitations.length);
   }
 
-  const usedIds = new Set(explicitCitations.map((citation) => citation.id));
-  const missingCitations = citations.filter((citation) => !usedIds.has(citation.id));
-  if (!missingCitations.length || !parsed.length) return parsed;
-
-  const candidateIndexes = parsed
-    .map((paragraph, index) => ({
-      index,
-      text: paragraph.map((segment) => segment.text).join(" ").trim(),
-    }))
-    .filter((paragraph) => paragraph.text.length > 8);
-  const candidates = candidateIndexes.length
-    ? candidateIndexes
-    : parsed.map((_, index) => ({ index, text: "" }));
-  const loads = new Map(candidates.map((candidate) => [candidate.index, 0]));
-
-  for (const [citationIndex, citation] of missingCitations.entries()) {
-    const ranked = [...candidates].sort((left, right) => {
-      const scoreDelta =
-        citationRelevance(right.text, citation) -
-        citationRelevance(left.text, citation);
-      if (scoreDelta !== 0) return scoreDelta;
-      const loadDelta =
-        (loads.get(left.index) || 0) - (loads.get(right.index) || 0);
-      if (loadDelta !== 0) return loadDelta;
-      return (left.index + citationIndex) - (right.index + citationIndex);
-    });
-    const target = ranked[0];
-    if (!target) continue;
-    const targetParagraph = parsed[target.index];
-    if (!targetParagraph) continue;
-    const lastSegment = targetParagraph.at(-1);
-    if (lastSegment && !lastSegment.citation && lastSegment.text && !/\s$/.test(lastSegment.text)) {
-      lastSegment.text += " ";
-    }
-    targetParagraph.push({ text: "", citation });
-    loads.set(target.index, (loads.get(target.index) || 0) + 1);
-  }
   return parsed;
 }
 
-function citationTerms(value: string) {
-  const terms = new Set<string>();
-  const normalized = value.toLowerCase();
-  for (const token of normalized.match(/[a-z0-9][a-z0-9._-]{1,}|[\u4e00-\u9fff]{2,}/g) || []) {
-    terms.add(token);
-    if (/^[\u4e00-\u9fff]+$/.test(token)) {
-      for (let index = 0; index < token.length - 1; index += 1) {
-        terms.add(token.slice(index, index + 2));
-      }
-    }
-  }
-  return terms;
-}
-
-function citationRelevance(paragraph: string, citation: MessageCitation) {
-  const paragraphTerms = citationTerms(paragraph);
-  const sourceText = [
-    citation.title,
-    citation.source,
-    citation.quote,
-    citation.content,
-  ]
-    .filter(Boolean)
-    .join(" ");
-  let overlap = 0;
-  for (const term of citationTerms(sourceText)) {
-    if (paragraphTerms.has(term)) overlap += 1;
-  }
-  return overlap;
-}
-
 function citationNumber(message: AgentMessage, citation: MessageCitation) {
-  return (
-    (message.citations || []).findIndex((item) => item.id === citation.id) + 1
-  );
+  const visible = messageCitations(message);
+  const sourceKey = citationSourceKey(citation);
+  return visible.findIndex((item) => citationSourceKey(item) === sourceKey) + 1;
 }
 
 function inspectorCitationNumber(citation: MessageCitation) {
-  return citations.value.findIndex((item) => item.id === citation.id) + 1;
+  return (
+    sourceCitations.value.findIndex(
+      (item) => citationSourceKey(item) === citationSourceKey(citation),
+    ) + 1
+  );
 }
+
+const sourceCitations = computed(() => uniqueCitations(citations.value));
 
 function citationTitle(citation: MessageCitation) {
   return citation.title || citation.source || "引用来源";
@@ -603,23 +589,23 @@ function detectAttachmentKind(file: File): AgentAttachmentKind {
   const extension = file.name.split(".").pop()?.toLowerCase() || "";
   if (
     file.type.startsWith("image/") ||
-    ["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(extension)
+    ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "svg"].includes(extension)
   )
     return "image";
   if (
     file.type.startsWith("video/") ||
-    ["mp4", "webm", "mov", "m4v"].includes(extension)
+    ["mp4", "webm", "mov", "mkv", "avi", "m4v"].includes(extension)
   )
     return "video";
   if (
     file.type.startsWith("audio/") ||
-    ["mp3", "wav", "m4a", "ogg", "aac"].includes(extension)
+    ["mp3", "wav", "m4a", "ogg", "aac", "flac", "opus"].includes(extension)
   )
     return "audio";
   if (file.type === "application/pdf" || extension === "pdf") return "pdf";
-  if (["doc", "docx"].includes(extension)) return "document";
-  if (["xls", "xlsx", "csv"].includes(extension)) return "spreadsheet";
-  if (["ppt", "pptx"].includes(extension)) return "presentation";
+  if (["doc", "docx", "odt", "rtf"].includes(extension)) return "document";
+  if (["xls", "xlsx", "ods", "csv"].includes(extension)) return "spreadsheet";
+  if (["ppt", "pptx", "odp"].includes(extension)) return "presentation";
   return "file";
 }
 
@@ -662,6 +648,21 @@ function openCitation(
 ) {
   if (citation.url) {
     window.open(citation.url, "_blank", "noopener,noreferrer");
+    return;
+  }
+  if (citation.assetId != null) {
+    router.push({
+      ...routeTo("project-asset-detail"),
+      params: {
+        ...routeTo("project-asset-detail").params,
+        assetId: String(citation.assetId),
+      },
+      query: {
+        ...(citation.chunkId != null ? { chunkId: String(citation.chunkId) } : {}),
+        ...(citation.pageNumber != null ? { page: String(citation.pageNumber) } : {}),
+        ...(citation.quote ? { quote: citation.quote.slice(0, 300) } : {}),
+      },
+    });
     return;
   }
   notify(
@@ -800,8 +801,8 @@ function exportConversation() {
         `## ${message.role === "assistant" ? "Shinkou Agent" : "用户"}\n\n${message.content}`,
     )
     .join("\n\n");
-  const sources = citations.value.length
-    ? `\n\n## 引用记录\n\n${citations.value.map((citation) => `- ${citation.title} — ${citation.source}${citation.url ? ` (${citation.url})` : ""}`).join("\n")}`
+  const sources = sourceCitations.value.length
+    ? `\n\n## 引用记录\n\n${sourceCitations.value.map((citation) => `- ${citation.title} — ${citation.source}${citation.url ? ` (${citation.url})` : ""}`).join("\n")}`
     : "";
   const blob = new Blob(
     [`# ${activeThread.value.title}\n\n${body}${sources}\n`],
@@ -851,7 +852,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
       class="sr-only"
       type="file"
       multiple
-      accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.txt,.md"
+      accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.json,.html,.htm,.ppt,.pptx,.odt,.ods,.odp,.rtf,.txt,.md,.markdown"
       @change="handleFilesSelected"
     />
 
@@ -1096,6 +1097,14 @@ watch(selectedModelId, applyModelGenerationDefaults);
             </select></label
           >
           <label class="generation-field"
+            ><span>多智能体协作</span
+            ><select v-model="multiAgentMode">
+              <option value="AUTO">自动按需（推荐）</option>
+              <option value="ON">强制开启</option>
+              <option value="OFF">关闭</option>
+            </select></label
+          >
+          <label class="generation-field"
             ><span>回答质量检查</span
             ><select v-model="reflectionEnabled">
               <option :value="true">按需检查</option>
@@ -1104,7 +1113,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
           >
         </div>
         <p class="generation-note">
-          系统会根据问题范围自动选择处理方式：需要多步核对时先整理步骤，涉及项目资料时边查边确认，必要时再检查回答质量。简单问题会直接回答，减少额外调用。
+          系统会根据问题范围自动选择处理方式：复杂任务或明确要求时由主智能体协调多个子智能体，普通问题保持单智能体快速回答；需要多步核对时先整理步骤，必要时再检查回答质量。
         </p>
       </section>
 
@@ -1403,31 +1412,56 @@ watch(selectedModelId, applyModelGenerationDefaults);
                 </details>
                 <details
                   v-if="
-                    message.role === 'assistant' && message.citations?.length
+                    message.role === 'assistant' &&
+                    messageCitations(message).length
                   "
                   class="message-citations"
                 >
                   <summary class="message-citations-summary">
                     <span class="citation-label"
                       ><FileSearch :size="13" />引用
-                      {{ message.citations.length }}</span
+                      {{ messageCitations(message).length }}</span
                     >
                     <small>展开查看来源</small>
                     <ChevronRight :size="13" />
                   </summary>
                   <div class="message-citation-list">
-                    <button
-                      v-for="citation in message.citations"
+                    <div
+                      v-for="citation in messageCitations(message)"
                       :key="citation.id"
-                      type="button"
-                      @click="openCitation(citation)"
+                      class="message-citation-row"
                     >
-                      <span
-                        >【{{ citationNumber(message, citation) }}】
-                        {{ citation.title }}</span
-                      ><small>{{ citation.source }}</small
-                      ><ChevronRight :size="12" />
-                    </button>
+                      <button type="button" @click="openCitation(citation)">
+                        <span
+                          >【{{ citationNumber(message, citation) }}】
+                          {{ citation.title }}</span
+                        ><small>{{ citation.source }}</small
+                        ><ChevronRight :size="12" />
+                      </button>
+                      <button
+                        v-if="isWebCitation(citation)"
+                        type="button"
+                        class="citation-save-mini"
+                        :disabled="
+                          Boolean(savedCitationAssets[citation.id]) ||
+                          savingCitationIds.has(citation.id)
+                        "
+                        @click.stop="saveCitationToKnowledge(citation)"
+                      >
+                        <CheckCircle2
+                          v-if="savedCitationAssets[citation.id]"
+                          :size="12"
+                        />
+                        <Plus v-else :size="12" />
+                        {{
+                          savedCitationAssets[citation.id]
+                            ? "已加入"
+                            : savingCitationIds.has(citation.id)
+                              ? "加入中"
+                              : "加入知识库"
+                        }}
+                      </button>
+                    </div>
                   </div>
                 </details>
               </div>
@@ -1495,9 +1529,9 @@ watch(selectedModelId, applyModelGenerationDefaults);
                   v-else
                   class="button button-primary button-sm"
                   type="submit"
-                  :disabled="hasRunningThread"
+                  :disabled="!canSubmitMessage"
                 >
-                  {{ hasRunningThread ? "请先暂停运行" : "发送" }}
+                  {{ hasRunningThread ? "请先暂停运行" : canSubmitMessage ? "发送" : "输入内容" }}
                   <Send :size="14" />
                 </button>
               </div>
@@ -1620,10 +1654,21 @@ watch(selectedModelId, applyModelGenerationDefaults);
             <p class="token-usage-status">
               <span class="token-status-dot" />{{ tokenUsageStatus }}
             </p>
-            <p v-if="contextUsage?.compressedMessages">
+            <p v-if="contextUsage?.filteredMessages">
+              已省略
+              {{ contextUsage.filteredMessages }} 条无关历史消息，保留
+              {{ contextUsage.selectedContextMessages ?? "相关" }} 条上下文。
+            </p>
+            <p v-else-if="contextUsage?.compressedMessages">
               已自动压缩
               {{ contextUsage.compressedMessages }} 条较早消息，保留最近
               {{ contextUsage.finalMessageCount ?? "部分" }} 条上下文。
+            </p>
+            <p v-if="contextUsage?.modelContextWindow">
+              模型上下文上限
+              {{ formatTokenCount(contextUsage.modelContextWindow) }} tokens；
+              本次上下文预算
+              {{ formatTokenCount(contextUsage.contextTokenBudget) }} tokens。
             </p>
             <p v-else-if="contextUsage">
               当前上下文约
@@ -1713,66 +1758,6 @@ watch(selectedModelId, applyModelGenerationDefaults);
               </p>
             </div>
           </section>
-
-          <details class="inspector-section citation-inspector">
-            <summary class="inspector-section-title citation-inspector-summary">
-              <span><FileSearch :size="13" />证据引用</span>
-              <span class="citation-summary-count"
-                ><strong>{{ citations.length }}</strong
-                ><ChevronRight :size="13"
-              /></span>
-            </summary>
-            <div v-if="citations.length" class="citation-list">
-              <article
-                v-for="citation in citations"
-                :key="citation.id"
-                class="citation-card"
-              >
-                <button
-                  class="citation-card-open"
-                  type="button"
-                  @click="openCitation(citation)"
-                >
-                  <span class="citation-card-top"
-                    ><FileSearch :size="13" />{{
-                      citation.sourceType === "web"
-                        ? "外部搜索结果"
-                        : citation.score
-                          ? `相关度 ${citation.score}`
-                          : "项目证据"
-                    }}</span
-                  >
-                  <strong
-                    >【{{ inspectorCitationNumber(citation) }}】
-                    {{ citation.title }}</strong
-                  >
-                  <small>{{ citation.source }}</small>
-                  <p v-if="citation.quote">{{ citation.quote }}</p>
-                </button>
-                <button
-                  v-if="isWebCitation(citation)"
-                  class="citation-import-button"
-                  type="button"
-                  :disabled="
-                    savingCitationIds.has(citation.id) ||
-                    Boolean(savedCitationAssets[citation.id])
-                  "
-                  @click="saveCitationToKnowledge(citation)"
-                >
-                  <CheckCircle2 :size="12" />{{
-                    savedCitationAssets[citation.id]
-                      ? "已加入知识库"
-                      : savingCitationIds.has(citation.id)
-                        ? "写入中…"
-                        : "手动加入知识库"
-                  }}
-                </button>
-              </article>
-            </div>
-            <p v-if="!citations.length" class="inspector-empty">
-              运行后会自动收集引用证据。
-            </p>
-          </details>
 
           <div class="inspector-footer">
             <CheckCircle2
@@ -1893,13 +1878,13 @@ watch(selectedModelId, applyModelGenerationDefaults);
 
 .agent-config-intro strong {
   color: var(--workspace-text);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 
 .agent-config-intro small {
   margin-top: 0.125rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .agent-config-items {
@@ -1934,14 +1919,14 @@ watch(selectedModelId, applyModelGenerationDefaults);
 
 .generation-heading strong {
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 
 .generation-heading small,
 .generation-heading > span,
 .generation-note {
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 
@@ -1967,12 +1952,12 @@ watch(selectedModelId, applyModelGenerationDefaults);
 
 .generation-field > span {
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .generation-field > span small {
   color: var(--workspace-subtle);
-  font-size: 0.4375rem;
+  font-size: 0.75rem;
 }
 
 .generation-field input,
@@ -1985,7 +1970,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   background: var(--surface);
   color: var(--workspace-text);
   font: inherit;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .generation-field input:focus,
@@ -2041,7 +2026,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   background: transparent;
   color: var(--workspace-text);
   font: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-weight: 650;
   outline: none;
   cursor: pointer;
@@ -2073,7 +2058,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   align-items: center;
   gap: 0.125rem;
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .inline-switch {
@@ -2129,12 +2114,12 @@ watch(selectedModelId, applyModelGenerationDefaults);
 
 .agent-config-item small {
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .agent-config-item strong {
   color: var(--workspace-text);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   font-weight: 650;
 }
 
@@ -2230,7 +2215,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   display: block;
   margin-bottom: 0.375rem;
   color: var(--teal-dark);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   font-weight: 800;
   letter-spacing: 0.14em;
 }
@@ -2359,13 +2344,13 @@ watch(selectedModelId, applyModelGenerationDefaults);
 }
 
 .thread-copy strong {
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   font-weight: 650;
 }
 
 .thread-copy small {
   color: var(--workspace-subtle);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .agent-conversation {
@@ -2433,7 +2418,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   align-items: center;
   gap: 0.3125rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .conversation-title span i,
@@ -2456,7 +2441,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .conversation-meta {
   gap: 0.6875rem;
   color: var(--workspace-subtle);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   white-space: nowrap;
 }
 
@@ -2511,7 +2496,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .message-meta {
   gap: 0.5rem;
   color: var(--workspace-subtle);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .message-meta strong {
@@ -2563,7 +2548,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   overflow: hidden;
   padding: 0.375rem 0.5rem;
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2609,7 +2594,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .citation-label {
   gap: 0.25rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .message-citations button {
@@ -2624,7 +2609,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   background: var(--surface);
   color: var(--teal-dark);
   font: inherit;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
@@ -2661,7 +2646,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .conversation-empty p {
   margin: 0.5rem 0 1.25rem;
   color: var(--workspace-muted);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   line-height: 1.65;
 }
 
@@ -2672,7 +2657,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   justify-content: center;
   gap: 0.3125rem;
   color: var(--teal-dark);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .launch-hints span {
@@ -2716,7 +2701,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   background: transparent;
   color: var(--workspace-text);
   font: inherit;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   line-height: 1.6;
 }
 
@@ -2735,7 +2720,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   align-items: center;
   gap: 0.3125rem;
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .composer-bottom > span svg {
@@ -2748,7 +2733,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   gap: 0.3125rem;
   margin: 0.5rem 0 0;
   color: var(--agent-danger-text);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .inspector-heading {
@@ -2758,7 +2743,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .run-state {
   gap: 0.3125rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .run-state.completed {
@@ -2785,18 +2770,18 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .progress-top {
   justify-content: space-between;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .progress-top strong {
   color: var(--teal-dark);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 
 .progress-top small {
   margin-left: auto;
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .progress-track {
@@ -2819,7 +2804,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   overflow: hidden;
   margin: 0.5625rem 0 0;
   color: var(--workspace-subtle);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2847,7 +2832,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .current-stage-heading span {
   flex: 0 0 auto;
   color: var(--teal-dark);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   font-weight: 650;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -2856,7 +2841,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .current-stage-heading strong {
   overflow: hidden;
   color: var(--workspace-text);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2864,7 +2849,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .current-stage p {
   margin: 0.3125rem 0 0;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   line-height: 1.5;
   white-space: normal;
 }
@@ -2875,7 +2860,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   gap: 0.3125rem;
   margin-top: 0.375rem;
   color: var(--teal-dark);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2895,7 +2880,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   display: block;
   margin-top: 0.375rem;
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .live-activity {
@@ -2936,7 +2921,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   align-items: center;
   gap: 0.4375rem;
   color: var(--teal-dark);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2945,7 +2930,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   border-radius: 999px;
   background: var(--agent-accent-surface-strong);
   color: var(--teal-dark);
-  font-size: 0.4375rem;
+  font-size: 0.75rem;
   font-style: normal;
 }
 
@@ -2954,7 +2939,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   margin-top: 0.1875rem;
   overflow: hidden;
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2963,7 +2948,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   margin: 0.1875rem 0 0;
   overflow: hidden;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2973,7 +2958,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   max-width: 10rem;
   flex: 0 0 auto;
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   line-height: 1.45;
   text-align: right;
 }
@@ -3019,7 +3004,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .context-metrics small {
   overflow: hidden;
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3033,7 +3018,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .context-panel p {
   margin: 0;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   line-height: 1.55;
 }
 
@@ -3050,12 +3035,12 @@ watch(selectedModelId, applyModelGenerationDefaults);
   justify-content: space-between;
   padding-bottom: 0.375rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .event-list-heading strong {
   color: var(--teal-dark);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -3115,7 +3100,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .event-copy strong {
   overflow: hidden;
   color: var(--workspace-text);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3124,13 +3109,13 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .event-copy small {
   flex: 0 0 auto;
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .event-copy p {
   margin: 0.25rem 0 0;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 
@@ -3140,7 +3125,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   align-items: center;
   gap: 0.375rem;
   color: var(--workspace-subtle);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .process-review-section {
@@ -3167,7 +3152,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   align-items: center;
   gap: 0.375rem;
   color: var(--workspace-text);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-weight: 650;
 }
 
@@ -3178,7 +3163,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .process-review-toggle small {
   margin-left: auto;
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .process-review-toggle > svg {
@@ -3214,7 +3199,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .process-review-index {
   padding-top: 0.125rem;
   color: var(--workspace-subtle);
-  font-size: 0.4375rem;
+  font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -3249,7 +3234,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   display: block;
   overflow: hidden;
   color: var(--workspace-text);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3258,13 +3243,13 @@ watch(selectedModelId, applyModelGenerationDefaults);
   display: block;
   margin-top: 0.125rem;
   color: var(--workspace-subtle);
-  font-size: 0.4375rem;
+  font-size: 0.75rem;
 }
 
 .process-review-item p {
   margin: 0.1875rem 0 0;
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   line-height: 1.45;
 }
 
@@ -3272,7 +3257,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .process-review-note {
   margin: 0.25rem 0 0;
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   line-height: 1.45;
 }
 
@@ -3293,12 +3278,12 @@ watch(selectedModelId, applyModelGenerationDefaults);
   justify-content: space-between;
   margin-bottom: 0.625rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .inspector-section-title strong {
   color: var(--teal-dark);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 
 .citation-card {
@@ -3320,7 +3305,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .citation-card-top {
   gap: 0.25rem;
   color: var(--teal-dark);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .citation-card strong,
@@ -3332,12 +3317,12 @@ watch(selectedModelId, applyModelGenerationDefaults);
 
 .citation-card strong {
   color: var(--workspace-text);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 
 .citation-card small {
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .inspector-footer {
@@ -3346,7 +3331,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   padding: 0.75rem 1.125rem;
   border-top: 0.0625rem solid var(--workspace-divider);
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   line-height: 1.45;
 }
 
@@ -3494,18 +3479,18 @@ watch(selectedModelId, applyModelGenerationDefaults);
 
 .attachment-copy strong {
   color: var(--workspace-text);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .attachment-copy small {
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .attachment-open {
   padding: 0.25rem 0.375rem;
   border-radius: 0.3125rem;
   color: var(--teal-dark);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   text-decoration: none;
 }
 
@@ -3534,7 +3519,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   color: var(--workspace-muted);
   cursor: pointer;
   list-style: none;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .attachment-dropdown-summary::-webkit-details-marker {
@@ -3589,12 +3574,12 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .message-citations button span {
   grid-column: 1;
   color: var(--workspace-text);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .message-citations button small {
   grid-column: 1;
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .message-citations button > svg {
   grid-column: 2;
@@ -3606,7 +3591,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   align-items: center;
   gap: 0.3125rem;
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .composer-tools > span svg {
@@ -3630,7 +3615,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   border-radius: 0.375rem;
   background: var(--surface-raised);
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .pending-attachment span {
@@ -3674,7 +3659,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   background: var(--surface);
   color: var(--workspace-muted);
   font: inherit;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   cursor: pointer;
 }
 
@@ -3692,7 +3677,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 
 .event-meta em {
   color: var(--workspace-subtle);
-  font-size: 0.4375rem;
+  font-size: 0.75rem;
   font-style: normal;
 }
 
@@ -3701,7 +3686,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   margin: 0.125rem 0 0;
   overflow: hidden;
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   line-height: 1.45;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -3734,7 +3719,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   background: color-mix(in oklab, var(--teal) 7%, var(--surface));
   color: var(--teal-dark);
   font: inherit;
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   cursor: pointer;
 }
 
@@ -3928,7 +3913,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 
 .shortcut-intro small {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   line-height: 1.45;
 }
 
@@ -3982,12 +3967,12 @@ watch(selectedModelId, applyModelGenerationDefaults);
 
 .shortcut-card strong {
   color: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 
 .shortcut-card small {
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 @media (max-width: 75rem) {
@@ -4058,7 +4043,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .message-citations-summary > small {
   margin-left: auto;
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .message-citations-summary > svg {
@@ -4074,6 +4059,12 @@ watch(selectedModelId, applyModelGenerationDefaults);
   display: grid;
   gap: 0.25rem;
   padding: 0.125rem 0 0.25rem 0.125rem;
+}
+
+.message-citation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.25rem;
 }
 
 .message-citation-list button {
@@ -4092,6 +4083,35 @@ watch(selectedModelId, applyModelGenerationDefaults);
   cursor: pointer;
 }
 
+.message-citation-row > button:first-child {
+  min-width: 0;
+}
+
+.message-citation-row > .citation-save-mini {
+  display: inline-flex;
+  width: auto;
+  min-width: 6.25rem;
+  grid-template-columns: none;
+  grid-column: auto;
+  grid-row: auto;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding-inline: 0.5rem;
+  color: var(--teal-dark);
+  font-size: 0.6875rem;
+  white-space: nowrap;
+}
+
+.message-citation-row > .citation-save-mini:hover:not(:disabled) {
+  background: var(--surface-soft);
+}
+
+.message-citation-row > .citation-save-mini:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
 .message-citation-list button:hover {
   border-color: var(--teal);
   background: var(--surface-soft);
@@ -4108,13 +4128,13 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .message-citation-list button span {
   grid-column: 1;
   color: var(--workspace-text);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .message-citation-list button small {
   grid-column: 1;
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .message-citation-list button > svg {
@@ -4185,13 +4205,13 @@ watch(selectedModelId, applyModelGenerationDefaults);
 
 .run-timing small {
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .run-timing strong {
   overflow: hidden;
   color: var(--teal-dark);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4202,7 +4222,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   gap: 0.3125rem;
   margin: 0.5rem 0 0;
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .token-status-dot {

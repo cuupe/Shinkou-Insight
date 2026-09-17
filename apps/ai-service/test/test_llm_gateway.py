@@ -3,8 +3,43 @@ import json
 import httpx
 import pytest
 
-from models.llm import HttpModelGateway, LangChainModelGateway
+from models.llm import HttpModelGateway, LangChainModelGateway, extract_model_context_window, fetch_model_context_window
 from models.schemas import ModelGenerationConfig, PlanItem
+
+
+def test_extract_model_context_window_supports_openai_compatible_catalogs():
+    payload = {
+        "data": [
+            {"id": "other", "context_length": 8192},
+            {"id": "demo-model", "top_provider": {"context_length": 131072}},
+        ]
+    }
+
+    assert extract_model_context_window(payload, "demo-model") == 131072
+
+
+@pytest.mark.asyncio
+async def test_fetch_model_context_window_does_not_call_chat_completion():
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "demo-model", "max_model_len": 32768}]},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await fetch_model_context_window(
+            client,
+            base_url="https://mock.local/v1",
+            api_key="test-key",
+            model="demo-model",
+        )
+
+    assert result["available"] is True
+    assert result["contextWindow"] == 32768
+    assert paths == ["/v1/models"]
 
 
 @pytest.mark.asyncio

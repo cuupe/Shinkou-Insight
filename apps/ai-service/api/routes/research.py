@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import Annotated, Any, AsyncIterator
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from api.dependencies import verify_internal_api_key
 from core.events import EventBus
 from core.repository import InMemoryRunRepository
-from models.schemas import ExecuteRunRequest, RunAccepted
+from models.schemas import ExecuteRunRequest, PlanUpdateRequest, RunAccepted
 
 router = APIRouter(tags=["research"])
 
@@ -22,13 +22,22 @@ router = APIRouter(tags=["research"])
 async def execute_run(
     run_id: str,
     request: ExecuteRunRequest,
-    background_tasks: BackgroundTasks,
     http_request: Request,
 ) -> RunAccepted:
     if str(request.run_id) != str(run_id):
         raise HTTPException(400, "run_id in path and body must match")
+    existing = http_request.app.state.repository.get(request.run_id)
     run = await http_request.app.state.runtime.accept(request)
-    background_tasks.add_task(http_request.app.state.runtime.execute, request)
+    queue = getattr(http_request.app.state, "task_queue", None)
+    if queue is not None and not (existing and run.queue_task_id):
+        task_id = await queue.enqueue(request)
+        await http_request.app.state.repository.update(run.run_id, queue_task_id=task_id)
+        await http_request.app.state.events.publish(run.run_id, "run.queued", {"status": "PENDING", "taskId": task_id})
+    else:
+        # Keeps direct unit-test app instances compatible with the production
+        # queue while still avoiding a blocking HTTP request.
+        import asyncio
+        asyncio.create_task(http_request.app.state.runtime.execute(request))
     return RunAccepted(
         run_id=run.run_id,
         status=run.status,
@@ -59,7 +68,37 @@ async def get_run(run_id: str, http_request: Request) -> dict[str, Any]:
         "evidence": [item.model_dump() for item in run.evidence],
         "promptSnapshot": run.prompt_snapshot,
         "toolCalls": http_request.app.state.runtime.tools.history(run.run_id),
+        "plan": run.plan,
+        "planVersion": run.plan_version,
+        "planHistory": run.plan_history,
+        "paused": run.paused,
+        "reviewResult": run.review_result,
+        "queueTaskId": run.queue_task_id,
     }
+
+
+@router.patch("/internal/research/runs/{run_id}/plan", dependencies=[Depends(verify_internal_api_key)])
+async def update_plan(run_id: str, request: PlanUpdateRequest, http_request: Request) -> dict[str, Any]:
+    try:
+        run = await http_request.app.state.repository.update_plan(
+            run_id,
+            mode=request.mode,
+            steps=[item.model_dump() for item in request.steps],
+            summary=request.summary,
+            expected_version=request.expected_version,
+        )
+    except KeyError as exc:
+        raise HTTPException(404, "research run not found") from exc
+    except ValueError as exc:
+        if "version conflict" in str(exc):
+            raise HTTPException(409, str(exc)) from exc
+        raise HTTPException(422, str(exc)) from exc
+    await http_request.app.state.events.publish(
+        run_id,
+        "plan.updated",
+        {"mode": request.mode, "plan": run.plan, "planVersion": run.plan_version, "paused": run.paused},
+    )
+    return {"runId": run.run_id, "status": run.status, "plan": run.plan, "planVersion": run.plan_version, "paused": run.paused}
 
 
 async def _event_stream(http_request: Request, run_id: str, after_id: int) -> AsyncIterator[str]:

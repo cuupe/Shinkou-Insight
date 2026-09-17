@@ -9,6 +9,7 @@ def test_settings_parse_comma_separated_runtime_options():
         MCP_ALLOWED_TOOLS="search_knowledge, search_graph",
         AGENT_WORKER_URLS="planner=http://planner:8000,writer=http://writer:8000",
         LLM_STRUCTURED_OUTPUT_METHOD="function_calling",
+        CUSTOM_TOOLS_MODULES="weather, finance.py",
     )
 
     assert settings.mcp_allowed_tools == ["search_knowledge", "search_graph"]
@@ -17,6 +18,7 @@ def test_settings_parse_comma_separated_runtime_options():
         "writer": "http://writer:8000",
     }
     assert settings.llm_structured_output_method == "function_calling"
+    assert settings.custom_tools_modules == ["weather", "finance.py"]
 
 
 def test_settings_reject_invalid_pool_range_and_output_method():

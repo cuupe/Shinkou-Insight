@@ -9,6 +9,12 @@ from typing import Any
 from documents.chunker import DocumentChunk, DocumentChunker
 from embeddings.providers import EmbeddingProvider
 from models.schemas import RetrievalItem
+from rag.hybrid import (
+    bm25_scores,
+    build_query_variants,
+    diversify_candidates,
+    fuse_ranked_candidates,
+)
 from rag.reranker import LexicalReranker
 
 
@@ -45,45 +51,123 @@ class InMemoryKnowledgeStore:
         self.items.extend(IndexedChunk(workspace_id, project_id, asset_id, asset_name, chunk, vector) for chunk, vector in zip(chunks, vectors))
         return len(chunks)
 
-    async def retrieve(self, *, workspace_id: int, project_id: int, question: str, top_k: int, filters: dict[str, Any] | None = None, retrieval_mode: str = "HYBRID", use_reranker: bool = False, embedding: EmbeddingProvider | None = None) -> list[RetrievalItem]:
+    async def retrieve(
+        self,
+        *,
+        workspace_id: int,
+        project_id: int,
+        question: str,
+        top_k: int,
+        filters: dict[str, Any] | None = None,
+        retrieval_mode: str = "HYBRID",
+        use_reranker: bool = False,
+        embedding: EmbeddingProvider | None = None,
+        fusion_method: str = "WEIGHTED_RRF",
+        candidate_k: int | None = None,
+        rank_constant: int = 60,
+        vector_weight: float = 0.55,
+        keyword_weight: float = 0.45,
+        diversity_lambda: float = 0.9,
+        query_variants: list[str] | None = None,
+        rerank_top_k: int | None = None,
+    ) -> list[RetrievalItem]:
         filters = filters or {}
         embedding = embedding or self.embedding
         allowed_assets = {str(value) for value in filters.get("assetIds", [])}
         candidates = [item for item in self.items if item.workspace_id == workspace_id and item.project_id == project_id and (not allowed_assets or str(item.asset_id) in allowed_assets)]
-        query_vector = await embedding.embed_query(question)
-        query_terms = set(question.casefold().split())
-        vector_ranked = sorted(candidates, key=lambda item: cosine(query_vector, item.embedding), reverse=True)
-        keyword_ranked = sorted(candidates, key=lambda item: sum(term in item.chunk.content.casefold() for term in query_terms), reverse=True)
-        vector_scores = {id(item): cosine(query_vector, item.embedding) for item in candidates}
-        keyword_scores = {id(item): float(sum(term in item.chunk.content.casefold() for term in query_terms)) for item in candidates}
-        if retrieval_mode.upper() == "VECTOR":
-            ordered = vector_ranked
-        elif retrieval_mode.upper() == "KEYWORD":
-            ordered = keyword_ranked
+        mode = retrieval_mode.upper()
+        candidate_limit = max(top_k, min(int(candidate_k or max(top_k * 4, 20)), 200))
+        channels: dict[str, list[tuple[str, IndexedChunk, float]]] = {}
+        vector_scores: dict[str, float] = {}
+        if mode in {"VECTOR", "HYBRID"}:
+            query_vector = await embedding.embed_query(question)
+            vector_values = sorted(
+                ((item, cosine(query_vector, item.embedding)) for item in candidates),
+                key=lambda value: value[1],
+                reverse=True,
+            )[:candidate_limit]
+            channels["vector"] = [
+                (item.chunk.checksum[:16], item, score)
+                for item, score in vector_values
+            ]
+            vector_scores = {item.chunk.checksum[:16]: score for item, score in vector_values}
+
+        keyword_scores: dict[str, float] = {}
+        if mode in {"KEYWORD", "HYBRID"}:
+            variants = query_variants or build_query_variants(question)
+            # The original query receives the full BM25 weight. Focused
+            # variants are a cheap recall boost and never trigger an LLM call.
+            keyword_values: dict[str, float] = {}
+            for variant_index, variant in enumerate(variants or [question]):
+                scores = bm25_scores(variant, [item.chunk.content for item in candidates])
+                variant_weight = 1.0 if variant_index == 0 else 0.65
+                for item, score in zip(candidates, scores):
+                    key = item.chunk.checksum[:16]
+                    keyword_values[key] = max(keyword_values.get(key, 0.0), score * variant_weight)
+            keyword_values = {
+                key: score for key, score in keyword_values.items() if score > 0
+            }
+            keyword_values = dict(
+                sorted(keyword_values.items(), key=lambda value: value[1], reverse=True)[:candidate_limit]
+            )
+            by_key = {item.chunk.checksum[:16]: item for item in candidates}
+            channels["keyword"] = [
+                (key, by_key[key], score) for key, score in keyword_values.items()
+            ]
+            keyword_scores = keyword_values
+
+        if mode == "VECTOR":
+            fused = fuse_ranked_candidates(channels, method="LINEAR", weights={"vector": 1.0})
+        elif mode == "KEYWORD":
+            fused = fuse_ranked_candidates(channels, method="LINEAR", weights={"keyword": 1.0})
         else:
-            scores = {id(item): rrf(index + 1) for index, item in enumerate(vector_ranked)}
-            for index, item in enumerate(keyword_ranked):
-                scores[id(item)] = scores.get(id(item), 0) + rrf(index + 1)
-            ordered = sorted(candidates, key=lambda item: scores[id(item)], reverse=True)
+            fused = fuse_ranked_candidates(
+                channels,
+                method=fusion_method,
+                weights={"vector": vector_weight, "keyword": keyword_weight},
+                rank_constant=rank_constant,
+                rank_window_size=candidate_limit,
+            )
+        fused = diversify_candidates(
+            fused,
+            top_k=max(top_k, min(candidate_limit, int(rerank_top_k or top_k))),
+            content_fn=lambda item: item.chunk.content,
+            diversity_lambda=diversity_lambda,
+        )
         result: list[RetrievalItem] = []
-        for rank, item in enumerate(ordered[:top_k], start=1):
-            keyword_score = keyword_scores[id(item)]
-            if keyword_score <= 0 and retrieval_mode.upper() == "KEYWORD":
-                continue
-            result.append(RetrievalItem(id=f"E{rank}", chunk_id=item.chunk.checksum[:16], content=item.chunk.content, source_name=item.asset_name, page_number=item.chunk.page_number, section_title=item.chunk.section_title, score=round(vector_scores[id(item)], 4), asset_id=item.asset_id, asset_name=item.asset_name, vector_score=round(vector_scores[id(item)], 4), keyword_score=keyword_score, fusion_score=round((rrf(rank) + rrf(rank)), 4), rerank_score=round(vector_scores[id(item)], 4)))
+        for rank, candidate in enumerate(fused, start=1):
+            key = candidate.key
+            result.append(
+                RetrievalItem(
+                    id=f"E{rank}",
+                    chunk_id=key,
+                    content=candidate.item.chunk.content,
+                    source_name=candidate.item.asset_name,
+                    page_number=candidate.item.chunk.page_number,
+                    section_title=candidate.item.chunk.section_title,
+                    score=round(candidate.score, 6),
+                    asset_id=candidate.item.asset_id,
+                    asset_name=candidate.item.asset_name,
+                    vector_score=round(vector_scores[key], 6) if key in vector_scores else None,
+                    keyword_score=round(keyword_scores[key], 6) if key in keyword_scores else None,
+                    fusion_score=round(candidate.score, 6),
+                    rerank_score=round(candidate.score, 6),
+                )
+            )
         if use_reranker:
             result = await LexicalReranker().rerank(question, result)
-        return result
+        return result[:top_k]
 
 
 class KnowledgeIndexer:
-    def __init__(self, parser: Any, chunker: Any, embedding: EmbeddingProvider, store: Any, graph_store: Any | None = None, graph_extractor: Any | None = None):
+    def __init__(self, parser: Any, chunker: Any, embedding: EmbeddingProvider, store: Any, graph_store: Any | None = None, graph_extractor: Any | None = None, cache: Any | None = None):
         self.parser = parser
         self.chunker = chunker
         self.embedding = embedding
         self.store = store
         self.graph_store = graph_store
         self.graph_extractor = graph_extractor
+        self.cache = cache
 
     async def index_bytes(self, *, data: bytes, file_name: str, mime_type: str | None, workspace_id: int, project_id: int, asset_id: int | str, embedding: EmbeddingProvider | None = None, chunking: dict[str, Any] | None = None) -> dict[str, Any]:
         embedding = embedding or self.embedding
@@ -101,4 +185,16 @@ class KnowledgeIndexer:
                     nodes, edges = extracted
                 await self.graph_store.upsert(nodes, edges)
                 graph_entities += len(nodes)
-        return {"chunk_count": count, "parser_version": parsed.parser_version, "embedding_model": embedding.model_name, "embedding_dimension": embedding.dimension, "graph_entities": graph_entities, "chunks": chunks}
+        if self.cache is not None:
+            await self.cache.bump_version("retrieval", {"workspaceId": workspace_id, "projectId": project_id})
+        return {
+            "chunk_count": count,
+            "parser_version": parsed.parser_version,
+            "embedding_model": embedding.model_name,
+            "embedding_dimension": embedding.dimension,
+            "graph_entities": graph_entities,
+            "chunks": chunks,
+            "warnings": list(parsed.warnings),
+            "tools": list(parsed.tools),
+            "metadata": dict(parsed.metadata),
+        }

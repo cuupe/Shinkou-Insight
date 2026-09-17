@@ -9,6 +9,7 @@ import { useWorkspace } from "@/composables/useWorkspace";
 
 const { notify, workspaceId, projectId } = useWorkspace();
 const settingsProjectId = ref(-1);
+const hasProject = computed(() => settingsProjectId.value > 0);
 const config = ref<WebSearchConfig | null>(null);
 const loading = ref(true);
 const saving = ref(false);
@@ -24,7 +25,7 @@ const form = reactive({
 });
 
 const configured = computed(() => Boolean(
-  config.value?.hasCredential && config.value.provider === form.provider,
+  config.value?.provider === form.provider && (config.value.hasCredential || !requiresApiKey.value),
 ));
 const requiresApiKey = computed(() => form.provider === "brave");
 const statusLabel = computed(() => {
@@ -69,6 +70,10 @@ async function load() {
 }
 
 async function save() {
+  if (!hasProject.value) {
+    error.value = "请先创建项目后配置联网搜索";
+    return;
+  }
   if (!form.baseUrl.trim() || !/^https?:\/\//.test(form.baseUrl.trim())) {
     error.value = "请输入以 http:// 或 https:// 开头的搜索地址";
     return;
@@ -96,6 +101,10 @@ async function save() {
 }
 
 async function testConnection() {
+  if (!hasProject.value) {
+    error.value = "请先创建项目后测试联网搜索";
+    return;
+  }
   testing.value = true;
   testMessage.value = "";
   error.value = "";
@@ -129,20 +138,23 @@ onMounted(load);
 
       <div v-if="loading" class="web-search-loading"><RefreshCw :size="16" class="spin" />正在读取联网搜索配置…</div>
       <template v-else>
+        <p v-if="!hasProject" class="web-search-info">当前工作区还没有项目；联网搜索配置按项目保存，请先创建项目。</p>
+        <fieldset class="web-search-form-fields" :disabled="!hasProject">
         <div class="web-search-card">
-          <div class="web-search-card-title"><span class="web-search-icon"><Globe2 :size="18" /></span><div><strong>联网搜索适配器</strong><small>{{ form.provider === "brave" ? "Brave Search API" : "DuckDuckGo 公共搜索" }}</small></div></div>
+          <div class="web-search-card-title"><span class="web-search-icon"><Globe2 :size="18" /></span><div><strong>联网搜索适配器</strong><small>{{ form.provider === "brave" ? "Brave Search API" : form.provider === "multi" ? "通用网页 + 论文 + 技术站点" : "DuckDuckGo 公共搜索" }}</small></div></div>
           <div class="web-search-fields">
-            <label class="field-label"><span>搜索提供商</span><select v-model="form.provider" @change="changeProvider"><option value="duckduckgo">DuckDuckGo（无需 API Key）</option><option value="brave">Brave Search（需要 API Key）</option></select></label>
+            <label class="field-label"><span>搜索提供商</span><select v-model="form.provider" @change="changeProvider"><option value="multi">多源混合搜索（推荐）</option><option value="duckduckgo">DuckDuckGo（无需 API Key）</option><option value="brave">Brave Search（需要 API Key）</option></select></label>
             <label class="field-label"><span>搜索地址</span><input v-model="form.baseUrl" type="url" placeholder="https://api.search.brave.com/res/v1/web/search" /></label>
             <label class="field-label"><span>搜索语言</span><input v-model="form.language" type="text" placeholder="zh-hans" /></label>
             <label v-if="requiresApiKey" class="field-label field-wide"><span>API Key <small>{{ configured ? "已保存；留空表示保持不变" : "必填" }}</small></span><input v-model="form.apiKey" type="password" autocomplete="off" placeholder="输入 Brave Search API Key" /></label>
           </div>
           <label class="web-search-toggle"><input v-model="form.enabled" type="checkbox" /><span class="fake-checkbox"><CheckCircle2 :size="14" /></span><span><strong>允许聊天使用联网搜索</strong><small>关闭后，聊天仍可使用知识库和历史记录，但不会发起外部搜索。</small></span></label>
         </div>
+        </fieldset>
 
         <div class="web-search-actions">
-          <button class="button button-primary" type="button" :disabled="saving" @click="save"><Save :size="15" />{{ saving ? "保存中…" : "保存配置" }}</button>
-          <button class="button button-secondary" type="button" :disabled="testing || !configured || !form.enabled" @click="testConnection"><Wifi :size="15" />{{ testing ? "测试中…" : "测试联网搜索" }}</button>
+          <button class="button button-primary" type="button" :disabled="saving || !hasProject" @click="save"><Save :size="15" />{{ saving ? "保存中…" : "保存配置" }}</button>
+          <button class="button button-secondary" type="button" :disabled="testing || !configured || !form.enabled || !hasProject" @click="testConnection"><Wifi :size="15" />{{ testing ? "测试中…" : "测试联网搜索" }}</button>
           <span v-if="testMessage" class="web-search-success">{{ testMessage }}</span>
         </div>
         <p v-if="error" class="web-search-error">{{ error }}</p>
@@ -162,11 +174,13 @@ onMounted(load);
 .web-search-heading, .web-search-boundary, .web-search-card-title, .web-search-actions, .web-search-toggle { display: flex; align-items: center; }
 .web-search-heading { justify-content: space-between; gap: 1rem; }
 .web-search-heading p { margin-bottom: 1.1rem !important; }
+.web-search-info { max-width: 52rem; margin: 0 0 .75rem; padding: .65rem .8rem; border: 1px solid color-mix(in oklab, var(--teal) 24%, var(--workspace-border)); border-radius: .5rem; color: var(--workspace-muted); background: color-mix(in oklab, var(--teal) 6%, var(--surface)); font-size: .78rem; }
+.web-search-form-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
 .web-search-card { max-width: 52rem; padding: 1rem; border: 1px solid var(--workspace-border); border-radius: .75rem; background: var(--surface-raised); color: var(--workspace-text); }
 .web-search-card-title { gap: .65rem; margin-bottom: 1rem; }
 .web-search-card-title strong, .web-search-card-title small { display: block; }
 .web-search-card-title strong { color: var(--workspace-text); font-size: .85rem; }
-.web-search-card-title small { margin-top: .22rem; color: var(--workspace-muted); font-size: .68rem; }
+.web-search-card-title small { margin-top: .22rem; color: var(--workspace-muted); font-size: 0.8125rem; }
 .web-search-icon, .web-search-boundary-icon { display: grid; place-items: center; color: var(--teal-dark); background: color-mix(in oklab, var(--teal) 12%, var(--surface)); border-radius: .55rem; }
 .web-search-icon { width: 2.25rem; height: 2.25rem; }
 .web-search-fields { display: grid; grid-template-columns: minmax(0, 1fr) 12rem; gap: .75rem; }
@@ -180,10 +194,10 @@ onMounted(load);
 .fake-checkbox { display: grid; place-items: center; width: 1.2rem; height: 1.2rem; color: transparent; border: 1px solid var(--workspace-border); border-radius: .32rem; }
 .web-search-toggle input:checked + .fake-checkbox { color: white; background: var(--teal-dark); border-color: var(--teal-dark); }
 .web-search-toggle strong, .web-search-toggle small { display: block; }
-.web-search-toggle strong { color: var(--workspace-text); font-size: .75rem; }
-.web-search-toggle small { margin-top: .22rem; color: var(--workspace-muted); font-size: .68rem; }
+.web-search-toggle strong { color: var(--workspace-text); font-size: 0.75rem; }
+.web-search-toggle small { margin-top: .22rem; color: var(--workspace-muted); font-size: 0.8125rem; }
 .web-search-actions { gap: .65rem; max-width: 52rem; margin-top: 1rem; }
-.web-search-success { color: var(--teal-dark); font-size: .72rem; }
+.web-search-success { color: var(--teal-dark); font-size: 0.8125rem; }
 .web-search-error { color: var(--red) !important; margin-top: .75rem !important; }
 .web-search-loading { display: flex; align-items: center; gap: .5rem; min-height: 9rem; color: var(--workspace-muted); font-size: .78rem; }
 .spin { animation: spin 1s linear infinite; }

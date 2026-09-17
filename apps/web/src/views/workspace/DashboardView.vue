@@ -13,6 +13,7 @@ import TokenUsageChart from "@/components/common/TokenUsageChart.vue";
 const {
   router,
   routeTo,
+  workspaceId,
   stats,
   recentRuns,
   reports,
@@ -23,6 +24,18 @@ const {
   iconForStat,
   statusClass,
 } = useWorkspace();
+
+function openReport(report: { id: string; projectId?: number }) {
+  if (report.projectId) {
+    router.push({
+      name: "project-reports",
+      params: { workspaceId: workspaceId.value, projectId: report.projectId },
+      query: { reportId: report.id },
+    });
+    return;
+  }
+  router.push(routeTo("project-reports"));
+}
 const trendPoints = computed(() => {
   const points = statistics.value?.dailyTrend || [];
   const max = Math.max(
@@ -219,6 +232,7 @@ function focusIcon(icon: string) {
           <p>跨项目的 Agent 调研活动</p>
         </div>
         <button
+          v-if="projects.length"
           class="text-button"
           type="button"
           @click="router.push(routeTo('project-runs'))"
@@ -257,6 +271,7 @@ function focusIcon(icon: string) {
           <p>团队最近沉淀的决策依据</p>
         </div>
         <button
+          v-if="projects.length"
           class="text-button"
           type="button"
           @click="router.push(routeTo('project-reports'))"
@@ -271,7 +286,7 @@ function focusIcon(icon: string) {
           class="report-item"
           type="button"
           :aria-label="`打开报告：${report.title}`"
-          @click="router.push(routeTo('project-reports'))"
+          @click="openReport(report)"
         >
           <span class="report-file"><FileText :size="17" /></span
           ><span
@@ -341,7 +356,7 @@ function focusIcon(icon: string) {
   align-items: center;
   justify-content: space-between;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .stat-icon {
   width: 1.875rem;
@@ -380,7 +395,7 @@ function focusIcon(icon: string) {
   display: flex;
   align-items: center;
   gap: 0.25rem;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   color: var(--workspace-muted);
 }
 .trend-up {
@@ -413,7 +428,7 @@ function focusIcon(icon: string) {
 }
 .chart-empty span {
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   line-height: 1.6;
 }
 .dashboard-empty {
@@ -430,7 +445,7 @@ function focusIcon(icon: string) {
 }
 .dashboard-empty span {
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .chart-panel .panel-heading {
   padding: 1.125rem 1.25rem 0.75rem;
@@ -438,7 +453,7 @@ function focusIcon(icon: string) {
 .chart-legend {
   gap: 1rem;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .chart-panel .chart-legend {
   padding: 0 1.25rem;
@@ -476,7 +491,7 @@ function focusIcon(icon: string) {
   justify-content: space-between;
   padding-bottom: 1.5625rem;
   color: var(--workspace-chart-axis);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .chart-area {
   min-width: 0;
@@ -508,7 +523,7 @@ function focusIcon(icon: string) {
   display: flex;
   justify-content: space-between;
   color: var(--workspace-chart-axis);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .chart-summary {
   display: flex;
@@ -527,7 +542,7 @@ function focusIcon(icon: string) {
 }
 .chart-summary span {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .teal-text {
   color: var(--teal-dark) !important;
@@ -551,7 +566,7 @@ function focusIcon(icon: string) {
   margin: 0;
   padding: 0.75rem 0;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .focus-item {
   display: flex;
@@ -564,7 +579,7 @@ function focusIcon(icon: string) {
   border-bottom: 0;
 }
 .focus-number {
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   color: var(--workspace-muted);
   font-weight: 700;
   align-self: flex-start;
@@ -577,12 +592,12 @@ function focusIcon(icon: string) {
 .focus-item strong {
   display: block;
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   font-weight: 650;
 }
 .focus-item p {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   margin: 0.3125rem 0 0;
   white-space: nowrap;
   overflow: hidden;
@@ -630,7 +645,7 @@ function focusIcon(icon: string) {
   min-height: 2.25rem;
   border-bottom: 0.0625rem solid var(--workspace-divider);
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .workspace-token-row:last-child {
   border-bottom: 0;
@@ -659,7 +674,7 @@ function focusIcon(icon: string) {
 .workspace-token-header {
   min-height: 1.75rem;
   color: var(--workspace-subtle);
-  font-size: 0.4375rem;
+  font-size: 0.75rem;
 }
 .workspace-token-header strong {
   color: var(--workspace-subtle);
@@ -694,7 +709,7 @@ function focusIcon(icon: string) {
   min-height: 3.6875rem;
   padding: 0 1.5rem;
   border-top: 0.0625rem solid var(--workspace-divider);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .table-panel .table-row {
   min-width: 40.625rem;
@@ -703,7 +718,7 @@ function focusIcon(icon: string) {
   min-height: 2.25rem;
   border-top: 0;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   background: var(--surface-raised);
 }
 .run-title,
@@ -724,7 +739,7 @@ function focusIcon(icon: string) {
 .asset-name-cell strong {
   display: block;
   color: var(--workspace-text);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -734,7 +749,7 @@ function focusIcon(icon: string) {
 .asset-name-cell small {
   display: block;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   margin-top: 0.25rem;
 }
 .run-icon,
@@ -751,14 +766,14 @@ function focusIcon(icon: string) {
 }
 .muted-cell {
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .status-badge {
   display: inline-flex;
   align-items: center;
   gap: 0.3125rem;
   white-space: nowrap;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .status-badge i {
   display: inline-block;
@@ -837,19 +852,19 @@ function focusIcon(icon: string) {
 }
 .report-item strong {
   color: var(--workspace-text);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .report-item small {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   margin-top: 0.25rem;
 }
 .report-item em {
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   font-style: normal;
   margin-top: 0.375rem;
 }

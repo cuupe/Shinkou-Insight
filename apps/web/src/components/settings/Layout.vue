@@ -154,7 +154,7 @@ defineProps<{ eyebrow: string; title: string; subtitle: string }>();
 }
 .config-row small {
   color: #9aa7aa;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   margin-top: 0.25rem;
 }
 .config-icon {
@@ -170,15 +170,15 @@ defineProps<{ eyebrow: string; title: string; subtitle: string }>();
 .prompt-row code {
   flex: 1;
   color: #4e5ece;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .prompt-row span {
   color: #63777d;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .prompt-row small {
   color: #a0adaf;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 
 .project-hero {
@@ -206,7 +206,7 @@ defineProps<{ eyebrow: string; title: string; subtitle: string }>();
   flex-wrap: wrap;
   gap: 1rem;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .hero-meta span {
   display: inline-flex;
@@ -244,11 +244,11 @@ defineProps<{ eyebrow: string; title: string; subtitle: string }>();
 }
 .quick-actions strong {
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .quick-actions small {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   margin-top: 0.25rem;
 }
 .quick-icon {
@@ -290,7 +290,7 @@ defineProps<{ eyebrow: string; title: string; subtitle: string }>();
 .settings-layout .tool-copy small,
 .settings-layout .prompt-copy small {
   overflow: visible;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   line-height: 1.45;
   text-overflow: clip;
   white-space: normal;
@@ -298,7 +298,7 @@ defineProps<{ eyebrow: string; title: string; subtitle: string }>();
 
 .settings-layout .permission-note,
 .settings-layout .policy-actions > span {
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 

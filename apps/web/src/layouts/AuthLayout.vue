@@ -252,7 +252,7 @@ const authNotice = computed(() => {
 
   .image-captcha-hint {
     color: var(--muted-foreground);
-    font-size: 0.65rem;
+    font-size: 0.8125rem;
   }
 
   .image-captcha-row {
@@ -285,13 +285,13 @@ const authNotice = computed(() => {
 
   .captcha-placeholder {
     color: var(--muted-foreground);
-    font-size: 0.65rem;
+    font-size: 0.8125rem;
   }
 
   .image-captcha-box small {
     display: block;
     color: color-mix(in oklab, var(--muted-foreground) 75%, transparent);
-    font-size: 0.55rem;
+    font-size: 0.75rem;
     margin-top: 0.1rem;
   }
 

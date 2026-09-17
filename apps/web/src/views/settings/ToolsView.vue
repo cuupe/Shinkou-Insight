@@ -26,7 +26,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useWorkspace } from "@/composables/useWorkspace";
-import { settingsApi, type ProjectToolConfig } from "@/api/settings";
+import {
+  settingsApi,
+  type LocalToolsStatus,
+  type LocalToolSpec,
+  type ProjectToolConfig,
+} from "@/api/settings";
 import { projectApi } from "@/api/projects";
 import { workspaceApi } from "@/api/workspace";
 
@@ -65,6 +70,7 @@ type ToolRecord = {
 
 const { notify, workspaceId, projectId } = useWorkspace();
 const settingsProjectId = ref(-1);
+const hasProject = computed(() => settingsProjectId.value > 0);
 const toolIcons = { database: Database, globe: Globe2, list: ListChecks };
 const defaultOperations = (): Record<OperationKey, boolean> => ({
   read: true,
@@ -85,7 +91,6 @@ const tools = ref<ToolRecord[]>([]);
 const connectorOpen = ref(false);
 const selectedTool = ref<ToolRecord | null>(null);
 const editingExisting = ref(false);
-const testingTool = ref("");
 const connectorError = ref("");
 const defaultAgentPolicy: AgentPolicy = {
   autonomy: "受控模式",
@@ -95,6 +100,13 @@ const defaultAgentPolicy: AgentPolicy = {
 };
 const agentPolicy = reactive<AgentPolicy>({ ...defaultAgentPolicy });
 const workspacePreferences = reactive<Record<string, unknown>>({});
+const localTools = ref<LocalToolSpec[]>([]);
+const localToolFiles = ref<LocalToolsStatus["files"] | null>(null);
+const localToolsLoading = ref(false);
+const localToolsReloading = ref(false);
+const localToolsError = ref("");
+const localToolEnabled = reactive<Record<string, boolean>>({});
+const localToolPreferences = reactive<Record<string, boolean>>({});
 const connectorForm = reactive({
   name: "",
   description: "",
@@ -120,6 +132,9 @@ const autonomousCount = computed(
   () =>
     tools.value.filter((tool) => tool.enabled && tool.allowAutonomous).length,
 );
+const localEnabledCount = computed(
+  () => localTools.value.filter((tool) => localToolEnabled[tool.name] !== false).length,
+);
 
 function applyAgentPolicy(value: unknown) {
   const stored = value && typeof value === "object" ? value as Partial<AgentPolicy> : {};
@@ -142,6 +157,91 @@ function applyAgentPolicy(value: unknown) {
       : defaultAgentPolicy.fallback;
 }
 
+function applyLocalToolPreferences(value: unknown) {
+  for (const name of Object.keys(localToolPreferences)) delete localToolPreferences[name];
+  if (!value || typeof value !== "object") return;
+  for (const [name, enabled] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof enabled === "boolean") localToolPreferences[name] = enabled;
+  }
+}
+
+function applyLocalTools(status: LocalToolsStatus) {
+  localTools.value = status.tools || [];
+  localToolFiles.value = status.files || null;
+  for (const name of Object.keys(localToolEnabled)) {
+    if (!localTools.value.some((tool) => tool.name === name)) delete localToolEnabled[name];
+  }
+  for (const tool of localTools.value) {
+    localToolEnabled[tool.name] = localToolPreferences[tool.name] !== false;
+  }
+}
+
+async function loadLocalTools() {
+  if (settingsProjectId.value <= 0) return;
+  localToolsLoading.value = true;
+  localToolsError.value = "";
+  try {
+    applyLocalTools(await settingsApi.localTools.get(workspaceId.value, settingsProjectId.value));
+  } catch (error) {
+    localToolsError.value = error instanceof Error ? error.message : "本地工具系统加载失败";
+  } finally {
+    localToolsLoading.value = false;
+  }
+}
+
+async function reloadLocalTools() {
+  if (settingsProjectId.value <= 0) return;
+  localToolsReloading.value = true;
+  localToolsError.value = "";
+  try {
+    applyLocalTools(await settingsApi.localTools.reload(workspaceId.value, settingsProjectId.value));
+    notify("本地工具已重载");
+  } catch (error) {
+    localToolsError.value = error instanceof Error ? error.message : "本地工具重载失败";
+  } finally {
+    localToolsReloading.value = false;
+  }
+}
+
+function toggleLocalTool(name: string, event: Event) {
+  const enabled = (event.target as HTMLInputElement).checked;
+  localToolEnabled[name] = enabled;
+  localToolPreferences[name] = enabled;
+}
+
+async function saveLocalTools() {
+  const preferences = Object.fromEntries(
+    localTools.value.map((tool) => [tool.name, localToolEnabled[tool.name] !== false]),
+  );
+  try {
+    const remote = await workspaceApi.updatePreferences(workspaceId.value, {
+      ...workspacePreferences,
+      localTools: preferences,
+    });
+    if (remote.preferences) {
+      try {
+        Object.assign(workspacePreferences, JSON.parse(remote.preferences));
+        applyLocalToolPreferences((JSON.parse(remote.preferences) as Record<string, unknown>).localTools);
+      } catch {
+        // Keep the values already shown when the server returns malformed data.
+      }
+    }
+    notify("本地工具启用范围已保存");
+  } catch (error) {
+    notify(error instanceof Error ? error.message : "本地工具设置保存失败");
+  }
+}
+
+function localToolSourceLabel(source: string) {
+  if (source === "custom") return "自定义 Python 工具";
+  if (source === "mcp") return "MCP 工具";
+  return "内置工具";
+}
+
+function readyLabel(value: boolean) {
+  return value ? "就绪" : "缺失";
+}
+
 onMounted(async () => {
   try {
     const remoteWorkspace = await workspaceApi.detail(workspaceId.value);
@@ -151,6 +251,7 @@ onMounted(async () => {
         : {};
       Object.assign(workspacePreferences, preferences);
       applyAgentPolicy(preferences.agentPolicy);
+      applyLocalToolPreferences(preferences.localTools);
     } catch {
       // Malformed legacy preferences are treated as unavailable data.
     }
@@ -160,6 +261,7 @@ onMounted(async () => {
         : (await projectApi.list(workspaceId.value))[0]?.id || -1;
     settingsProjectId.value = resolvedProjectId;
     if (resolvedProjectId <= 0) return;
+    await loadLocalTools();
     const remoteTools = await settingsApi.tools.list(
       workspaceId.value,
       resolvedProjectId,
@@ -279,6 +381,10 @@ function savePolicy() {
 }
 
 async function saveConnector() {
+  if (!hasProject.value) {
+    connectorError.value = "请先创建项目后配置连接器";
+    return;
+  }
   if (!connectorForm.name.trim() || !connectorForm.description.trim()) {
     connectorError.value = "请填写连接器名称和用途说明";
     return;
@@ -426,6 +532,10 @@ async function disconnectTool() {
 }
 
 async function removeTool(tool: ToolRecord) {
+  if (!hasProject.value) {
+    notify("请先创建项目");
+    return;
+  }
   if (!tool.id) {
     tools.value = tools.value.filter((item) => item !== tool);
     return;
@@ -444,9 +554,6 @@ async function removeTool(tool: ToolRecord) {
   notify(`${tool.name} 已删除`);
 }
 
-function testTool(toolName: string) {
-  notify(`${toolName} 暂无后端连接测试接口，未修改连接状态`);
-}
 </script>
 
 <template>
@@ -524,6 +631,70 @@ function testTool(toolName: string) {
       </div>
     </div>
 
+    <div class="settings-section local-tools-section">
+      <div class="section-intro">
+        <div>
+          <h2>本地工具系统</h2>
+          <p>
+            这里显示 Python AI 服务当前注册的内置工具和自定义工具。可按工作区手动启用或停用；新增自定义工具仍需放入 AI 服务的受信任目录。
+          </p>
+        </div>
+        <div class="section-actions">
+          <span class="permission-note"><Database :size="13" />{{ localEnabledCount }}/{{ localTools.length }} 个工具启用</span>
+          <button class="button button-secondary button-sm" type="button" :disabled="localToolsLoading" @click="loadLocalTools">
+            <RefreshCw :size="14" :class="{ spinning: localToolsLoading }" />刷新状态
+          </button>
+          <button class="button button-secondary button-sm" type="button" :disabled="localToolsReloading" @click="reloadLocalTools">
+            <RefreshCw :size="14" :class="{ spinning: localToolsReloading }" />{{ localToolsReloading ? "重载中…" : "重载自定义工具" }}
+          </button>
+        </div>
+      </div>
+      <p v-if="localToolsError" class="local-tools-error" role="alert">{{ localToolsError }}</p>
+      <div v-if="!hasProject" class="local-tools-empty">请先创建项目后查看项目可用的 Python 工具。</div>
+      <div v-else-if="localToolsLoading && !localTools.length" class="local-tools-empty">正在读取 Python 工具注册表…</div>
+      <div v-else-if="localTools.length" class="local-tool-grid">
+        <article v-for="tool in localTools" :key="tool.name" class="local-tool-card">
+          <div class="local-tool-card-heading">
+            <span class="config-icon"><Settings2 :size="16" /></span>
+            <div>
+              <strong>{{ tool.name }}</strong>
+              <small>{{ localToolSourceLabel(tool.source) }} · {{ tool.permission === "WRITE" ? "写入工具" : "只读工具" }}</small>
+            </div>
+            <label class="local-tool-toggle">
+              <input
+                type="checkbox"
+                :checked="localToolEnabled[tool.name] !== false"
+                @change="toggleLocalTool(tool.name, $event)"
+              />
+              <span>启用</span>
+            </label>
+          </div>
+          <p>{{ tool.description || "暂无描述" }}</p>
+          <div class="local-tool-meta">
+            <span>超时 {{ tool.timeoutSeconds }} 秒</span>
+            <span>并发 {{ tool.maxConcurrency }}</span>
+            <span v-if="tool.requiresConfirmation">需要确认</span>
+          </div>
+        </article>
+      </div>
+      <div v-else class="local-tools-empty">Python 服务没有返回可用工具，请检查 AI 服务是否已启动。</div>
+      <div v-if="localToolFiles" class="local-file-tools">
+        <div>
+          <strong>本地文件分析工具</strong>
+          <small>附件解析使用本机工具链，不会把原始文件直接交给模型。</small>
+        </div>
+        <div class="local-file-status">
+          <span :class="{ ready: localToolFiles.ocr.tesseract && localToolFiles.ocr.poppler }">OCR {{ readyLabel(localToolFiles.ocr.tesseract && localToolFiles.ocr.poppler) }}</span>
+          <span :class="{ ready: localToolFiles.media.ffmpeg && localToolFiles.media.ffprobe }">媒体 {{ readyLabel(localToolFiles.media.ffmpeg && localToolFiles.media.ffprobe) }}</span>
+          <span :class="{ ready: localToolFiles.office.libreoffice }">Office {{ readyLabel(localToolFiles.office.libreoffice) }}</span>
+        </div>
+      </div>
+      <div v-if="localTools.length" class="local-tools-actions">
+        <span><ShieldCheck :size="13" />停用后会在下一次 Agent 运行中生效；不会删除本地 Python 文件。</span>
+        <button class="button button-primary button-sm" type="button" @click="saveLocalTools">保存本地工具设置</button>
+      </div>
+    </div>
+
     <div class="settings-section">
       <div class="section-intro">
         <div>
@@ -534,7 +705,9 @@ function testTool(toolName: string) {
         </div>
         <div class="section-actions">
           <span class="permission-note"><KeyRound :size="13" />密钥已加密</span
+          ><span v-if="!hasProject" class="permission-note">请先创建项目</span
           ><button
+            v-if="hasProject"
             class="button button-secondary button-sm"
             type="button"
             @click="openNewConnector"
@@ -572,18 +745,6 @@ function testTool(toolName: string) {
           >
             {{ tool.enabled ? "管理配置" : "连接配置" }}</button
           ><button
-            class="icon-button small"
-            type="button"
-            :aria-label="`测试${tool.name}`"
-            :disabled="testingTool === tool.name"
-            @click="testTool(tool.name)"
-          >
-            <RefreshCw
-              :size="14"
-              :class="{ spinning: testingTool === tool.name }"
-            />
-          </button
-          ><button
             class="icon-button small danger-icon-button"
             type="button"
             :aria-label="`删除${tool.name}`"
@@ -595,7 +756,7 @@ function testTool(toolName: string) {
         <div v-if="!tools.length" class="empty-state">
           <PlugZap :size="18" />
           <strong>暂无连接器配置</strong>
-          <span>添加连接器后，这里会显示后端保存的接入和权限配置。</span>
+          <span>{{ hasProject ? "添加连接器后，这里会显示后端保存的接入和权限配置。" : "创建项目后，才能按项目配置连接器。" }}</span>
         </div>
       </div>
     </div>
@@ -904,14 +1065,14 @@ function testTool(toolName: string) {
 .overview-copy p {
   margin: 0.3125rem 0 0;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .permission-note {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .policy-grid {
   display: grid;
@@ -932,12 +1093,12 @@ function testTool(toolName: string) {
 }
 .policy-toggle strong {
   color: var(--workspace-text);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .policy-toggle small,
 .field-label small {
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   font-weight: 400;
   line-height: 1.35;
 }
@@ -984,7 +1145,7 @@ function testTool(toolName: string) {
   gap: 0.25rem;
   flex: 1;
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .tool-list {
   max-width: none;
@@ -1002,12 +1163,12 @@ function testTool(toolName: string) {
 }
 .tool-copy strong {
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .tool-copy small {
   margin-top: 0.25rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1019,7 +1180,7 @@ function testTool(toolName: string) {
   gap: 0.25rem;
   min-width: 4.5rem;
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .tool-policy.autonomous {
   color: var(--teal-dark);
@@ -1061,12 +1222,12 @@ function testTool(toolName: string) {
 }
 .boundary-card strong {
   color: var(--workspace-text);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .boundary-card p {
   margin: 0.25rem 0 0;
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   line-height: 1.4;
 }
 .connector-dialog {
@@ -1097,11 +1258,11 @@ function testTool(toolName: string) {
 }
 .form-section-heading strong {
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .form-section-heading small {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .form-section-icon {
   display: grid;
@@ -1128,7 +1289,7 @@ function testTool(toolName: string) {
   border-radius: 0.4375rem;
   color: #a14d4d;
   background: #fff5f5;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .operation-list {
   display: flex;
@@ -1139,7 +1300,7 @@ function testTool(toolName: string) {
   border: 0.0625rem solid var(--workspace-border);
   border-radius: 0.4375rem;
   background: var(--surface-soft);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   font-weight: 400;
 }
 .operation-list label {
@@ -1157,13 +1318,141 @@ function testTool(toolName: string) {
   gap: 0.25rem;
   margin-right: auto;
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .footer-spacer {
   flex: 1;
 }
 .spinning {
   animation: spin 800ms linear infinite;
+}
+.local-tools-section .section-intro {
+  align-items: flex-start;
+}
+.local-tools-section .section-actions {
+  align-items: center;
+  justify-content: flex-end;
+}
+.local-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+.local-tool-card {
+  min-width: 0;
+  padding: 0.875rem;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.625rem;
+  background: var(--surface-soft);
+}
+.local-tool-card-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5625rem;
+}
+.local-tool-card-heading > div {
+  min-width: 0;
+  flex: 1;
+}
+.local-tool-card strong,
+.local-tool-card small,
+.local-tool-card p {
+  display: block;
+}
+.local-tool-card strong {
+  color: var(--workspace-text);
+  font-size: 0.8125rem;
+}
+.local-tool-card small {
+  margin-top: 0.2rem;
+  color: var(--workspace-muted);
+  font-size: 0.7rem;
+}
+.local-tool-card p {
+  margin: 0.75rem 0 0;
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+.local-tool-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: 0 0 auto;
+  color: var(--teal-dark);
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+.local-tool-toggle input {
+  accent-color: var(--teal);
+}
+.local-tool-meta,
+.local-file-status,
+.local-tools-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.75rem;
+}
+.local-tool-meta {
+  margin-top: 0.7rem;
+  color: var(--workspace-subtle);
+  font-size: 0.68rem;
+}
+.local-tools-empty {
+  padding: 1rem;
+  border: 0.0625rem dashed var(--workspace-border);
+  border-radius: 0.5rem;
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+}
+.local-tools-error {
+  padding: 0.625rem 0.75rem;
+  border: 0.0625rem solid #f0caca;
+  border-radius: 0.4375rem;
+  color: #a14d4d !important;
+  background: #fff5f5;
+  font-size: 0.75rem;
+}
+.local-file-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.875rem;
+  padding-top: 0.875rem;
+  border-top: 0.0625rem solid var(--workspace-divider);
+}
+.local-file-tools strong,
+.local-file-tools small {
+  display: block;
+}
+.local-file-tools strong {
+  color: var(--workspace-text);
+  font-size: 0.75rem;
+}
+.local-file-tools small {
+  margin-top: 0.25rem;
+  color: var(--workspace-muted);
+  font-size: 0.7rem;
+}
+.local-file-status span {
+  color: #a14d4d;
+  font-size: 0.7rem;
+}
+.local-file-status span.ready {
+  color: var(--teal-dark);
+}
+.local-tools-actions {
+  justify-content: space-between;
+  margin-top: 0.875rem;
+  color: var(--workspace-muted);
+  font-size: 0.7rem;
+}
+.local-tools-actions > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
 }
 @keyframes spin {
   to {
@@ -1206,6 +1495,14 @@ function testTool(toolName: string) {
   }
   .boundary-grid {
     grid-template-columns: 1fr;
+  }
+  .local-tool-grid {
+    grid-template-columns: 1fr;
+  }
+  .local-file-tools,
+  .local-tools-actions {
+    align-items: flex-start;
+    flex-direction: column;
   }
   .connector-form-section {
     padding: 0.8125rem;

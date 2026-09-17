@@ -69,6 +69,7 @@ type ActionItemRow = {
 };
 type RecentRunRow = {
   id: string;
+  projectId?: number;
   project: string;
   title: string;
   status: string;
@@ -79,6 +80,7 @@ type RecentRunRow = {
 };
 type ReportRow = {
   id: string;
+  projectId?: number;
   title: string;
   project: string;
   version: string;
@@ -127,7 +129,6 @@ const topK = ref(5);
 const rerank = ref(true);
 const allowWeb = ref(false);
 const outputLanguage = ref("zh-CN");
-const copied = ref(false);
 let toastTimer: number | undefined;
 
 const workspaceNav = [
@@ -212,28 +213,19 @@ function reportDisplayFields(report: Record<string, unknown>) {
 }
 
 /* 后端 ResearchRun → 页面展示结构 */
-function mapRemoteRun(run: ResearchRun, projectName = "") {
+function mapRemoteRun(run: ResearchRun, projectName = "", owningProjectId?: number): RecentRunRow {
   const status = String(run.status || "PENDING").toLowerCase();
-  const mapped = {
+  return {
     id: String(run.id ?? "—"),
+    projectId: owningProjectId,
     project: projectName,
     title: String(run.title || run.goal || "未命名运行"),
     status,
     statusLabel: statusLabel(status),
     time: String(run.updatedAt || run.createdAt || "—"),
-    duration: String(run.duration || "—"),
-    tokens: String(run.tokens || "—"),
-    /*
-      duration: Number.isFinite(durationSeconds) && durationSeconds >= 0
-        ? `${Math.floor(durationSeconds / 60)}m ${durationSeconds % 60}s`
-        : "暂无",
-      tokens: Number.isFinite(tokenCount) ? tokenCount.toLocaleString() : "暂无",
-    },
+    duration: runDisplayFields(run).duration,
+    tokens: runDisplayFields(run).tokens,
   };
-}
-
-    */};
-  return Object.assign(mapped, runDisplayFields(run));
 }
 
 function mapRemoteActionItem(item: Record<string, unknown>): ActionItemRow {
@@ -257,32 +249,18 @@ function mapRemoteActionItem(item: Record<string, unknown>): ActionItemRow {
   };
 }
 
-function mapRemoteReport(report: Record<string, unknown>, projectName = ""): ReportRow {
+function mapRemoteReport(report: Record<string, unknown>, projectName = "", owningProjectId?: number): ReportRow {
   const status = String(report.status || "DRAFT").toUpperCase();
-  const mapped = {
+  return {
     id: String(report.id ?? "—"),
+    projectId: owningProjectId,
     title: String(report.title || "未命名报告"),
     project: projectName,
-    version: report.versionNo ? `v${String(report.versionNo)}` : "—",
     updated: String(report.updatedAt || report.createdAt || "—"),
     status: status === "PUBLISHED" ? "已发布" : "草稿",
     citations: report.citations == null ? null : Number(report.citations),
-    lead: "",
-    summary: String(report.markdownContent ?? report.content ?? ""),
-    recommendation: "",
-    recommendationDetail: "",
-    /*
-      version: report.versionNo != null ? `v${String(report.versionNo)}` : "暂无",
-      lead: String(report.lead || ""),
-      summary: String(report.summary ?? report.markdownContent ?? report.content ?? ""),
-      recommendation: String(report.recommendation || ""),
-      recommendationDetail: String(report.recommendationDetail || ""),
-    },
+    ...reportDisplayFields(report),
   };
-}
-
-    */};
-  return Object.assign(mapped, reportDisplayFields(report));
 }
 
 function mapRemoteEvaluationCase(item: Record<string, unknown>): EvaluationCaseRow {
@@ -458,10 +436,10 @@ export function useWorkspace() {
         ({ project }) => project.id === projectId.value,
       );
       const dashboardRuns = projectData.flatMap(({ project, runs }) =>
-        runs.map((run) => mapRemoteRun(run, project.name)),
+        runs.map((run) => mapRemoteRun(run, project.name, project.id)),
       );
       const dashboardReports = projectData.flatMap(({ project, reports: projectReports }) =>
-        projectReports.map((report) => mapRemoteReport(report, project.name)),
+        projectReports.map((report) => mapRemoteReport(report, project.name, project.id)),
       );
       const selectedAssets = currentProjectData?.assets || [];
       const selectedActions = currentProjectData?.actions || [];
@@ -478,7 +456,7 @@ export function useWorkspace() {
         0,
         recentRuns.length,
         ...(projectId.value > 0
-          ? selectedRuns.map((run) => mapRemoteRun(run, currentProjectData?.project.name))
+          ? selectedRuns.map((run) => mapRemoteRun(run, currentProjectData?.project.name, projectId.value))
           : dashboardRuns),
       );
       reports.splice(
@@ -486,7 +464,7 @@ export function useWorkspace() {
         reports.length,
         ...(projectId.value > 0
           ? selectedReports.map((report) =>
-              mapRemoteReport(report, currentProjectData?.project.name),
+              mapRemoteReport(report, currentProjectData?.project.name, projectId.value),
             )
           : dashboardReports),
       );
@@ -521,7 +499,10 @@ export function useWorkspace() {
           name,
           params: {
             workspaceId: workspaceId.value,
-            projectId: projectId.value,
+            projectId:
+              projectId.value > 0
+                ? projectId.value
+                : (selectedProject.value?.id ?? -1),
           },
         }
       : { name, params: { workspaceId: workspaceId.value } };
@@ -574,13 +555,6 @@ export function useWorkspace() {
         error instanceof Error ? error.message : "索引重建失败，请再次重试";
       notify(`「${name}」重新索引失败`);
     }
-  }
-  function copyEvidence() {
-    copied.value = true;
-    notify("证据片段已复制");
-    window.setTimeout(() => {
-      copied.value = false;
-    }, 1800);
   }
   function statusLabel(status: string) {
     return statusLabelMap[status] || status;
@@ -706,7 +680,6 @@ export function useWorkspace() {
     rerank,
     allowWeb,
     outputLanguage,
-    copied,
     stats,
     statistics,
     assets,
@@ -720,7 +693,6 @@ export function useWorkspace() {
     openUpload,
     onFilesSelected,
     retryAsset,
-    copyEvidence,
     statusLabel,
     statusClass,
     iconForStat,

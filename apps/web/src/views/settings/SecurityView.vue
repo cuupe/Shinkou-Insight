@@ -119,29 +119,29 @@ onMounted(async () => {
 .security-hero-copy, .security-controls, .section-title-line { display: flex; align-items: center; gap: .75rem; }
 .security-icon { display: grid; place-items: center; width: 2.5rem; height: 2.5rem; border-radius: .625rem; color: var(--teal-dark); background: #e4f6f3; }
 .security-hero h2, .section-title-line h2 { margin: 0; color: var(--workspace-text); font-size: .875rem; }
-.security-hero p { margin: .25rem 0 0; color: var(--workspace-muted); font-size: .625rem; }
+.security-hero p { margin: .25rem 0 0; color: var(--workspace-muted); font-size: 0.75rem; }
 .security-controls { align-items: end; flex-wrap: wrap; }
 .security-controls .field-label { min-width: 15rem; }
-.probe-toggle { display: grid; grid-template-columns: auto 1fr; column-gap: .375rem; align-items: center; color: var(--workspace-text); font-size: .625rem; font-weight: 650; }
-.probe-toggle small { grid-column: 2; color: var(--workspace-muted); font-size: .5rem; font-weight: 400; }
+.probe-toggle { display: grid; grid-template-columns: auto 1fr; column-gap: .375rem; align-items: center; color: var(--workspace-text); font-size: 0.75rem; font-weight: 650; }
+.probe-toggle small { grid-column: 2; color: var(--workspace-muted); font-size: 0.75rem; font-weight: 400; }
 .security-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: .625rem; padding: 1rem 1.25rem; border-bottom: .0625rem solid #edf1f1; }
 .summary-card { display: grid; gap: .25rem; padding: .75rem; border: .0625rem solid var(--workspace-border); border-radius: .5rem; background: var(--surface); }
 .summary-card strong { color: var(--workspace-text); font-size: 1rem; }
-.summary-card span { color: var(--workspace-muted); font-size: .5625rem; }
+.summary-card span { color: var(--workspace-muted); font-size: 0.75rem; }
 .harness-list, .compact-list { border: .0625rem solid #e7eeee; border-radius: .5rem; }
 .harness-row, .compact-row { display: flex; align-items: center; gap: .625rem; min-height: 3.125rem; padding: .5rem .75rem; border-bottom: .0625rem solid #edf1f1; }
 .harness-row:last-child, .compact-row:last-child { border-bottom: 0; }
 .harness-row > div { flex: 1; min-width: 0; }
 .harness-row strong, .harness-row small { display: block; }
-.harness-row strong { color: var(--workspace-text); font-size: .6875rem; }
-.harness-row small { margin-top: .1875rem; color: var(--workspace-muted); font-size: .5625rem; }
+.harness-row strong { color: var(--workspace-text); font-size: 0.8125rem; }
+.harness-row small { margin-top: .1875rem; color: var(--workspace-muted); font-size: 0.75rem; }
 .case-status { color: var(--workspace-muted); }
-.case-result { min-width: 3rem; text-align: right; color: var(--workspace-muted); font-size: .5625rem; font-weight: 700; }
+.case-result { min-width: 3rem; text-align: right; color: var(--workspace-muted); font-size: 0.75rem; font-weight: 700; }
 .case-result.pass { color: #0c9b8d; }.case-result.fail { color: #c75a5a; }.case-result.blocked, .case-result.skipped { color: #a87932; }
-.failure-list { margin-top: .75rem; padding: .75rem; border: .0625rem solid #f2d3d3; border-radius: .5rem; background: #fff8f8; color: #a14d4d; font-size: .5625rem; }
+.failure-list { margin-top: .75rem; padding: .75rem; border: .0625rem solid #f2d3d3; border-radius: .5rem; background: #fff8f8; color: #a14d4d; font-size: 0.75rem; }
 .failure-list p { margin: .3125rem 0 0; }
 .split-section { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
 .section-title-line { margin-bottom: .625rem; color: var(--teal-dark); }
-.compact-row { min-height: 2.5rem; }.compact-row strong { color: var(--workspace-text); font-size: .625rem; }.compact-row span, .compact-row small, .muted { color: var(--workspace-muted); font-size: .5625rem; }.compact-row small { margin-left: auto; }
+.compact-row { min-height: 2.5rem; }.compact-row strong { color: var(--workspace-text); font-size: 0.75rem; }.compact-row span, .compact-row small, .muted { color: var(--workspace-muted); font-size: 0.75rem; }.compact-row small { margin-left: auto; }
 @media (max-width: 48rem) { .security-summary, .split-section { grid-template-columns: 1fr 1fr; }.security-controls .field-label { min-width: 100%; } }
 </style>

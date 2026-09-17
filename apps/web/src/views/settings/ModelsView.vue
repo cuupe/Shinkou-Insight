@@ -26,7 +26,6 @@ import {
 import { useWorkspace } from "@/composables/useWorkspace";
 import { getApiErrorMessage } from "@/api/core";
 import { settingsApi, type ProjectModelConfig } from "@/api/settings";
-import { projectApi } from "@/api/projects";
 
 type ModelRecord = {
   id?: number | string;
@@ -34,6 +33,8 @@ type ModelRecord = {
   provider: string;
   use: string;
   enabled: boolean;
+  defaultModel: boolean;
+  editable: boolean;
   latency: string;
   modelId: string;
   endpoint: string;
@@ -102,8 +103,7 @@ type NewModelForm = {
   note: string;
 };
 
-const { notify, workspaceId, projectId } = useWorkspace();
-const settingsProjectId = ref(-1);
+const { notify, workspaceId } = useWorkspace();
 const providerEndpoints: Record<string, string> = {
   OpenAI: "https://api.openai.com/v1",
   Anthropic: "https://api.anthropic.com/v1",
@@ -121,6 +121,7 @@ const editingModelId = ref<number | string | null>(null);
 const editingModelHasCredential = ref(false);
 const advancedOpen = ref(false);
 const testingModel = ref("");
+const contextLookupModel = ref("");
 const testingEmbedding = ref(false);
 const formError = ref("");
 const embeddingError = ref("");
@@ -264,6 +265,8 @@ function fromApiModel(model: ProjectModelConfig): ModelRecord {
     provider: model.provider,
     use: String(config.use || "—"),
     enabled: model.enabled,
+    defaultModel: Boolean(model.defaultModel),
+    editable: model.editable !== false,
     latency: "—",
     modelId: model.modelId,
     endpoint: model.endpoint,
@@ -294,20 +297,11 @@ function fromApiModel(model: ProjectModelConfig): ModelRecord {
 
 onMounted(async () => {
   try {
-    const resolvedProjectId =
-      projectId.value > 0
-        ? projectId.value
-        : (await projectApi.list(workspaceId.value))[0]?.id || -1;
-    settingsProjectId.value = resolvedProjectId;
-    if (resolvedProjectId <= 0) return;
-    const remoteModels = await settingsApi.models.list(
-      workspaceId.value,
-      resolvedProjectId,
-    );
+    const remoteModels = await settingsApi.models.list(workspaceId.value);
     embeddingModel.value = remoteModels.find(isEmbeddingConfig) || null;
     loadEmbeddingForm(embeddingModel.value);
     models.value = remoteModels.filter((model) => !isEmbeddingConfig(model)).map(fromApiModel);
-    defaultModel.value = models.value.find((model) => model.enabled)?.name || "";
+    defaultModel.value = models.value.find((model) => model.defaultModel && model.enabled)?.name || "";
   } catch {
     notify("模型配置加载失败");
   }
@@ -342,7 +336,6 @@ async function useLocalEmbedding() {
   try {
     embeddingModel.value = await settingsApi.models.update(
       workspaceId.value,
-      settingsProjectId.value,
       embeddingModel.value.id,
       embeddingPayload(false),
     );
@@ -382,13 +375,11 @@ async function saveEmbedding() {
     embeddingModel.value = embeddingModel.value?.id
       ? await settingsApi.models.update(
           workspaceId.value,
-          settingsProjectId.value,
           embeddingModel.value.id,
           payload,
         )
       : await settingsApi.models.create(
           workspaceId.value,
-          settingsProjectId.value,
           payload,
         );
     embeddingForm.credential = "";
@@ -407,7 +398,6 @@ async function testEmbedding() {
   try {
     const result = await settingsApi.models.testEmbedding(
       workspaceId.value,
-      settingsProjectId.value,
       embeddingModel.value.id,
     );
     notify(`Embedding 连接成功 · ${result.dimension || embeddingForm.dimension} 维`);
@@ -419,6 +409,10 @@ async function testEmbedding() {
 }
 
 async function toggleModel(model: ModelRecord) {
+  if (!model.editable) {
+    notify("只能修改自己创建的模型配置");
+    return;
+  }
   if (model.name === defaultModel.value && model.enabled) {
     notify("请先选择其他默认模型");
     return;
@@ -428,7 +422,6 @@ async function toggleModel(model: ModelRecord) {
     try {
       await settingsApi.models.update(
         workspaceId.value,
-        settingsProjectId.value,
         model.id,
         {
           name: model.name,
@@ -459,7 +452,6 @@ async function testConnection(model: ModelRecord) {
   try {
     const result = await settingsApi.models.test(
       workspaceId.value,
-      settingsProjectId.value,
       model.id,
     );
     const latency = Number(result.latencyMs);
@@ -479,13 +471,47 @@ async function testConnection(model: ModelRecord) {
   }
 }
 
+async function fetchContextWindow() {
+  if (editingModelId.value == null) {
+    formError.value = "请先保存模型配置，再从服务目录获取最大上下文窗口";
+    return;
+  }
+  contextLookupModel.value = String(editingModelId.value);
+  formError.value = "";
+  try {
+    const result = await settingsApi.models.context(
+      workspaceId.value,
+      editingModelId.value,
+    );
+    if (!result.available || !result.contextWindow) {
+      formError.value = result.detail || "服务未公开该模型的最大上下文窗口，请手动填写";
+      return;
+    }
+    newModel.contextWindow = result.contextWindow;
+    notify(`已获取模型最大上下文：${result.contextWindow.toLocaleString("zh-CN")} tokens`);
+  } catch (error) {
+    formError.value = getApiErrorMessage(error, "模型上下文窗口获取失败，请手动填写");
+  } finally {
+    contextLookupModel.value = "";
+  }
+}
+
+function fetchContextWindowForModel(model: ModelRecord) {
+  openEditModel(model);
+  void fetchContextWindow();
+}
+
 async function removeModel(model: ModelRecord) {
+  if (!model.editable) {
+    notify("只能删除自己创建的模型配置");
+    return;
+  }
   if (!model.id) {
     models.value = models.value.filter((item) => item !== model);
     return;
   }
   try {
-    await settingsApi.models.remove(workspaceId.value, settingsProjectId.value, model.id);
+    await settingsApi.models.remove(workspaceId.value, model.id);
   } catch {
     notify("模型配置删除失败");
     return;
@@ -497,8 +523,20 @@ async function removeModel(model: ModelRecord) {
   notify(`${model.name} 已删除`);
 }
 
-function saveDefaultModel() {
-  notify(`默认模型已切换为 ${defaultModel.value}`);
+async function saveDefaultModel() {
+  const selected = models.value.find((model) => model.name === defaultModel.value);
+  try {
+    const remoteModels = await settingsApi.models.setDefault(
+      workspaceId.value,
+      selected?.id ?? null,
+    );
+    const visibleModels = remoteModels.filter((model) => !isEmbeddingConfig(model)).map(fromApiModel);
+    models.value = visibleModels;
+    defaultModel.value = visibleModels.find((model) => model.defaultModel && model.enabled)?.name || "";
+    notify(`默认模型已切换为 ${defaultModel.value || "未设置"}`);
+  } catch (error) {
+    notify(getApiErrorMessage(error, "默认模型保存失败"));
+  }
 }
 
 function resetNewModel() {
@@ -705,13 +743,11 @@ async function saveModel() {
     const remoteModel = isEditing
       ? await settingsApi.models.update(
           workspaceId.value,
-          settingsProjectId.value,
           editingModelId.value as number | string,
           payload,
         )
       : await settingsApi.models.create(
           workspaceId.value,
-          settingsProjectId.value,
           payload,
         );
     savedModel = fromApiModel(remoteModel);
@@ -726,6 +762,8 @@ async function saveModel() {
     provider: newModel.provider,
     use: newModel.use.trim(),
     enabled: newModel.enabled,
+    defaultModel: savedModel.defaultModel,
+    editable: true,
     latency: "—",
     modelId: newModel.modelId.trim(),
     endpoint,
@@ -784,11 +822,12 @@ async function saveModel() {
       <label class="default-model"
         >默认模型<select v-model="defaultModel" @change="saveDefaultModel">
           <option value="">未选择默认模型（运行时使用第一个启用模型）</option>
-          <option
-            v-for="model in models.filter((item) => item.enabled)"
-            :key="model.name"
-            :value="model.name"
-          >
+            <option
+              v-for="model in models.filter((item) => item.enabled)"
+              :key="model.name"
+              :value="model.name"
+              :disabled="!model.editable"
+            >
             {{ model.name }}
           </option>
         </select></label
@@ -866,18 +905,21 @@ async function saveModel() {
               <span class="config-icon"><Cpu :size="17" /></span>
               <span class="model-copy">
                 <strong>{{ model.name }} <span v-if="defaultModel === model.name" class="default-tag"><Star :size="10" />默认</span></strong>
-                <small>{{ model.use }} · {{ model.modelId }}</small>
+                <small>{{ model.use }} · {{ model.modelId }} · 上下文 {{ model.contextWindow.toLocaleString("zh-CN") }}</small>
                 <small v-if="model.testMessage" class="test-result" :title="model.testMessage" :class="`test-result-${model.testStatus}`">{{ model.testMessage }}</small>
               </span>
               <span class="latency" :class="`latency-${model.testStatus}`" :title="model.testMessage">
                 <Gauge :size="12" />{{ model.testStatus === "testing" ? "测试中" : model.latency }}
               </span>
-              <button class="switch-button" :class="{ active: model.enabled }" type="button" :aria-label="`${model.name}${model.enabled ? '停用' : '启用'}`" @click="toggleModel(model)"><span /></button>
+               <button class="switch-button" :class="{ active: model.enabled }" type="button" :disabled="!model.editable" :aria-label="`${model.name}${model.enabled ? '停用' : '启用'}`" @click="toggleModel(model)"><span /></button>
               <button class="text-button test-button" type="button" :disabled="testingModel === model.name" @click="testConnection(model)">
                 <RefreshCw :size="13" :class="{ spinning: testingModel === model.name }" />{{ testingModel === model.name ? "测试中" : "测试连接" }}
               </button>
-              <button class="text-button" type="button" @click="openEditModel(model)">编辑</button>
-              <button class="text-button danger-text-button" type="button" @click="removeModel(model)">删除</button>
+              <button class="text-button test-button" type="button" :disabled="contextLookupModel === String(model.id)" @click="fetchContextWindowForModel(model)">
+                <RefreshCw :size="13" :class="{ spinning: contextLookupModel === String(model.id) }" />{{ contextLookupModel === String(model.id) ? "获取中" : "获取上下文" }}
+              </button>
+               <button class="text-button" type="button" :disabled="!model.editable" @click="openEditModel(model)">编辑</button>
+               <button class="text-button danger-text-button" type="button" :disabled="!model.editable" @click="removeModel(model)">删除</button>
             </div>
           </div>
         </article>
@@ -1044,7 +1086,26 @@ async function saveModel() {
               <label class="field-label">频率惩罚<input v-model.number="newModel.frequencyPenalty" type="number" min="-2" max="2" step="0.1" /></label>
               <label class="field-label">存在惩罚<input v-model.number="newModel.presencePenalty" type="number" min="-2" max="2" step="0.1" /></label>
               <label class="field-label">随机种子<input v-model.number="newModel.seed" type="number" min="0" step="1" placeholder="不固定" /><small>供应商支持时用于复现输出。</small></label>
-              <label class="field-label">上下文窗口 Tokens<input v-model.number="newModel.contextWindow" type="number" min="1" step="1024" /></label>
+              <div class="field-label context-window-field">
+                <span>上下文窗口 Tokens</span>
+                <div class="context-window-control">
+                  <input v-model.number="newModel.contextWindow" type="number" min="1" step="1024" />
+                  <button
+                    v-if="editingModelId != null"
+                    class="text-button"
+                    type="button"
+                    :disabled='contextLookupModel !== ""'
+                    @click="fetchContextWindow"
+                  >
+                    <RefreshCw
+                      :size="13"
+                      :class="{ spinning: Boolean(contextLookupModel) }"
+                    />{{ contextLookupModel ? "获取中" : "获取模型上限" }}
+                  </button>
+                  <span v-else class="context-window-hint">保存后可获取</span>
+                </div>
+                <small>优先使用服务模型目录返回的上限；服务未公开时保留手动值。运行时会为输出预留空间并在达到预算前压缩上下文。</small>
+              </div>
               <label class="field-label">停止序列<textarea v-model="newModel.stop" rows="2" placeholder="每行一个停止序列" /><small>最多 4 个；按行填写。</small></label>
               <label class="field-label">推理强度<select v-model="newModel.reasoningEffort"><option value="none">不指定</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
               <label class="field-label">结构化输出方式<select v-model="newModel.structuredOutputMethod"><option value="json_schema">JSON Schema</option><option value="function_calling">Function Calling</option><option value="json_mode">JSON Mode</option></select></label>
@@ -1159,7 +1220,7 @@ async function saveModel() {
   border-radius: 999px;
   color: var(--workspace-muted);
   background: var(--surface-raised);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .embedding-status.configured {
   color: var(--teal-dark);
@@ -1222,12 +1283,12 @@ async function saveModel() {
 }
 .embedding-mode-option strong {
   color: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .embedding-mode-option small {
   overflow: hidden;
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1241,7 +1302,7 @@ async function saveModel() {
   border-radius: 0.5rem;
   background: color-mix(in oklab, var(--teal) 7%, var(--surface));
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .embedding-local-note svg {
   flex: 0 0 auto;
@@ -1291,14 +1352,14 @@ async function saveModel() {
 .overview-copy p {
   margin: 0.3125rem 0 0;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .default-model {
   display: grid;
   gap: 0.375rem;
   min-width: 11.25rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .default-model select {
   border: 0.0625rem solid var(--workspace-border);
@@ -1307,7 +1368,7 @@ async function saveModel() {
   color: var(--workspace-text);
   background: var(--surface);
   font: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .model-list {
   max-width: none;
@@ -1344,12 +1405,12 @@ async function saveModel() {
 }
 .provider-card-title strong {
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .provider-card-title small {
   overflow: hidden;
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1367,7 +1428,7 @@ async function saveModel() {
   border-radius: 0.4375rem;
   color: var(--teal-dark);
   background: color-mix(in oklab, var(--teal) 7%, var(--surface));
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .connection-reuse-note svg {
   flex: 0 0 auto;
@@ -1385,12 +1446,12 @@ async function saveModel() {
 }
 .model-copy strong {
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .model-copy small {
   margin-top: 0.25rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1418,7 +1479,7 @@ async function saveModel() {
   gap: 0.1875rem;
   margin-left: 0.3125rem;
   color: var(--teal-dark);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   font-weight: 500;
 }
 .latency {
@@ -1427,7 +1488,7 @@ async function saveModel() {
   gap: 0.25rem;
   min-width: 3.5rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .latency-success {
   color: var(--teal-dark);
@@ -1480,12 +1541,12 @@ async function saveModel() {
 .model-note strong {
   display: block;
   color: var(--workspace-text);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .model-note p {
   margin: 0.25rem 0 0;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .model-dialog {
   max-width: 54rem !important;
@@ -1515,11 +1576,11 @@ async function saveModel() {
 }
 .form-section-heading strong {
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .form-section-heading small {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .form-section-icon {
   display: grid;
@@ -1547,13 +1608,13 @@ async function saveModel() {
   color: var(--workspace-text);
   background: var(--surface);
   font: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-weight: 650;
   cursor: pointer;
 }
 .advanced-toggle span:last-child {
   color: var(--teal-dark);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   font-weight: 500;
 }
 .advanced-settings-grid {
@@ -1573,7 +1634,7 @@ async function saveModel() {
 .field-label small,
 .enable-model-toggle small {
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   font-weight: 400;
   line-height: 1.35;
 }
@@ -1584,7 +1645,7 @@ async function saveModel() {
   border-radius: 0.4375rem;
   color: #a14d4d;
   background: #fff5f5;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .enable-model-toggle {
   display: flex;
@@ -1599,12 +1660,12 @@ async function saveModel() {
 }
 .enable-model-toggle strong {
   color: var(--workspace-text);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .model-capability-note {
   margin: 0.75rem 0 0;
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   line-height: 1.35;
 }
 .switch-input {
@@ -1643,7 +1704,7 @@ async function saveModel() {
   gap: 0.25rem;
   margin-right: auto;
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 @keyframes spin {
   to {

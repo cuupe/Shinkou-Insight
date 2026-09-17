@@ -40,8 +40,23 @@ def report_prompt(goal: str, findings: list[dict[str, Any]], evidence: list[dict
     return _messages("report", output_language=output_language, goal=goal, findings=json.dumps(findings, ensure_ascii=False), evidence=evidence)
 
 
-def review_prompt(referenced_ids: list[str], valid_ids: list[str], output_language: str = "zh-CN") -> list[dict[str, str]]:
-    return _messages("review", output_language=output_language, referenced_ids=json.dumps(referenced_ids), valid_ids=json.dumps(valid_ids))
+def review_prompt(
+    referenced_ids: list[str],
+    valid_ids: list[str],
+    output_language: str = "zh-CN",
+    report_draft: dict[str, Any] | None = None,
+    evidence: list[dict[str, Any]] | None = None,
+    review_policy: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    return _messages(
+        "review",
+        output_language=output_language,
+        referenced_ids=json.dumps(referenced_ids, ensure_ascii=False),
+        valid_ids=json.dumps(valid_ids, ensure_ascii=False),
+        report_draft=json.dumps(report_draft or {}, ensure_ascii=False),
+        evidence=evidence or [],
+        review_policy=json.dumps(review_policy or {}, ensure_ascii=False),
+    )
 
 
 def reflection_prompt(

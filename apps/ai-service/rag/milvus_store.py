@@ -6,7 +6,12 @@ from typing import Any
 
 from embeddings.providers import EmbeddingProvider
 from models.schemas import RetrievalItem
-from rag.indexer import rrf
+from rag.hybrid import (
+    build_query_variants,
+    diversify_candidates,
+    extract_search_terms,
+    fuse_ranked_candidates,
+)
 from rag.reranker import LexicalReranker
 
 
@@ -20,29 +25,7 @@ def _keyword_terms(question: str, max_terms: int = 64) -> list[str]:
     discoverable even when the surrounding question is longer.
     """
 
-    normalized = re.sub(r"\s+", " ", str(question or "").casefold()).strip()
-    terms: list[str] = []
-    seen: set[str] = set()
-
-    def add(value: str) -> None:
-        value = value.strip()
-        if len(value) < 2 or value in seen or len(terms) >= max_terms:
-            return
-        seen.add(value)
-        terms.append(value)
-
-    for token in re.findall(r"[a-z0-9][a-z0-9._/-]{1,}|[\u4e00-\u9fff]+", normalized):
-        if re.fullmatch(r"[\u4e00-\u9fff]+", token):
-            if len(token) <= 6:
-                add(token)
-            for width in (3, 2):
-                for index in range(max(0, len(token) - width + 1)):
-                    add(token[index : index + width])
-        else:
-            add(token)
-        if len(terms) >= max_terms:
-            break
-    return terms
+    return extract_search_terms(question, max_terms=max_terms)
 
 
 def _like_patterns(terms: list[str]) -> list[str]:
@@ -275,6 +258,14 @@ class MilvusKnowledgeStore:
         retrieval_mode: str = "HYBRID",
         use_reranker: bool = False,
         embedding: EmbeddingProvider | None = None,
+        fusion_method: str = "WEIGHTED_RRF",
+        candidate_k: int | None = None,
+        rank_constant: int = 60,
+        vector_weight: float = 0.55,
+        keyword_weight: float = 0.45,
+        diversity_lambda: float = 0.9,
+        query_variants: list[str] | None = None,
+        rerank_top_k: int | None = None,
     ) -> list[RetrievalItem]:
         pool, client = self._require_started()
         embedding = embedding or self.embedding
@@ -285,7 +276,7 @@ class MilvusKnowledgeStore:
         filters = filters or {}
         asset_ids = [int(value) for value in filters.get("assetIds", [])]
         mode = retrieval_mode.upper()
-        candidate_limit = max(top_k, 20)
+        candidate_limit = max(top_k, min(int(candidate_k or max(top_k * 4, 20)), 200))
 
         vector_hits: list[dict[str, Any]] = []
         if mode in {"VECTOR", "HYBRID"}:
@@ -325,30 +316,49 @@ class MilvusKnowledgeStore:
                 question,
                 asset_ids,
                 candidate_limit,
+                query_variants=query_variants,
             )
-        keyword_rank = {
-            int(row[0]): (rank, float(row[6]))
-            for rank, row in enumerate(keyword_rows, start=1)
-        }
+        keyword_values = {int(row[0]): float(row[6]) for row in keyword_rows}
 
         rows = {int(row[0]): row for row in [*vector_rows, *keyword_rows]}
-        ids = list(dict.fromkeys([*vector_rank.keys(), *keyword_rank.keys()]))
-        ids.sort(
-            key=lambda chunk_id: (
-                rrf(vector_rank[chunk_id][0]) if chunk_id in vector_rank else 0
+        channels: dict[str, list[tuple[str, tuple, float]]] = {}
+        if mode in {"VECTOR", "HYBRID"}:
+            channels["vector"] = [
+                (str(chunk_id), rows[chunk_id], score)
+                for chunk_id, (_rank, score) in sorted(vector_rank.items(), key=lambda value: value[1][0])
+                if chunk_id in rows
+            ]
+        if mode in {"KEYWORD", "HYBRID"}:
+            channels["keyword"] = [
+                (str(chunk_id), rows[chunk_id], score)
+                for chunk_id, score in keyword_values.items()
+                if chunk_id in rows and score > 0
+            ]
+        if mode == "VECTOR":
+            fused = fuse_ranked_candidates(channels, method="LINEAR", weights={"vector": 1.0})
+        elif mode == "KEYWORD":
+            fused = fuse_ranked_candidates(channels, method="LINEAR", weights={"keyword": 1.0})
+        else:
+            fused = fuse_ranked_candidates(
+                channels,
+                method=fusion_method,
+                weights={"vector": vector_weight, "keyword": keyword_weight},
+                rank_constant=rank_constant,
+                rank_window_size=candidate_limit,
             )
-            + (rrf(keyword_rank[chunk_id][0]) if chunk_id in keyword_rank else 0),
-            reverse=True,
+        fused = diversify_candidates(
+            fused,
+            top_k=max(top_k, min(candidate_limit, int(rerank_top_k or top_k))),
+            content_fn=lambda row: row[5],
+            diversity_lambda=diversity_lambda,
         )
 
         result: list[RetrievalItem] = []
-        for rank, chunk_id in enumerate(ids[:top_k], start=1):
-            row = rows[chunk_id]
-            fusion = (rrf(vector_rank[chunk_id][0]) if chunk_id in vector_rank else 0) + (
-                rrf(keyword_rank[chunk_id][0]) if chunk_id in keyword_rank else 0
-            )
-            vector_score = vector_rank.get(chunk_id, (0, None))[1]
-            keyword_score = keyword_rank.get(chunk_id, (0, None))[1]
+        for rank, candidate in enumerate(fused, start=1):
+            chunk_id = int(candidate.key)
+            row = candidate.item
+            vector_score = candidate.channel_scores.get("vector")
+            keyword_score = candidate.channel_scores.get("keyword")
             result.append(
                 RetrievalItem(
                     id=f"E{rank}",
@@ -359,16 +369,16 @@ class MilvusKnowledgeStore:
                     page_number=row[3],
                     section_title=row[4],
                     content=row[5],
-                    score=round(fusion, 6),
+                    score=round(candidate.score, 6),
                     vector_score=vector_score,
                     keyword_score=keyword_score,
-                    fusion_score=round(fusion, 6),
-                    rerank_score=round(fusion, 6),
+                    fusion_score=round(candidate.score, 6),
+                    rerank_score=round(candidate.score, 6),
                 )
             )
         if use_reranker:
             result = await LexicalReranker().rerank(question, result)
-        return result
+        return result[:top_k]
 
     @staticmethod
     def _search_vectors(
@@ -431,8 +441,17 @@ class MilvusKnowledgeStore:
         question: str,
         asset_ids: list[int],
         limit: int,
+        query_variants: list[str] | None = None,
     ) -> list[tuple]:
-        patterns = _like_patterns(_keyword_terms(question))
+        variants = query_variants or build_query_variants(question)
+        terms: list[str] = []
+        seen: set[str] = set()
+        for variant in variants or [question]:
+            for term in _keyword_terms(variant):
+                if term not in seen:
+                    seen.add(term)
+                    terms.append(term)
+        patterns = _like_patterns(terms[:128]) or ["%__shinkou_no_keyword_match__%"]
         base = """
             FROM asset_chunks c
             JOIN knowledge_assets a ON a.id = c.asset_id

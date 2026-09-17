@@ -33,6 +33,21 @@ class GraphStore(Protocol):
     async def search(self, *, workspace_id: int, project_id: int, query: str, limit: int) -> tuple[list[GraphNode], list[GraphEdge]]: ...
 
 
+def _query_terms(text: str) -> set[str]:
+    terms = {
+        token
+        for token in re.findall(r"[a-z0-9][a-z0-9._/-]{1,}", str(text or "").casefold())
+        if len(token) >= 2
+    }
+    for phrase in re.findall(r"[\u4e00-\u9fff]+", str(text or "")):
+        for width in (4, 3, 2):
+            terms.update(
+                phrase[index : index + width]
+                for index in range(max(0, len(phrase) - width + 1))
+            )
+    return terms
+
+
 class MemoryGraphStore:
     def __init__(self) -> None:
         self.nodes: dict[tuple[int, int, str], GraphNode] = {}
@@ -45,8 +60,14 @@ class MemoryGraphStore:
             self.edges[(edge.workspace_id, edge.project_id, edge.source, edge.target, edge.relation)] = edge
 
     async def search(self, *, workspace_id: int, project_id: int, query: str, limit: int) -> tuple[list[GraphNode], list[GraphEdge]]:
-        terms = {term.casefold() for term in re.findall(r"[\w.-]+", query)}
-        nodes = [node for node in self.nodes.values() if node.workspace_id == workspace_id and node.project_id == project_id and (not terms or any(term in node.name.casefold() for term in terms))][:limit]
+        terms = _query_terms(query)
+        nodes = [
+            node
+            for node in self.nodes.values()
+            if node.workspace_id == workspace_id
+            and node.project_id == project_id
+            and (not terms or any(term in node.name.casefold() for term in terms))
+        ][:limit]
         keys = {node.key for node in nodes}
         edges = [edge for edge in self.edges.values() if edge.workspace_id == workspace_id and edge.project_id == project_id and (edge.source in keys or edge.target in keys)][:limit]
         return nodes, edges
@@ -82,12 +103,13 @@ class Neo4jGraphStore:
 
     async def search(self, *, workspace_id: int, project_id: int, query: str, limit: int) -> tuple[list[GraphNode], list[GraphEdge]]:
         async with self.driver.session() as session:
+            terms = sorted(_query_terms(query))
             result = await session.run("""
                 MATCH (n:KnowledgeEntity {workspace_id:$workspace_id, project_id:$project_id})
-                WHERE toLower(n.name) CONTAINS toLower($query)
+                WHERE size($terms) = 0 OR any(term IN $terms WHERE toLower(n.name) CONTAINS term)
                 OPTIONAL MATCH (n)-[r:RELATED {workspace_id:$workspace_id, project_id:$project_id}]-(m:KnowledgeEntity {workspace_id:$workspace_id, project_id:$project_id})
                 RETURN n, r, m LIMIT $limit
-            """, workspace_id=workspace_id, project_id=project_id, query=query, limit=limit)
+            """, workspace_id=workspace_id, project_id=project_id, terms=terms, limit=limit)
             nodes: list[GraphNode] = []
             edges: list[GraphEdge] = []
             async for record in result:

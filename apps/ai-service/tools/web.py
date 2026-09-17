@@ -10,6 +10,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from models.schemas import Evidence
+from prompts.search_prompts import WEB_SEARCH_STOPWORDS
 
 
 class WebSearchProvider(Protocol):
@@ -22,21 +23,11 @@ class WebSearchError(RuntimeError):
 
 DEFAULT_DUCKDUCKGO_BASE_URL = "https://html.duckduckgo.com/html/"
 
-_SEARCH_STOPWORDS = frozenset(
-    {
-        "请问", "请帮我", "帮我", "帮忙", "查询", "查一下", "搜索", "检索", "查找", "联网",
-        "告诉我", "答案", "最新", "最近", "目前", "现在", "是什么", "什么", "哪个", "哪些",
-        "哪一个", "有没有", "有吗", "一下", "关于", "介绍", "说明", "解释", "请", "我", "你",
-        "的", "了", "吗", "呢", "吧",
-    }
-)
-
-
 def _search_terms(query: str) -> set[str]:
     """Extract topic anchors while ignoring conversational search commands."""
 
     normalized = str(query or "").casefold()
-    for stopword in sorted(_SEARCH_STOPWORDS, key=len, reverse=True):
+    for stopword in sorted(WEB_SEARCH_STOPWORDS, key=len, reverse=True):
         normalized = normalized.replace(stopword, " ")
     terms = set(re.findall(r"[a-z0-9][a-z0-9._-]{1,}|[\u4e00-\u9fff]{2,}", normalized))
     for block in re.findall(r"[\u4e00-\u9fff]+", normalized):

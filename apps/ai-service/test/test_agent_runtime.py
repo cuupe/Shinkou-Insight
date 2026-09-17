@@ -2,11 +2,24 @@ from datetime import date
 
 import pytest
 
-from agents.runtime import AgentRuntime, _aggregate_usage, _augment_web_search_query, _chat_retrieval_limit, _select_chat_strategy, _should_search_knowledge
+from agents.runtime import (
+    AgentRuntime,
+    _aggregate_usage,
+    _augment_web_search_query,
+    _chat_retrieval_limit,
+    _compact_chat_context,
+    _evidence_excerpt,
+    _select_chat_context,
+    _select_chat_strategy,
+    _should_enable_multi_agent,
+    _should_search_graph,
+    _should_search_knowledge,
+)
 from core.events import EventBus
 from core.repository import InMemoryRunRepository
-from models.llm import ModelStreamChunk, MockModelGateway
-from models.schemas import ExecuteRunRequest, ModelChatResult, ReflectionResult, ResearchConfig, TokenUsage
+from graph.store import GraphEdge, GraphNode
+from models.llm import MockModelGateway, ModelStreamChunk
+from models.schemas import ChatMessage, ExecuteRunRequest, ModelChatResult, ReflectionResult, ResearchConfig, TokenUsage
 from rag.retriever import InMemoryRetriever
 from tools.knowledge import KnowledgeTool
 from tools.registry import ToolRegistry, ToolSpec
@@ -27,6 +40,43 @@ class RecordingWebSearch:
         return []
 
 
+class RecordingGraphStore:
+    def __init__(self):
+        self.queries = []
+
+    async def search(self, *, workspace_id, project_id, query, limit):
+        self.queries.append((workspace_id, project_id, query, limit))
+        nodes = [
+            GraphNode(
+                key="entity:postgresql",
+                name="PostgreSQL",
+                node_type="TECHNOLOGY",
+                workspace_id=workspace_id,
+                project_id=project_id,
+                properties={"asset_id": "77", "chunk_id": "1001", "page_number": 2},
+            ),
+            GraphNode(
+                key="entity:redis",
+                name="Redis",
+                node_type="TECHNOLOGY",
+                workspace_id=workspace_id,
+                project_id=project_id,
+                properties={"asset_id": "77", "chunk_id": "1001", "page_number": 2},
+            ),
+        ]
+        edges = [
+            GraphEdge(
+                source=nodes[0].key,
+                target=nodes[1].key,
+                relation="CACHE_FOR",
+                workspace_id=workspace_id,
+                project_id=project_id,
+                properties={"asset_id": "77", "chunk_id": "1001", "page_number": 2},
+            ),
+        ]
+        return nodes[:limit], edges[:limit]
+
+
 def test_latest_web_search_gets_current_release_terms():
     query = _augment_web_search_query("ZUN latest work")
     assert str(date.today().year) in query
@@ -44,15 +94,63 @@ def test_aggregate_usage_keeps_the_model_used_by_the_run():
     assert result.model == "model-a"
 
 
+def test_unrelated_chat_context_is_filtered_without_a_model_call():
+    selected, stats = _select_chat_context(
+        [
+            {"role": "user", "content": "项目使用 PostgreSQL，连接池上限是 20。"},
+            {"role": "assistant", "content": "数据库配置位于服务环境变量中。"},
+        ],
+        "乎古哀是什么时代的人？",
+    )
+
+    assert selected == []
+    assert stats == {"providedContextMessages": 2, "selectedContextMessages": 0, "filteredMessages": 2}
+
+
+def test_related_chat_context_keeps_the_user_assistant_pair():
+    selected, stats = _select_chat_context(
+        [
+            {"role": "user", "content": "项目使用 PostgreSQL，连接池上限是 20。"},
+            {"role": "assistant", "content": "数据库配置位于服务环境变量中。"},
+        ],
+        "这个项目的 PostgreSQL 连接池怎么配置？",
+    )
+
+    assert len(selected) == 2
+    assert stats["filteredMessages"] == 0
+
+
+def test_follow_up_chat_context_keeps_recent_messages():
+    selected, stats = _select_chat_context(
+        [
+            {"role": "user", "content": "第一个话题是 PostgreSQL。"},
+            {"role": "assistant", "content": "第一个话题已回答。"},
+            {"role": "user", "content": "第二个话题是部署。"},
+            {"role": "assistant", "content": "第二个话题已回答。"},
+        ],
+        "继续解释刚才的问题。",
+    )
+
+    assert selected == [
+        {"role": "user", "content": "第一个话题是 PostgreSQL。"},
+        {"role": "assistant", "content": "第一个话题已回答。"},
+        {"role": "user", "content": "第二个话题是部署。"},
+        {"role": "assistant", "content": "第二个话题已回答。"},
+    ]
+    assert stats["filteredMessages"] == 0
+
+
 class ReflectingModelGateway:
     model = "reflection-test"
 
     def __init__(self):
         self.chat_calls = 0
         self.structured_calls = 0
+        self.chat_messages = []
 
     async def chat(self, messages, *, temperature=None):
         self.chat_calls += 1
+        self.chat_messages.append(messages)
         content = "初稿：缺少依据" if self.chat_calls == 1 else "修正版：已补充依据并保留不确定性"
         return ModelChatResult(
             content=content,
@@ -88,16 +186,16 @@ class StreamingWithoutUsageGateway(MockModelGateway):
         yield ModelStreamChunk(delta="没有 usage 的回答")
 
 
-def make_runtime(model=None, web_search=None):
+def make_runtime(model=None, web_search=None, graph_store=None):
     events = EventBus()
     repository = InMemoryRunRepository(events)
     retriever = InMemoryRetriever([
-        {"workspace_id": 1, "project_id": 1, "chunk_id": 1002, "content": "Production database uses PostgreSQL with a connection pool.", "page_number": 3, "source_name": "architecture.md"},
+        {"workspace_id": 1, "project_id": 1, "chunk_id": 1002, "asset_id": 77, "asset_name": "architecture.md", "content": "Production database uses PostgreSQL with a connection pool.", "page_number": 3, "source_name": "architecture.md"},
     ])
     knowledge = KnowledgeTool(retriever)
     tools = ToolRegistry()
     tools.register(ToolSpec(name="search_knowledge", permission="READ"), knowledge.search_knowledge)
-    return AgentRuntime(model=model or MockModelGateway(), retriever=retriever, web_search=web_search or DisabledWebSearch(), tools=tools, repository=repository, events=events), repository
+    return AgentRuntime(model=model or MockModelGateway(), retriever=retriever, web_search=web_search or DisabledWebSearch(), tools=tools, repository=repository, events=events, graph_store=graph_store), repository
 
 
 @pytest.mark.asyncio
@@ -132,7 +230,136 @@ async def test_chat_reads_sources_without_starting_research_workflow():
     evidence_events = [event for event in repository.list_events("chat-1") if event.event_type == "evidence.added"]
     assert evidence_events
     assert evidence_events[0].payload["items"][0]["source_name"] == "architecture.md"
+    assert evidence_events[0].payload["items"][0]["asset_id"] == 77
     assert not any(event.payload.get("node") == "PLAN" for event in repository.list_events("chat-1"))
+
+
+@pytest.mark.asyncio
+async def test_chat_uses_graph_source_for_relationship_questions():
+    graph_store = RecordingGraphStore()
+    runtime, repository = make_runtime(graph_store=graph_store)
+    request = ExecuteRunRequest(
+        run_id="chat-graph-1",
+        workspace_id=1,
+        project_id=1,
+        goal="请分析 PostgreSQL 和 Redis 的依赖关系",
+        agent_message_id="message-graph-1",
+        config=ResearchConfig(strategy="DIRECT", reflection_enabled=False),
+    )
+
+    await runtime.execute(request)
+
+    events = repository.list_events("chat-graph-1")
+    assert graph_store.queries
+    assert any(event.payload.get("tool") == "search_graph" for event in events if event.event_type == "tool.started")
+    evidence_events = [event for event in events if event.event_type == "evidence.added"]
+    assert evidence_events
+    assert any(item["source_type"] == "graph" for item in evidence_events[0].payload["items"])
+
+
+@pytest.mark.asyncio
+async def test_research_run_seeds_graph_evidence_for_relationship_questions():
+    graph_store = RecordingGraphStore()
+    runtime, repository = make_runtime(graph_store=graph_store)
+    request = ExecuteRunRequest(
+        run_id="research-graph-1",
+        workspace_id=1,
+        project_id=1,
+        goal="请研究 PostgreSQL 和 Redis 的依赖关系",
+        config=ResearchConfig(max_research_rounds=1),
+    )
+
+    await runtime.execute(request)
+
+    run = repository.get("research-graph-1")
+    assert run is not None
+    assert run.status == "COMPLETED"
+    assert graph_store.queries
+    assert any(item.source_type == "graph" for item in run.evidence)
+
+
+def test_context_compression_uses_model_token_budget():
+    messages = [{"role": "user", "content": "项目资料说明 PostgreSQL 的连接池配置。" * 30}]
+    compacted, metrics = _compact_chat_context(
+        messages,
+        max_chars=100_000,
+        max_tokens=80,
+        model_context_window=256,
+    )
+
+    assert metrics["compressionTriggered"] == 1
+    assert metrics["modelContextWindow"] == 256
+    assert metrics["contextTokenBudget"] == 80
+    assert metrics["finalTokenEstimate"] <= 80
+    assert compacted
+
+
+def test_context_compression_stays_within_budget_with_older_turns():
+    messages = [
+        {"role": "user", "content": "历史信息 PostgreSQL Redis 技术栈。" * 40}
+        for _ in range(12)
+    ]
+    compacted, metrics = _compact_chat_context(
+        messages,
+        max_tokens=120,
+        model_context_window=512,
+    )
+
+    assert metrics["compressionTriggered"] == 1
+    assert metrics["finalTokenEstimate"] <= 120
+    assert len(compacted) <= 8
+
+
+@pytest.mark.asyncio
+async def test_chat_simple_project_fact_uses_one_answer_call():
+    model = ReflectingModelGateway()
+    runtime, repository = make_runtime(model)
+    request = ExecuteRunRequest(
+        run_id="chat-fast-project-1",
+        workspace_id=1,
+        project_id=1,
+        goal="这个项目使用什么 database？",
+        agent_message_id="message-fast-project-1",
+        config=ResearchConfig(reflection_enabled=True),
+    )
+
+    await runtime.execute(request)
+
+    assert model.chat_calls == 1
+    assert model.structured_calls == 0
+    evidence_events = [
+        event for event in repository.list_events("chat-fast-project-1")
+        if event.event_type == "evidence.added"
+    ]
+    assert evidence_events
+    assert len(evidence_events[0].payload["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_does_not_forward_unrelated_history_to_the_answer_model():
+    model = ReflectingModelGateway()
+    runtime, repository = make_runtime(model)
+    request = ExecuteRunRequest(
+        run_id="chat-context-filter-1",
+        workspace_id=1,
+        project_id=1,
+        goal="乎古哀是什么时代的人？",
+        agent_message_id="message-context-filter-1",
+        context_messages=[
+            ChatMessage(role="user", content="项目使用 PostgreSQL，连接池上限是 20。"),
+            ChatMessage(role="assistant", content="数据库配置位于服务环境变量中。"),
+        ],
+        config=ResearchConfig(reflection_enabled=True),
+    )
+
+    await runtime.execute(request)
+
+    assert model.chat_calls == 1
+    assert all("PostgreSQL" not in message["content"] for message in model.chat_messages[0])
+    completion = next(
+        event for event in repository.list_events("chat-context-filter-1") if event.event_type == "run.completed"
+    )
+    assert completion.payload["contextCompression"]["filteredMessages"] == 2
 
 
 def test_chat_knowledge_search_is_on_demand():
@@ -140,12 +367,20 @@ def test_chat_knowledge_search_is_on_demand():
     assert not _should_search_knowledge("请直接解释什么是递归")
     assert _should_search_knowledge("这个项目使用什么数据库？")
     assert _should_search_knowledge("请搜索项目的部署方式")
+    assert _should_search_graph("请分析 PostgreSQL 和 Redis 的依赖关系")
 
 
 def test_chat_retrieval_limit_keeps_routine_questions_focused():
-    assert _chat_retrieval_limit("这个项目使用什么数据库？", requested=8, maximum=12) == 3
+    assert _chat_retrieval_limit("这个项目使用什么数据库？", requested=8, maximum=12) == 1
     assert _chat_retrieval_limit("请全面比较项目的部署方案", requested=8, maximum=12) == 8
-    assert _chat_retrieval_limit("普通项目问题", requested=2, maximum=12) == 2
+    assert _chat_retrieval_limit("普通项目问题", requested=2, maximum=12) == 1
+
+
+def test_narrow_evidence_excerpt_keeps_the_query_hit():
+    content = "无关内容。" * 200 + "乎古哀(ac.41414-ac.41332)" + "后续无关内容。" * 200
+    excerpt = _evidence_excerpt(content, "乎古哀是什么时代的人", 120)
+    assert "乎古哀" in excerpt
+    assert len(excerpt) <= 122
 
 
 def test_chat_strategy_router_matches_request_shape():
@@ -155,9 +390,70 @@ def test_chat_strategy_router_matches_request_shape():
     forced = ExecuteRunRequest(run_id="strategy-forced", workspace_id=1, project_id=1, goal="简单回答", config=ResearchConfig(strategy="REFLECTION"))
 
     assert _select_chat_strategy(direct) == "DIRECT"
-    assert _select_chat_strategy(project) == "REACT"
+    assert _select_chat_strategy(project) == "DIRECT"
     assert _select_chat_strategy(broad) == "PLAN_AND_SOLVE"
     assert _select_chat_strategy(forced) == "REFLECTION"
+
+
+def test_multi_agent_gate_only_opens_for_complex_or_explicit_requests():
+    simple = ExecuteRunRequest(run_id="multi-simple", workspace_id=1, project_id=1, goal="请解释什么是递归")
+    broad = ExecuteRunRequest(
+        run_id="multi-broad",
+        workspace_id=1,
+        project_id=1,
+        goal="请全面比较项目的部署方案并给出迁移建议",
+    )
+    explicit = ExecuteRunRequest(
+        run_id="multi-explicit",
+        workspace_id=1,
+        project_id=1,
+        goal="请让多个子智能体分别调研并汇总结果",
+    )
+    forced = ExecuteRunRequest(
+        run_id="multi-forced",
+        workspace_id=1,
+        project_id=1,
+        goal="简单回答",
+        config=ResearchConfig(multi_agent_mode="ON"),
+    )
+
+    assert _should_enable_multi_agent(simple) == (False, "当前问题适合单智能体快速处理")
+    assert _should_enable_multi_agent(broad)[0] is True
+    assert _should_enable_multi_agent(explicit)[0] is True
+    assert _should_enable_multi_agent(forced)[0] is True
+
+
+@pytest.mark.asyncio
+async def test_chat_multi_agent_path_coordinates_child_agents():
+    runtime, repository = make_runtime()
+    request = ExecuteRunRequest(
+        run_id="chat-multi-agent-1",
+        workspace_id=1,
+        project_id=1,
+        goal="请全面比较项目的部署方案并给出迁移建议",
+        agent_message_id="message-multi-agent-1",
+        config=ResearchConfig(multi_agent_mode="ON", reflection_enabled=False),
+    )
+
+    await runtime.execute(request)
+
+    run = repository.get("chat-multi-agent-1")
+    assert run is not None
+    assert run.status == "COMPLETED"
+    events = repository.list_events("chat-multi-agent-1")
+    child_agents = {
+        str(event.payload.get("agent"))
+        for event in events
+        if event.event_type == "agent.started"
+    }
+    assert {"planner", "internal_researcher", "evidence_analyst", "finding_analyst", "report_writer", "report_reviewer"}.issubset(child_agents)
+    coordination = [
+        event for event in events
+        if event.event_type == "node.completed" and event.payload.get("node") == "MULTI_AGENT"
+    ]
+    assert coordination and coordination[-1].payload.get("fallback") is not True
+    completion = next(event for event in events if event.event_type == "run.completed")
+    assert completion.payload["multiAgent"]["enabled"] is True
 
 
 @pytest.mark.asyncio

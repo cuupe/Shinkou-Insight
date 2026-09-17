@@ -31,6 +31,14 @@ export const runsApi = {
       ),
     ),
 
+  updatePlan: (workspaceId: number | string, projectId: number, runId: number | string, payload: Record<string, unknown>) =>
+    unwrap<Record<string, unknown>>(
+      anet.patch<ApiResponse<Record<string, unknown>>>(
+        `${projectPath(workspaceId, projectId)}/runs/${runId}/plan`,
+        payload,
+      ),
+    ),
+
   steps: (workspaceId: number | string, projectId: number, runId: number | string) =>
     unwrap<Record<string, unknown>[]>(
       anet.get<ApiResponse<Record<string, unknown>[]>>(

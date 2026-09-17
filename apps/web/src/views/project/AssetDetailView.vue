@@ -5,18 +5,17 @@ import {
   CheckCircle2,
   Download,
   FileSearch,
-  FileText,
   LoaderCircle,
   RefreshCw,
-  Search,
   ShieldCheck,
 } from "@lucide/vue";
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { assetDetailCopy } from "@/data/options";
 import { useWorkspace } from "@/composables/useWorkspace";
 import PageHeader from "@/components/common/PageHeader.vue";
 import { assetsApi } from "@/api/assets";
+import type { KnowledgeAsset } from "@/api/types";
 
 const route = useRoute();
 const {
@@ -31,8 +30,44 @@ const {
   projectId,
 } = useWorkspace();
 
-const asset = computed(() =>
-  assets.find((item) => item.id === String(route.params.assetId)) ?? {
+type AssetViewModel = {
+  id: string;
+  name: string;
+  type: string;
+  size: string;
+  uploader: string;
+  updated: string;
+  chunks: number;
+  progress: number;
+  status: "indexed" | "indexing" | "failed";
+  reason: string;
+};
+
+function mapRemoteAsset(item: KnowledgeAsset): AssetViewModel {
+  const status: AssetViewModel["status"] =
+    item.indexStatus === "SUCCESS"
+      ? "indexed"
+      : item.indexStatus === "FAILED"
+        ? "failed"
+        : "indexing";
+  return {
+    id: String(item.id),
+    name: item.name,
+    type: String(item.assetType || "FILE"),
+    size: item.fileSize ? String(Math.round(Number(item.fileSize) / 1024)) + " KB" : "—",
+    uploader: "—",
+    updated: String(item.updatedAt || "—"),
+    chunks: Number(item.chunkCount || 0),
+    progress: Number(item.progress ?? (status === "indexed" ? 100 : 0)),
+    status,
+    reason: String(item.errorMessage || ""),
+  };
+}
+
+const remoteAsset = ref<AssetViewModel | null>(null);
+const asset = computed<AssetViewModel>(() =>
+  remoteAsset.value ??
+  (assets.find((item) => item.id === String(route.params.assetId)) as AssetViewModel | undefined) ?? {
     id: "",
     name: "",
     type: "",
@@ -46,29 +81,42 @@ const asset = computed(() =>
   },
 );
 const hasAsset = computed(() => Boolean(asset.value.id));
-const activeSection = ref<"preview" | "chunks" | "citations">("preview");
+const activeSection = ref<"preview" | "chunks">("preview");
 const activeChunk = ref(0);
-const citationQuery = ref("");
 const reindexing = ref(false);
 const remoteContent = ref("");
 const remoteChunks = ref<Record<string, unknown>[]>([]);
+const citationChunkId = computed(() => String(route.query.chunkId || ""));
+const citationPage = computed(() => {
+  const page = Number(route.query.page);
+  return Number.isFinite(page) && page > 0 ? page : null;
+});
+const citationQuote = computed(() => String(route.query.quote || "").trim());
+const citationTargetRequested = computed(
+  () => Boolean(citationChunkId.value || citationPage.value || citationQuote.value),
+);
+const citationTargetMatched = ref(false);
 
 onMounted(async () => {
+  const assetId = String(route.params.assetId);
   try {
-    const [content, chunks] = await Promise.all([
+    const [detail, content, chunks] = await Promise.all([
+      assetsApi.detail(workspaceId.value, projectId.value, assetId).catch(() => null),
       assetsApi.content(
         workspaceId.value,
         projectId.value,
-        String(route.params.assetId),
+        assetId,
       ),
       assetsApi.chunks(
         workspaceId.value,
         projectId.value,
-        String(route.params.assetId),
+        assetId,
       ),
     ]);
+    if (detail) remoteAsset.value = mapRemoteAsset(detail);
     remoteContent.value = content;
     remoteChunks.value = chunks;
+    await applyCitationTarget();
   } catch {
     notify("资产详情加载失败");
   }
@@ -89,6 +137,8 @@ const previewTitle = computed(() =>
 const chunkRows = computed(() =>
   remoteChunks.value.map((chunk, index) => ({
     index,
+    chunkId: String(chunk.id ?? chunk.chunkId ?? ""),
+    pageNumber: Number(chunk.pageNumber ?? chunk.page ?? 0) || null,
     label: `Chunk ${String(index + 1).padStart(2, "0")}`,
     title: String(chunk.sectionTitle || `资料片段 ${index + 1}`),
     snippet: String(chunk.content || ""),
@@ -97,15 +147,32 @@ const chunkRows = computed(() =>
 const activeChunkRow = computed(
   () => chunkRows.value[activeChunk.value] ?? chunkRows.value[0],
 );
-type AssetCitation = { title: string; source: string; text: string; score: string };
-const assetCitations = computed<AssetCitation[]>(() => []);
-const visibleCitations = computed(() => {
-  const query = citationQuery.value.trim().toLowerCase();
-  if (!query) return assetCitations.value;
-  return assetCitations.value.filter((item) =>
-    `${item.title} ${item.source} ${item.text}`.toLowerCase().includes(query),
-  );
-});
+async function applyCitationTarget() {
+  if (!citationTargetRequested.value || !remoteChunks.value.length) return;
+  const normalizedQuote = citationQuote.value.replace(/\s+/g, " ");
+  const target = chunkRows.value.find((chunk) => {
+    const content = chunk.snippet.replace(/\s+/g, " ");
+    return (
+      (citationChunkId.value && chunk.chunkId === citationChunkId.value) ||
+      (citationPage.value != null && chunk.pageNumber === citationPage.value) ||
+      (normalizedQuote.length >= 8 && content.includes(normalizedQuote))
+    );
+  });
+  citationTargetMatched.value = Boolean(target);
+  activeSection.value = "chunks";
+  if (target) {
+    activeChunk.value = target.index;
+    await nextTick();
+    document
+      .querySelector('[data-chunk-index="' + target.index + '"]')
+      ?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+}
+
+watch(
+  () => [route.query.chunkId, route.query.page, route.query.quote],
+  () => void applyCitationTarget(),
+);
 const statusDescription = computed(() => {
   if (asset.value.status === "indexed")
     return "资料已经完成解析和向量索引，可供 Agent 检索。";
@@ -178,10 +245,20 @@ function downloadOriginal() {
   URL.revokeObjectURL(url);
 }
 
-function locateCitation(source: string) {
-  activeSection.value = "citations";
-  notify(`已定位到引用片段：${source}`);
+async function copyChunkId() {
+  const chunkId = activeChunkRow.value?.chunkId;
+  if (!chunkId) {
+    notify("当前没有可复制的 Chunk 标识");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(chunkId);
+    notify("Chunk 标识已复制");
+  } catch {
+    notify("复制失败，请手动选择 Chunk 标识");
+  }
 }
+
 </script>
 
 <template>
@@ -216,37 +293,6 @@ function locateCitation(source: string) {
       </div>
     </template>
     </PageHeader>
-  <div v-if="false" class="detail-heading">
-    <div class="asset-title">
-      <span class="file-type large" :class="asset.type.toLowerCase()">
-        <FileText :size="24" />
-      </span>
-      <div>
-        <p class="eyebrow">KNOWLEDGE / LIBRARY DETAIL</p>
-        <h1>{{ asset.name }}</h1>
-        <p>{{ asset.type }} · {{ asset.size }} · 上传者 {{ asset.uploader }}</p>
-      </div>
-    </div>
-    <div class="heading-actions">
-      <button
-        class="button button-secondary"
-        type="button"
-        @click="downloadOriginal"
-      >
-        <Download :size="15" />下载原文件
-      </button>
-      <button
-        class="button button-primary"
-        type="button"
-        :disabled="reindexing"
-        @click="reindex"
-      >
-        <RefreshCw :size="15" :class="{ 'spin-icon': reindexing }" />
-        {{ reindexing ? "提交中…" : "重新索引" }}
-      </button>
-    </div>
-  </div>
-
     <div class="asset-status-strip">
     <div class="status-overview">
       <span class="status-badge" :class="statusClass(asset.status)">
@@ -308,13 +354,6 @@ function locateCitation(source: string) {
           >
             Chunk 列表 <span>{{ asset.chunks || 0 }}</span>
           </button>
-          <button
-            type="button"
-            :class="{ active: activeSection === 'citations' }"
-            @click="activeSection = 'citations'"
-          >
-            引用片段 <span>{{ assetCitations.length }}</span>
-          </button>
         </div>
 
         <div v-if="activeSection === 'preview'" class="document-preview-wrap">
@@ -328,27 +367,19 @@ function locateCitation(source: string) {
             <p v-for="paragraph in previewParagraphs" :key="paragraph">
               {{ paragraph }}
             </p>
-            <div class="quote-highlight">
-              <span>“</span>
-              <p>
-                {{
-                  assetCitations[0]?.text ||
-                  "完成索引后，这里会展示可被 Agent 直接引用的证据片段。"
-                }}
-              </p>
-            </div>
             <p class="preview-footnote">
-              预览内容用于确认解析结果；真实项目可通过后端内容接口返回分页、页码和原文定位信息。
+              内容由项目内容接口返回；分段、页码和原文定位以当前后端返回结果为准。
             </p>
           </article>
         </div>
 
-        <div v-else-if="activeSection === 'chunks'" class="chunk-workspace">
+        <div v-else class="chunk-workspace">
           <div class="chunk-list">
             <button
               v-for="chunk in chunkRows"
               :key="chunk.index"
               class="chunk-row"
+              :data-chunk-index="chunk.index"
               :class="{ active: activeChunk === chunk.index }"
               type="button"
               @click="activeChunk = chunk.index"
@@ -359,6 +390,13 @@ function locateCitation(source: string) {
             </button>
           </div>
           <div class="chunk-reader">
+            <div v-if="citationTargetRequested" class="citation-target-note">
+              {{
+                citationTargetMatched
+                  ? "已定位到对话引用的原文片段"
+                  : "已打开引用资料，但未找到精确 Chunk，已展示片段列表"
+              }}
+            </div>
             <div class="chunk-reader-heading">
               <span>{{ activeChunkRow?.label }}</span
               ><small>可引用片段</small>
@@ -367,41 +405,10 @@ function locateCitation(source: string) {
             <p>{{ activeChunkRow?.snippet }}</p>
             <div class="chunk-reader-meta">
               <span>来源：{{ asset.name }}</span
-              ><button type="button" @click="notify('Chunk 标识已复制')">
+              ><button type="button" :disabled="!activeChunkRow?.chunkId" @click="copyChunkId">
                 复制标识
               </button>
             </div>
-          </div>
-        </div>
-
-        <div v-else class="citation-workspace">
-          <div class="citation-search">
-            <Search :size="15" /><input
-              v-model="citationQuery"
-              type="search"
-              placeholder="在当前资料的引用中搜索…"
-              aria-label="搜索当前资料引用"
-            />
-          </div>
-          <div v-if="visibleCitations.length" class="citation-list">
-            <article
-              v-for="citation in visibleCitations"
-              :key="citation.source"
-              class="citation-card"
-            >
-              <div class="citation-card-heading">
-                <strong>{{ citation.title }}</strong
-                ><span>相关度 {{ citation.score }}</span>
-              </div>
-              <p>{{ citation.text }}</p>
-              <button type="button" @click="locateCitation(citation.source)">
-                {{ citation.source }} · 定位
-              </button>
-            </article>
-          </div>
-          <div v-else class="empty-detail-state">
-            <FileSearch :size="22" /><strong>暂无引用片段</strong
-            ><span>完成索引并被 Agent 检索后，引用会显示在这里。</span>
           </div>
         </div>
       </section>
@@ -523,7 +530,7 @@ function locateCitation(source: string) {
 .asset-title p:last-child {
   margin: 0.5rem 0 0;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .file-type.large {
   width: 2.75rem;
@@ -558,7 +565,7 @@ function locateCitation(source: string) {
 .status-overview p {
   margin: 0;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 .detail-facts {
@@ -578,7 +585,7 @@ function locateCitation(source: string) {
 }
 .detail-facts span {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .detail-facts strong {
   margin-top: 0.375rem;
@@ -602,10 +609,10 @@ function locateCitation(source: string) {
   gap: 0.125rem;
 }
 .asset-error-banner strong {
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .asset-error-banner span {
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .asset-detail-layout {
   display: grid;
@@ -644,7 +651,7 @@ function locateCitation(source: string) {
   background: transparent;
   color: var(--workspace-muted);
   font: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   cursor: pointer;
 }
 .workspace-tabs button:hover {
@@ -669,7 +676,7 @@ function locateCitation(source: string) {
   padding: 0.75rem 1.5rem;
   border-bottom: 0.0625rem solid #f0f3f3;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .document-preview {
   max-width: 48.75rem;
@@ -683,7 +690,7 @@ function locateCitation(source: string) {
   margin: 0 0 0.75rem !important;
   color: var(--teal);
   font-family: "Geist", "Microsoft YaHei", sans-serif;
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.12em;
 }
@@ -718,7 +725,7 @@ function locateCitation(source: string) {
 .preview-footnote {
   color: #96a5a8;
   font-family: "Geist", "Microsoft YaHei", sans-serif;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   line-height: 1.6;
 }
 .chunk-workspace {
@@ -747,19 +754,19 @@ function locateCitation(source: string) {
   grid-row: span 2;
   align-self: start;
   color: #b0bbbd;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .chunk-row strong {
   overflow: hidden;
   color: #64767b;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-weight: 550;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .chunk-row small {
   color: #9aa8ab;
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .chunk-row.active,
 .chunk-row:hover {
@@ -771,12 +778,22 @@ function locateCitation(source: string) {
 .chunk-reader {
   padding: 1.5rem;
 }
+.citation-target-note {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.625rem;
+  border: 0.0625rem solid #b9e5dc;
+  border-radius: 0.375rem;
+  background: #effaf8;
+  color: var(--teal-dark);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
 .chunk-reader-heading {
   display: flex;
   justify-content: space-between;
   gap: 0.75rem;
   color: var(--teal-dark);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   font-weight: 700;
 }
 .chunk-reader-heading small {
@@ -791,7 +808,7 @@ function locateCitation(source: string) {
 .chunk-reader p {
   margin: 0;
   color: var(--workspace-muted);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   line-height: 1.8;
 }
 .chunk-reader-meta {
@@ -802,7 +819,7 @@ function locateCitation(source: string) {
   padding-top: 0.75rem;
   border-top: 0.0625rem solid var(--workspace-divider);
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .chunk-reader-meta button,
 .citation-card button {
@@ -810,7 +827,7 @@ function locateCitation(source: string) {
   background: transparent;
   color: var(--teal-dark);
   font: inherit;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   cursor: pointer;
 }
 .citation-workspace {
@@ -838,7 +855,7 @@ function locateCitation(source: string) {
   background: transparent;
   color: var(--workspace-text);
   font: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .citation-list {
   display: grid;
@@ -858,16 +875,16 @@ function locateCitation(source: string) {
 }
 .citation-card-heading strong {
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .citation-card-heading span {
   color: var(--teal-dark);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .citation-card p {
   margin: 0.5rem 0;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   line-height: 1.6;
 }
 .empty-detail-state {
@@ -880,10 +897,10 @@ function locateCitation(source: string) {
 }
 .empty-detail-state strong {
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .empty-detail-state span {
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .metadata-panel {
   padding-bottom: 0.625rem;
@@ -901,14 +918,14 @@ function locateCitation(source: string) {
 }
 .metadata-panel dt {
   color: #98a6aa;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .metadata-panel dd {
   max-width: 11rem;
   overflow: hidden;
   margin: 0;
   color: #52666c;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -943,12 +960,12 @@ function locateCitation(source: string) {
 }
 .index-step strong {
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-weight: 550;
 }
 .index-step small {
   color: #a0adaf;
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .index-step.is-done .index-step-dot {
   border-color: var(--teal);
@@ -977,7 +994,7 @@ function locateCitation(source: string) {
   border-radius: 0.5625rem;
   background: color-mix(in oklab, var(--teal) 7%, var(--surface));
   color: var(--teal-dark);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 .spin-icon {

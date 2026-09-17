@@ -32,7 +32,7 @@ defineProps<{ eyebrow: string; title: string; subtitle: string }>();
 .eyebrow {
   margin: 0 0 0.6875rem;
   color: var(--teal-dark, #0b8276);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-weight: 800;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -95,7 +95,7 @@ defineProps<{ eyebrow: string; title: string; subtitle: string }>();
 .topbar-page-eyebrow {
   margin: 0 0 0.2rem;
   color: var(--teal-dark, #0b8276);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   font-weight: 800;
   letter-spacing: 0.13em;
   line-height: 1;
@@ -119,7 +119,7 @@ defineProps<{ eyebrow: string; title: string; subtitle: string }>();
   max-width: min(34rem, 34vw);
   margin: 0.2rem 0 0;
   color: var(--workspace-subtle, #89979e);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -153,7 +153,7 @@ defineProps<{ eyebrow: string; title: string; subtitle: string }>();
   }
 
   .topbar-page-eyebrow {
-    font-size: 0.4375rem;
+    font-size: 0.75rem;
   }
 
   .topbar-page-copy h1 {
@@ -166,7 +166,7 @@ defineProps<{ eyebrow: string; title: string; subtitle: string }>();
 
   .topbar-page-action .button {
     padding-inline: 0.625rem;
-    font-size: 0.5625rem;
+    font-size: 0.75rem;
   }
 }
 </style>

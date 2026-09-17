@@ -19,3 +19,7 @@ __pycache__/
 .pytest_cache/
 apps/ai-service/.ruff_cache/
 apps/ai-service/data/
+
+# Project-local optional OCR/PDF/Office runtime downloads
+tools/runtime/
+tools/packages/

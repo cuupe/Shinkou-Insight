@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from agents.contracts import AgentContext, AgentMessage, AgentResult
+from prompts.search_prompts import QUERY_REWRITE_SUFFIX
 
 
 class QueryRewriterAgent:
@@ -9,7 +10,7 @@ class QueryRewriterAgent:
     capabilities = ("query-rewriting", "deterministic-routing")
 
     async def handle(self, message: AgentMessage, context: AgentContext) -> AgentResult:
-        query = f"{message.payload['goal']} 关键指标、限制条件、原始依据"
+        query = f"{message.payload['goal']} {QUERY_REWRITE_SUFFIX}"
         return AgentResult(
             agent=self.name,
             payload={

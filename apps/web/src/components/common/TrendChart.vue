@@ -56,7 +56,7 @@ async function renderChart() {
       trigger: "axis",
       backgroundColor: "rgba(20, 35, 41, 0.94)",
       borderWidth: 0,
-      textStyle: { color: "#ffffff", fontSize: 11 },
+      textStyle: { color: "#ffffff", fontSize: 12 },
     },
     grid: { top: 14, right: 14, bottom: 28, left: 36 },
     xAxis: {
@@ -78,7 +78,7 @@ async function renderChart() {
 
       axisLabel: {
         color: axisColor,
-        fontSize: 10,
+        fontSize: 12,
         interval: 0,
         hideOverlap: true,
       },
@@ -98,7 +98,7 @@ async function renderChart() {
       splitNumber: 4,
       axisLine: { show: false },
       axisTick: { show: false },
-      axisLabel: { color: axisColor, fontSize: 10 },
+      axisLabel: { color: axisColor, fontSize: 12 },
       splitLine: { lineStyle: { color: gridColor, type: "dashed" } },
     },
     series: props.series.map((item, index) => ({

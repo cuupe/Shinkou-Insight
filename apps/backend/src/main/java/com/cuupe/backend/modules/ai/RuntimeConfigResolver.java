@@ -5,6 +5,7 @@ import com.cuupe.backend.modules.settings.entity.ModelConfig;
 import com.cuupe.backend.modules.settings.entity.WebSearchConfig;
 import com.cuupe.backend.modules.settings.mapper.ModelConfigMapper;
 import com.cuupe.backend.modules.settings.mapper.WebSearchConfigMapper;
+import com.cuupe.backend.modules.project.mapper.ProjectMapper;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -18,29 +19,51 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class RuntimeConfigResolver {
     private final ModelConfigMapper modelMapper;
+    private final ProjectMapper projectMapper;
     private final WebSearchConfigMapper webSearchMapper;
     private final SecretCipher cipher;
     private final ObjectMapper objectMapper;
 
-    public Map<String, Object> resolve(Long projectId, Long userId, Map<String, Object> requested) {
+    public Map<String, Object> resolve(Long workspaceId, Long projectId, Long userId, Map<String, Object> requested) {
         Map<String, Object> runtime = new LinkedHashMap<>();
-        ModelConfig model = resolveModel(projectId, userId, requested == null ? null : requested.get("modelConfigId"));
+        Long creatorId = projectMapper.findCreatorId(projectId);
+        ModelConfig model = resolveModel(workspaceId, projectId, creatorId, userId,
+                requested == null ? null : requested.get("modelConfigId"));
         if (model != null) runtime.put("model", modelPayload(model));
         WebSearchConfig webSearch = resolveWebSearch(projectId, userId);
         if (webSearch != null) runtime.put("webSearch", webPayload(webSearch));
-        ModelConfig embedding = resolveEmbedding(projectId, userId, requested == null ? null : requested.get("embeddingConfigId"));
+        ModelConfig embedding = resolveEmbedding(workspaceId, projectId, creatorId, userId,
+                requested == null ? null : requested.get("embeddingConfigId"));
         if (embedding != null) runtime.put("embedding", embeddingPayload(embedding));
         return runtime;
     }
 
-    public Map<String, Object> resolveModelPayload(Long projectId, Long userId, Long modelId) {
-        ModelConfig model = modelMapper.findById(modelId, projectId, userId);
+    public Map<String, Object> resolveModelPayload(Long workspaceId, Long projectId, Long userId, Long modelId) {
+        Long creatorId = projectMapper.findCreatorId(projectId);
+        ModelConfig model = modelId == null
+                ? modelMapper.findForRuntime(workspaceId, creatorId, userId).stream()
+                .filter(candidate -> !isEmbedding(candidate))
+                .findFirst().orElse(null)
+                : modelMapper.findProjectVisibleById(modelId, workspaceId, projectId, creatorId, userId);
         if (model == null || !model.isEnabled() || isEmbedding(model)) return Map.of();
         return Map.of("model", modelPayload(model));
     }
 
-    public Map<String, Object> resolveEmbeddingPayload(Long projectId, Long userId, Object embeddingId) {
-        ModelConfig embedding = resolveEmbedding(projectId, userId, embeddingId);
+    public Map<String, Object> resolveWorkspaceModelPayload(Long workspaceId, Long userId, Long modelId) {
+        ModelConfig model = modelMapper.findVisibleById(modelId, workspaceId, userId);
+        if (model == null || !model.isEnabled() || isEmbedding(model)) return Map.of();
+        return Map.of("model", modelPayload(model));
+    }
+
+    public Map<String, Object> resolveWorkspaceEmbeddingPayload(Long workspaceId, Long userId, Long embeddingId) {
+        ModelConfig embedding = modelMapper.findVisibleById(embeddingId, workspaceId, userId);
+        if (embedding == null || !embedding.isEnabled() || !isExternalEmbedding(embedding)) return Map.of();
+        return Map.of("embedding", embeddingPayload(embedding));
+    }
+
+    public Map<String, Object> resolveEmbeddingPayload(Long workspaceId, Long projectId, Long userId, Object embeddingId) {
+        Long creatorId = projectMapper.findCreatorId(projectId);
+        ModelConfig embedding = resolveEmbedding(workspaceId, projectId, creatorId, userId, embeddingId);
         if (embedding == null) return Map.of();
         return Map.of("embedding", embeddingPayload(embedding));
     }
@@ -51,23 +74,23 @@ public class RuntimeConfigResolver {
         return Map.of("webSearch", webPayload(webSearch));
     }
 
-    private ModelConfig resolveModel(Long projectId, Long userId, Object requestedId) {
+    private ModelConfig resolveModel(Long workspaceId, Long projectId, Long creatorId, Long userId, Object requestedId) {
         if (requestedId != null) {
-            ModelConfig requested = modelMapper.findById(asLong(requestedId), projectId, userId);
+            ModelConfig requested = modelMapper.findProjectVisibleById(asLong(requestedId), workspaceId, projectId, creatorId, userId);
             if (requested != null && requested.isEnabled() && !isEmbedding(requested)) return requested;
         }
-        return modelMapper.findForRuntime(projectId, userId).stream()
+        return modelMapper.findForRuntime(workspaceId, creatorId, userId).stream()
                 .filter(model -> !isEmbedding(model))
                 .findFirst()
                 .orElse(null);
     }
 
-    private ModelConfig resolveEmbedding(Long projectId, Long userId, Object requestedId) {
+    private ModelConfig resolveEmbedding(Long workspaceId, Long projectId, Long creatorId, Long userId, Object requestedId) {
         if (requestedId != null) {
-            ModelConfig requested = modelMapper.findById(asLong(requestedId), projectId, userId);
+            ModelConfig requested = modelMapper.findProjectVisibleById(asLong(requestedId), workspaceId, projectId, creatorId, userId);
             if (requested != null && requested.isEnabled() && isExternalEmbedding(requested)) return requested;
         }
-        return modelMapper.findForRuntime(projectId, userId).stream()
+        return modelMapper.findForRuntime(workspaceId, creatorId, userId).stream()
                 .filter(this::isExternalEmbedding)
                 .findFirst()
                 .orElse(null);
@@ -142,7 +165,7 @@ public class RuntimeConfigResolver {
         Map<String, Object> payload = new LinkedHashMap<>();
         String provider = tool.getProvider() == null ? "duckduckgo" : tool.getProvider().toLowerCase();
         payload.put("provider", provider);
-        payload.put("apiKey", "duckduckgo".equals(provider) ? "" : decrypt(tool.getCredentialCiphertext(), "联网搜索"));
+        payload.put("apiKey", "brave".equals(provider) ? decrypt(tool.getCredentialCiphertext(), "联网搜索") : "");
         payload.put("baseUrl", tool.getBaseUrl() == null || tool.getBaseUrl().isBlank() ? "https://html.duckduckgo.com/html/" : tool.getBaseUrl());
         payload.put("language", tool.getLanguage() == null || tool.getLanguage().isBlank() ? "zh-hans" : tool.getLanguage());
         return payload;

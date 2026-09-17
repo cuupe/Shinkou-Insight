@@ -1,6 +1,7 @@
 import httpx
 import pytest
 
+from tools.multi_source_search import MultiSourceWebSearch
 from tools.web import BraveWebSearch, DuckDuckGoWebSearch
 
 
@@ -92,3 +93,31 @@ async def test_duckduckgo_search_maps_redirected_html_results():
     assert results[0].url == "https://python.org/"
     assert results[0].source_type == "web"
     assert "<b>" not in results[0].content
+
+
+@pytest.mark.asyncio
+async def test_multi_source_search_fuses_general_and_technical_sources():
+    calls = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.host)
+        if request.url.host == "api.github.com":
+            return httpx.Response(
+                200,
+                json={"items": [{"full_name": "psycopg/psycopg", "html_url": "https://github.com/psycopg/psycopg", "description": "PostgreSQL driver"}]},
+                request=request,
+            )
+        raise AssertionError(f"unexpected host: {request.url.host}")
+
+    class General:
+        async def search(self, query: str, top_k: int = 5):
+            return []
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        search = MultiSourceWebSearch(client=client, general=General(), sources=["general", "github"])
+        results = await search.search("PostgreSQL technical implementation", top_k=3)
+
+    assert calls == ["api.github.com"]
+    assert results[0].url == "https://github.com/psycopg/psycopg"
+    assert results[0].fusion_score is not None

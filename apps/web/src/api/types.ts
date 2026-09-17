@@ -270,7 +270,7 @@ export interface KnowledgeAnswerResponse {
 export type AgentMessageRole = "user" | "assistant";
 
 export type AgentEventKind =
-    "chat" | "plan" | "search" | "tool" | "evidence" | "synthesis" | "reflection";
+    "chat" | "plan" | "search" | "tool" | "file" | "evidence" | "synthesis" | "reflection";
 
 export type AgentEventStatus = "pending" | "running" | "completed" | "failed";
 
@@ -280,8 +280,9 @@ export interface AgentCitation {
   source: string;
   quote: string;
   content?: string;
-  sourceType?: "internal" | "web" | string;
+  sourceType?: "internal" | "graph" | "web" | string;
   assetId?: number | string;
+  chunkId?: number | string;
   score?: string;
   pageNumber?: number;
   url?: string;
@@ -396,6 +397,7 @@ export interface AgentRunConfig {
   allowWebSearch?: boolean;
   reflectionEnabled?: boolean;
   strategy?: "AUTO" | "REACT" | "PLAN_AND_SOLVE" | "REFLECTION";
+  multiAgentMode?: "AUTO" | "ON" | "OFF";
   maxResearchRounds?: number;
   topK?: number;
   retrievalMode?: "VECTOR" | "KEYWORD" | "HYBRID";
@@ -424,6 +426,12 @@ export interface AgentRunMetrics {
   latencyMs?: number;
   usage?: TokenUsage;
   contextCompression?: ContextCompression;
+  multiAgent?: {
+    enabled?: boolean;
+    requested?: boolean;
+    fallback?: boolean;
+    reason?: string;
+  };
   delta?: boolean;
 }
 
@@ -480,6 +488,13 @@ export interface ResearchRun {
   [key: string]: unknown;
 }
 
+export interface ResearchPlanStep {
+  id: string;
+  objective: string;
+  action: "SEARCH_INTERNAL" | "SEARCH_GRAPH" | "SEARCH_WEB" | "SYNTHESIZE";
+  query?: string;
+}
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
@@ -490,6 +505,12 @@ export interface TokenUsage {
 }
 
 export interface ContextCompression {
+  providedContextMessages?: number;
+  selectedContextMessages?: number;
+  filteredMessages?: number;
+  modelContextWindow?: number;
+  contextTokenBudget?: number;
+  compressionTriggered?: number;
   originalChars?: number;
   finalChars?: number;
   compressedMessages?: number;

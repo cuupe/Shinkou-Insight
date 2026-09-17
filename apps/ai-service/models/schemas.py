@@ -60,6 +60,7 @@ class RuntimeWebSearchConfig(ApiModel):
     api_key: str = Field(default="", max_length=10_000)
     base_url: str = Field(min_length=1, max_length=1_000)
     language: str = "zh-hans"
+    sources: list[str] = Field(default_factory=list, max_length=8)
 
 
 class RuntimeEmbeddingConfig(ApiModel):
@@ -109,7 +110,7 @@ class Evidence(ApiModel):
     section_title: str | None = None
     score: float | None = None
     url: str | None = None
-    source_type: Literal["internal", "web"] = "internal"
+    source_type: Literal["internal", "graph", "web"] = "internal"
     asset_id: int | str | None = None
     asset_name: str | None = None
     vector_score: float | None = None
@@ -154,6 +155,20 @@ class ReviewResult(ApiModel):
     issues: list[str] = Field(default_factory=list)
     missing_citations: list[str] = Field(default_factory=list)
     rewrite_instructions: list[str] = Field(default_factory=list)
+    citation_completeness: float = Field(default=0.0, ge=0, le=1)
+    evidence_support: float = Field(default=0.0, ge=0, le=1)
+    factual_consistency: float = Field(default=0.0, ge=0, le=1)
+    numeric_consistency: float = Field(default=0.0, ge=0, le=1)
+    conflict_count: int = Field(default=0, ge=0)
+    risk_level: Literal["LOW", "MEDIUM", "HIGH", "BLOCKED"] = "MEDIUM"
+    blocking_issues: list[str] = Field(default_factory=list)
+
+
+class ReviewPolicy(ApiModel):
+    require_citations: bool = True
+    verify_numbers: bool = True
+    escalate_conflicts: bool = True
+    label_external: bool = True
 
 
 class ReflectionResult(ApiModel):
@@ -173,7 +188,7 @@ class ReActAction(ApiModel):
     separately so the UI can explain what happened safely.
     """
 
-    action: Literal["SEARCH_INTERNAL", "SEARCH_WEB", "FINAL"] = "FINAL"
+    action: Literal["SEARCH_INTERNAL", "SEARCH_GRAPH", "SEARCH_WEB", "FINAL"] = "FINAL"
     query: str = Field(default="", max_length=2_000)
     note: str = Field(default="", max_length=300)
 
@@ -183,7 +198,7 @@ class PlanStep(ApiModel):
 
     id: str = Field(min_length=1, max_length=40)
     objective: str = Field(min_length=1, max_length=500)
-    action: Literal["SEARCH_INTERNAL", "SEARCH_WEB", "SYNTHESIZE"] = "SYNTHESIZE"
+    action: Literal["SEARCH_INTERNAL", "SEARCH_GRAPH", "SEARCH_WEB", "SYNTHESIZE"] = "SYNTHESIZE"
     query: str = Field(default="", max_length=2_000)
 
 
@@ -191,6 +206,15 @@ class AgentPlan(ApiModel):
     """A bounded plan containing tasks, not hidden reasoning."""
 
     summary: str = Field(default="", max_length=500)
+    steps: list[PlanStep] = Field(default_factory=list, max_length=6)
+
+
+class PlanUpdateRequest(ApiModel):
+    """Versioned control message for an active research plan."""
+
+    mode: Literal["REPLACE", "APPEND", "PAUSE", "RESUME"] = "APPEND"
+    expected_version: int | None = Field(default=None, ge=0)
+    summary: str | None = Field(default=None, max_length=500)
     steps: list[PlanStep] = Field(default_factory=list, max_length=6)
 
 
@@ -204,12 +228,27 @@ class ResearchConfig(ApiModel):
     use_reranker: bool = False
     tool_max_calls: int = Field(default=10, ge=1, le=50)
     require_tool_approval: bool = True
+    disabled_tools: list[str] = Field(default_factory=list, max_length=100)
     reflection_enabled: bool = True
+    review_policy: ReviewPolicy = Field(default_factory=ReviewPolicy)
     # AUTO selects a suitable path per request. DIRECT is for internal callers
     # and is intentionally not exposed as a separate UI option.
     strategy: Literal["AUTO", "DIRECT", "REACT", "PLAN_AND_SOLVE", "REFLECTION"] = "AUTO"
+    # AUTO keeps routine chat on the single-agent path. Complex requests or
+    # explicit user wording can opt into the coordinator and its child agents.
+    multi_agent_mode: Literal["AUTO", "ON", "OFF"] = "AUTO"
     # 当后端没有解析出项目级模型时，作为默认模型的本次运行覆盖参数。
     generation: ModelGenerationConfig | None = None
+
+
+class AttachmentInput(ApiModel):
+    """Trusted object-storage reference for a user-uploaded chat attachment."""
+
+    attachment_id: int | str | None = None
+    file_name: str = Field(min_length=1, max_length=255)
+    mime_type: str | None = Field(default=None, max_length=255)
+    storage_key: str = Field(min_length=1, max_length=1_000)
+    file_size: int | None = Field(default=None, ge=0, le=100_000_000)
 
 
 class ExecuteRunRequest(ApiModel):
@@ -225,6 +264,7 @@ class ExecuteRunRequest(ApiModel):
     runtime_embedding: RuntimeEmbeddingConfig | None = None
     agent_message_id: str | None = None
     context_messages: list[ChatMessage] = Field(default_factory=list, max_length=40)
+    attachments: list[AttachmentInput] = Field(default_factory=list, max_length=10)
 
 
 class KnowledgeSearchRequest(ApiModel):
@@ -234,14 +274,28 @@ class KnowledgeSearchRequest(ApiModel):
     top_k: int = Field(default=8, ge=1, le=20)
     retrieval_mode: Literal["VECTOR", "KEYWORD", "HYBRID"] = "HYBRID"
     use_reranker: bool = False
+    fusion_method: Literal["RRF", "WEIGHTED_RRF", "LINEAR"] = "WEIGHTED_RRF"
+    candidate_k: int = Field(default=40, ge=1, le=200)
+    rank_constant: int = Field(default=60, ge=1, le=200)
+    vector_weight: float = Field(default=0.55, ge=0, le=1)
+    keyword_weight: float = Field(default=0.45, ge=0, le=1)
+    diversity_lambda: float = Field(default=0.9, ge=0, le=1)
+    rerank_top_k: int = Field(default=20, ge=1, le=200)
     filters: dict[str, Any] = Field(default_factory=dict)
     runtime_embedding: RuntimeEmbeddingConfig | None = None
+
+    @model_validator(mode="after")
+    def validate_search_weights(self) -> "KnowledgeSearchRequest":
+        if self.retrieval_mode == "HYBRID" and self.vector_weight == 0 and self.keyword_weight == 0:
+            raise ValueError("vector_weight and keyword_weight cannot both be zero")
+        return self
 
 
 class KnowledgeSearchResponse(ApiModel):
     query: str
     rewritten_queries: list[str] = Field(default_factory=list)
     items: list[Evidence]
+    search_trace: dict[str, Any] = Field(default_factory=dict)
 
 
 class RetrievalItem(Evidence):
@@ -252,6 +306,7 @@ class RetrievalResponse(ApiModel):
     query: str
     rewritten_queries: list[str] = Field(default_factory=list)
     items: list[RetrievalItem]
+    search_trace: dict[str, Any] = Field(default_factory=dict)
 
 
 class KnowledgeAnswerRequest(KnowledgeSearchRequest):
@@ -316,6 +371,9 @@ class IndexAssetResponse(ApiModel):
     embedding_dimension: int
     graph_entities: int = 0
     error_message: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class GraphSearchRequest(ApiModel):
@@ -350,3 +408,31 @@ class RunAccepted(ApiModel):
     run_id: int | str
     status: str
     events_url: str
+
+
+class AsyncToolCallRequest(ApiModel):
+    """Request for a non-blocking, auditable tool invocation."""
+
+    run_id: int | str
+    tool: str = Field(min_length=1, max_length=200)
+    input_data: dict[str, Any] = Field(default_factory=dict)
+    allow_writes: bool = False
+    confirmed: bool = False
+    call_id: str | None = Field(default=None, max_length=120)
+
+
+class ToolChainStepRequest(ApiModel):
+    id: str = Field(min_length=1, max_length=64)
+    tool: str = Field(min_length=1, max_length=200)
+    input_data: dict[str, Any] = Field(default_factory=dict)
+    depends_on: list[str] = Field(default_factory=list, max_length=32)
+    continue_on_error: bool = False
+
+
+class ToolChainRequest(ApiModel):
+    run_id: int | str
+    steps: list[ToolChainStepRequest] = Field(min_length=1, max_length=32)
+    allow_writes: bool = False
+    confirmed: bool = False
+    chain_id: str | None = Field(default=None, max_length=120)
+    timeout_seconds: float = Field(default=300, gt=0, le=1_800)

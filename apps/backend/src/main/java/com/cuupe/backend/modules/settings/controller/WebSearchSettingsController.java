@@ -45,8 +45,8 @@ public class WebSearchSettingsController {
         Long currentUserId = userId(auth);
         memberAccess(workspaceId, projectId, currentUserId);
         String provider = value(request.provider(), "brave").toLowerCase();
-        if (!"brave".equals(provider)) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "WEB_SEARCH_PROVIDER_UNSUPPORTED", "当前仅支持 Brave Search");
+        if (!"brave".equals(provider) && !"multi".equals(provider) && !"hybrid".equals(provider)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "WEB_SEARCH_PROVIDER_UNSUPPORTED", "当前支持 Brave Search 或多源混合搜索");
         }
         String baseUrl = request.baseUrl().trim();
         if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {

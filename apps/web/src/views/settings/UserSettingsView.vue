@@ -549,7 +549,7 @@ async function handleLogout() {
   align-items: center;
   gap: 0.25rem;
   color: var(--teal-dark);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .profile-heading {
   display: flex;
@@ -579,7 +579,7 @@ async function handleLogout() {
 .profile-heading span {
   margin-top: 0.25rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .preference-list {
   display: grid;
@@ -608,12 +608,12 @@ async function handleLogout() {
 }
 .preference-row strong {
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .preference-row small {
   margin-top: 0.25rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .switch-input {
   position: absolute;
@@ -672,12 +672,12 @@ async function handleLogout() {
 }
 .security-setting-row strong {
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .security-setting-row small {
   margin-top: 0.3125rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .password-dialog {
   max-width: 34rem !important;
@@ -707,7 +707,7 @@ async function handleLogout() {
 }
 .password-hint {
   color: var(--workspace-subtle);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .logout-row {
   margin-top: 0.625rem;

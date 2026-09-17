@@ -55,7 +55,7 @@ async function renderChart() {
       axisPointer: { type: "shadow" },
       backgroundColor: "rgba(20, 35, 41, 0.94)",
       borderWidth: 0,
-      textStyle: { color: "#ffffff", fontSize: 11 },
+      textStyle: { color: "#ffffff", fontSize: 12 },
       formatter: (params: Array<{ name: string; value: number }>) => {
         const point = params[0];
         const source = [...props.items].find((item) => item.label === point?.name);
@@ -67,7 +67,7 @@ async function renderChart() {
       min: 0,
       axisLine: { lineStyle: { color: gridColor } },
       axisTick: { show: false },
-      axisLabel: { color: axisColor, fontSize: 10 },
+      axisLabel: { color: axisColor, fontSize: 12 },
       splitLine: { lineStyle: { color: gridColor, type: "dashed" } },
     },
     yAxis: {
@@ -75,7 +75,7 @@ async function renderChart() {
       data: items.map((item) => item.label),
       axisLine: { show: false },
       axisTick: { show: false },
-      axisLabel: { color: textColor, fontSize: 10, width: 96, overflow: "truncate" },
+      axisLabel: { color: textColor, fontSize: 12, width: 96, overflow: "truncate" },
     },
     series: [{
       type: "bar",

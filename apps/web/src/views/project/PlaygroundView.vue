@@ -327,7 +327,7 @@ function openEvidence(result: RetrievalResult) {
   height: 1.8125rem;
   border-radius: 0.3125rem;
   font: inherit;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   cursor: pointer;
 }
 .mode-switch button.active {
@@ -347,7 +347,7 @@ function openEvidence(result: RetrievalResult) {
 }
 .range-line strong {
   color: #3a5357;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .toggle-row {
   display: flex;
@@ -365,11 +365,11 @@ function openEvidence(result: RetrievalResult) {
 }
 .toggle-row strong {
   color: #4b5d62;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .toggle-row small {
   color: #9aa7aa;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   line-height: 1.45;
   margin-top: 0.25rem;
 }
@@ -416,11 +416,11 @@ function openEvidence(result: RetrievalResult) {
 }
 .filter-box strong {
   color: #516369;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .filter-box span {
   color: #a1adb0;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   margin-top: 0.25rem;
 }
 .playground-controls .full-button {
@@ -445,12 +445,12 @@ function openEvidence(result: RetrievalResult) {
 }
 .playground-config-summary span {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .playground-config-summary strong {
   overflow: hidden;
   color: var(--workspace-text);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -473,13 +473,13 @@ function openEvidence(result: RetrievalResult) {
 .parameter-field > label,
 .parameter-switch strong {
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   font-weight: 650;
 }
 .parameter-field > small,
 .parameter-switch small {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 .parameter-field > input {
@@ -491,7 +491,7 @@ function openEvidence(result: RetrievalResult) {
   color: var(--workspace-text);
   padding: 0.4375rem 0.5625rem;
   font: inherit;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   outline: 0;
 }
 .parameter-field > input:focus {
@@ -534,7 +534,7 @@ function openEvidence(result: RetrievalResult) {
   color: var(--workspace-text);
   padding: 0.6875rem 0.75rem;
   font: inherit;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   line-height: 1.65;
   outline: 0;
 }
@@ -556,7 +556,7 @@ function openEvidence(result: RetrievalResult) {
   display: grid;
   gap: 0.375rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .playground-controls input[type="number"] {
   width: 100%;
@@ -566,7 +566,7 @@ function openEvidence(result: RetrievalResult) {
   color: var(--workspace-text);
   padding: 0.5rem 0.5625rem;
   font: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .playground-mode-select {
   width: 100%;
@@ -624,7 +624,7 @@ function openEvidence(result: RetrievalResult) {
 .retrieval-card small,
 .retrieval-card p {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .retrieval-source {
   display: inline-flex;
@@ -636,7 +636,7 @@ function openEvidence(result: RetrievalResult) {
   margin: 0.6875rem 0;
 }
 .retrieval-card .text-button {
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .retrieval-card .text-button:hover {
   padding-inline: 0.4375rem;
@@ -696,7 +696,7 @@ function openEvidence(result: RetrievalResult) {
   overflow: hidden;
   margin-top: 0.3125rem;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -719,7 +719,7 @@ function openEvidence(result: RetrievalResult) {
 }
 .evidence-score-grid span {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .evidence-score-grid strong {
   color: var(--workspace-text);
@@ -737,7 +737,7 @@ function openEvidence(result: RetrievalResult) {
 .evidence-quote blockquote {
   margin: 0;
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   line-height: 1.75;
 }
 .evidence-note {
@@ -745,7 +745,7 @@ function openEvidence(result: RetrievalResult) {
   align-items: center;
   gap: 0.4375rem;
   color: var(--teal-dark);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .results-header {
   display: flex;
@@ -760,7 +760,7 @@ function openEvidence(result: RetrievalResult) {
 }
 .results-header p {
   color: #9ba8ab;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   margin: 0.3125rem 0 0;
 }
 .result-card {
@@ -798,7 +798,7 @@ function openEvidence(result: RetrievalResult) {
   padding: 0;
   margin-top: 0.4375rem;
   font: inherit;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   cursor: pointer;
 }
 .source-link:hover {
@@ -814,13 +814,13 @@ function openEvidence(result: RetrievalResult) {
 .score-total small {
   color: #a1adaf;
   display: block;
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   font-weight: 500;
   margin-top: 0.0625rem;
 }
 .result-text {
   color: #68787d;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   line-height: 1.7;
   margin: 0.9375rem 0 0.8125rem;
 }
@@ -830,7 +830,7 @@ function openEvidence(result: RetrievalResult) {
   border-top: 0.0625rem solid #edf1f1;
   padding-top: 0.6875rem;
   color: #a0acae;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .score-row strong {
   color: #60767a;

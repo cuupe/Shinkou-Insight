@@ -21,6 +21,7 @@ withDefaults(
 
 const emit = defineEmits<{
   "update:modelValue": [value: string];
+  submit: [];
 }>();
 
 function handleInput(event: Event) {
@@ -38,6 +39,7 @@ function handleInput(event: Event) {
       type="search"
       autocomplete="off"
       @input="handleInput"
+      @keydown.enter.prevent="emit('submit')"
     />
     <kbd v-if="shortcut">{{ shortcut }}</kbd>
   </label>
@@ -79,7 +81,7 @@ function handleInput(event: Event) {
   background: transparent;
   color: var(--workspace-text);
   font: inherit;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 
 .search-field input::placeholder {
@@ -96,7 +98,7 @@ function handleInput(event: Event) {
   border: 0.0625rem solid var(--workspace-border);
   border-radius: 0.25rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   line-height: 1.2;
 }
 

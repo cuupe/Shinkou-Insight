@@ -1,11 +1,95 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.cuupe.backend.modules.settings.mapper.ModelConfigMapper">
-	<sql id="c">id,project_id,name,provider,model_id,endpoint,auth_type,credential_ciphertext,(credential_ciphertext IS NOT NULL) AS has_credential,config,enabled,scope,created_by,created_at,updated_at</sql>
-	<select id="findByProject" resultType="com.cuupe.backend.modules.settings.entity.ModelConfig">SELECT <include refid="c"/> FROM project_model_configs WHERE project_id=#{projectId} AND created_by=#{userId} AND EXISTS(SELECT 1 FROM projects p JOIN workspace_members wm ON wm.workspace_id=p.workspace_id WHERE p.id=#{projectId} AND wm.user_id=#{userId} AND wm.status='ACTIVE') ORDER BY updated_at DESC</select>
-	<select id="findForRuntime" resultType="com.cuupe.backend.modules.settings.entity.ModelConfig">SELECT <include refid="c"/> FROM project_model_configs WHERE project_id=#{projectId} AND enabled=TRUE AND created_by=#{userId} ORDER BY updated_at DESC</select>
-	<select id="findById" resultType="com.cuupe.backend.modules.settings.entity.ModelConfig">SELECT <include refid="c"/> FROM project_model_configs WHERE id=#{id} AND project_id=#{projectId} AND created_by=#{userId} AND EXISTS(SELECT 1 FROM projects p JOIN workspace_members wm ON wm.workspace_id=p.workspace_id WHERE p.id=#{projectId} AND wm.user_id=#{userId} AND wm.status='ACTIVE')</select>
-	<insert id="insert" useGeneratedKeys="true" keyProperty="id">INSERT INTO project_model_configs(project_id,name,provider,model_id,endpoint,auth_type,credential_ciphertext,config,enabled,scope,created_by) VALUES(#{projectId},#{name},#{provider},#{modelId},#{endpoint},#{authType},#{credentialCiphertext},CAST(#{config} AS jsonb),#{enabled},#{scope},#{createdBy})</insert>
-	<update id="update">UPDATE project_model_configs SET name=#{name},provider=#{provider},model_id=#{modelId},endpoint=#{endpoint},auth_type=#{authType},credential_ciphertext=COALESCE(#{credentialCiphertext},credential_ciphertext),config=CAST(#{config} AS jsonb),enabled=#{enabled},scope=#{scope},updated_at=CURRENT_TIMESTAMP WHERE id=#{id} AND project_id=#{projectId}</update>
-	<delete id="delete">DELETE FROM project_model_configs WHERE id=#{id} AND project_id=#{projectId}</delete>
+    <sql id="c">m.id,m.workspace_id,m.name,m.provider,m.model_id,m.endpoint,m.auth_type,m.credential_ciphertext,(m.credential_ciphertext IS NOT NULL) AS has_credential,m.config,m.enabled,m.default_model,(m.created_by=#{userId}) AS editable,m.created_by,m.created_at,m.updated_at</sql>
+
+    <select id="findForManagement" resultType="com.cuupe.backend.modules.settings.entity.ModelConfig">
+        SELECT <include refid="c"/> FROM workspace_model_configs m
+        WHERE m.workspace_id=#{workspaceId}
+          AND (m.created_by=#{userId} OR m.default_model=TRUE)
+          AND EXISTS (SELECT 1 FROM workspace_members wm WHERE wm.workspace_id=m.workspace_id AND wm.user_id=#{userId} AND wm.status='ACTIVE')
+        ORDER BY CASE WHEN m.created_by=#{userId} THEN 0 ELSE 1 END,
+                 CASE WHEN m.default_model=TRUE THEN 0 ELSE 1 END,
+                 m.updated_at DESC, m.id DESC
+    </select>
+
+    <select id="findForProject" resultType="com.cuupe.backend.modules.settings.entity.ModelConfig">
+        SELECT <include refid="c"/> FROM workspace_model_configs m
+        WHERE m.workspace_id=#{workspaceId}
+          AND (m.default_model=TRUE OR EXISTS (
+              SELECT 1 FROM workspace_members owner
+              WHERE owner.workspace_id=m.workspace_id AND owner.user_id=m.created_by AND owner.status='ACTIVE'
+          ))
+          AND EXISTS (SELECT 1 FROM projects p JOIN workspace_members wm ON wm.workspace_id=p.workspace_id
+                      WHERE p.id=#{projectId} AND p.workspace_id=#{workspaceId} AND wm.user_id=#{userId} AND wm.status='ACTIVE')
+        ORDER BY CASE WHEN m.created_by=#{creatorId} THEN 0
+                      WHEN m.created_by=#{userId} THEN 1
+                      WHEN m.default_model=TRUE THEN 2 ELSE 3 END,
+                 m.updated_at DESC, m.id DESC
+    </select>
+
+    <select id="findProjectVisibleById" resultType="com.cuupe.backend.modules.settings.entity.ModelConfig">
+        SELECT <include refid="c"/> FROM workspace_model_configs m
+        WHERE m.id=#{id} AND m.workspace_id=#{workspaceId}
+          AND (m.default_model=TRUE OR EXISTS (
+              SELECT 1 FROM workspace_members owner
+              WHERE owner.workspace_id=m.workspace_id AND owner.user_id=m.created_by AND owner.status='ACTIVE'
+          ))
+          AND EXISTS (SELECT 1 FROM projects p JOIN workspace_members wm ON wm.workspace_id=p.workspace_id
+                      WHERE p.id=#{projectId} AND p.workspace_id=#{workspaceId} AND wm.user_id=#{userId} AND wm.status='ACTIVE')
+    </select>
+
+    <select id="findForRuntime" resultType="com.cuupe.backend.modules.settings.entity.ModelConfig">
+        SELECT <include refid="c"/> FROM workspace_model_configs m
+        WHERE m.workspace_id=#{workspaceId}
+          AND m.enabled=TRUE
+          AND (m.default_model=TRUE OR EXISTS (
+              SELECT 1 FROM workspace_members owner
+              WHERE owner.workspace_id=m.workspace_id AND owner.user_id=m.created_by AND owner.status='ACTIVE'
+          ))
+        ORDER BY CASE WHEN m.created_by=#{creatorId} THEN 0
+                      WHEN m.created_by=#{userId} THEN 1
+                      WHEN m.default_model=TRUE THEN 2 ELSE 3 END,
+                 m.updated_at DESC, m.id DESC
+    </select>
+
+    <select id="findVisibleById" resultType="com.cuupe.backend.modules.settings.entity.ModelConfig">
+        SELECT <include refid="c"/> FROM workspace_model_configs m
+        WHERE m.id=#{id} AND m.workspace_id=#{workspaceId}
+          AND (m.created_by=#{userId} OR m.default_model=TRUE)
+          AND EXISTS (SELECT 1 FROM workspace_members wm WHERE wm.workspace_id=m.workspace_id AND wm.user_id=#{userId} AND wm.status='ACTIVE')
+    </select>
+
+    <select id="findOwnedById" resultType="com.cuupe.backend.modules.settings.entity.ModelConfig">
+        SELECT <include refid="c"/> FROM workspace_model_configs m
+        WHERE m.id=#{id} AND m.workspace_id=#{workspaceId} AND m.created_by=#{userId}
+          AND EXISTS (SELECT 1 FROM workspace_members wm WHERE wm.workspace_id=m.workspace_id AND wm.user_id=#{userId} AND wm.status='ACTIVE')
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO workspace_model_configs(workspace_id,name,provider,model_id,endpoint,auth_type,credential_ciphertext,config,enabled,default_model,created_by)
+        VALUES(#{workspaceId},#{name},#{provider},#{modelId},#{endpoint},#{authType},#{credentialCiphertext},CAST(#{config} AS jsonb),#{enabled},#{defaultModel},#{createdBy})
+    </insert>
+
+    <update id="update">
+        UPDATE workspace_model_configs
+        SET name=#{name},provider=#{provider},model_id=#{modelId},endpoint=#{endpoint},auth_type=#{authType},
+            credential_ciphertext=COALESCE(#{credentialCiphertext},credential_ciphertext),config=CAST(#{config} AS jsonb),
+            enabled=#{enabled},updated_at=CURRENT_TIMESTAMP
+        WHERE id=#{id} AND workspace_id=#{workspaceId} AND created_by=#{createdBy}
+    </update>
+
+    <delete id="delete">
+        DELETE FROM workspace_model_configs WHERE id=#{id} AND workspace_id=#{workspaceId} AND created_by=#{userId}
+    </delete>
+
+    <update id="clearDefault">
+        UPDATE workspace_model_configs SET default_model=FALSE, updated_at=CURRENT_TIMESTAMP
+        WHERE workspace_id=#{workspaceId} AND default_model=TRUE
+    </update>
+
+    <update id="setDefault">
+        UPDATE workspace_model_configs SET default_model=TRUE, updated_at=CURRENT_TIMESTAMP
+        WHERE id=#{id} AND workspace_id=#{workspaceId} AND created_by=#{userId} AND enabled=TRUE
+    </update>
 </mapper>

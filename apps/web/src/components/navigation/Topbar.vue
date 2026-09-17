@@ -151,6 +151,17 @@ function toggleMobileMenu() {
   mobileOpen.value = !mobileOpen.value;
 }
 
+function submitSearch() {
+  if (!searchQuery.value.trim()) return;
+  if (!selectedProject.value?.id) {
+    notify("请先创建项目");
+    return;
+  }
+  if (currentName.value !== "project-assets") {
+    router.push(routeTo("project-assets"));
+  }
+}
+
 async function handleLogout() {
   if (loggingOut.value) return;
 
@@ -229,9 +240,10 @@ onBeforeUnmount(() => {
     <div class="topbar-actions">
       <SearchField
         v-model="searchQuery"
+        @submit="submitSearch"
         variant="topbar"
-        placeholder="搜索知识库、报告…"
-        aria-label="搜索知识库、报告"
+        placeholder="搜索当前项目资料…"
+        aria-label="搜索当前项目资料"
         shortcut="⌘ K"
       />
 
@@ -606,7 +618,7 @@ onBeforeUnmount(() => {
   background: var(--teal);
   color: #ffffff;
 
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   font-weight: 700;
   line-height: 0.75rem;
   text-align: center;
@@ -659,7 +671,7 @@ onBeforeUnmount(() => {
 
 .notification-popover-heading small {
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 
 .notification-popover-heading button,
@@ -672,7 +684,7 @@ onBeforeUnmount(() => {
   color: var(--teal-dark);
 
   font: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   cursor: pointer;
 }
 
@@ -786,7 +798,7 @@ onBeforeUnmount(() => {
 .notification-item-copy strong {
   overflow: hidden;
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   font-weight: 700;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -796,7 +808,7 @@ onBeforeUnmount(() => {
   display: -webkit-box;
   overflow: hidden;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   line-height: 1.45;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -804,7 +816,7 @@ onBeforeUnmount(() => {
 
 .notification-item-copy em {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   font-style: normal;
 }
 
@@ -835,7 +847,7 @@ onBeforeUnmount(() => {
 }
 
 .notification-empty span {
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 
 .notification-view-all {
@@ -851,7 +863,7 @@ onBeforeUnmount(() => {
   background: transparent;
   color: var(--teal-dark);
   font: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-weight: 600;
   cursor: pointer;
 }
@@ -903,7 +915,7 @@ onBeforeUnmount(() => {
 
   color: var(--workspace-text);
 
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   font-weight: 600;
 
   white-space: nowrap;
@@ -947,12 +959,12 @@ onBeforeUnmount(() => {
 
 .user-popover-heading strong {
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 
 .user-popover-heading small {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 
 .user-popover-divider {
@@ -984,7 +996,7 @@ onBeforeUnmount(() => {
   text-align: left;
 
   font: inherit;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 
   cursor: pointer;
 
@@ -1049,7 +1061,7 @@ onBeforeUnmount(() => {
 
   color: #ecfffb;
 
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 
   box-shadow: 0 0.75rem 1.875rem rgb(13 53 49 / 20%);
 }

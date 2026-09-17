@@ -403,12 +403,12 @@ function exportProjectSnapshot() {
 }
 .planning-callout strong {
   color: var(--workspace-text);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .planning-callout p {
   margin: 0.25rem 0 0;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   line-height: 1.55;
 }
 .overview-grid > .panel {
@@ -458,7 +458,7 @@ function exportProjectSnapshot() {
 .token-summary-grid span {
   margin-top: 0.3125rem;
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .token-usage-grid {
   display: grid;
@@ -483,11 +483,11 @@ function exportProjectSnapshot() {
 }
 .usage-subheading strong {
   color: var(--workspace-text);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .usage-subheading span {
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .token-heatmap {
   display: grid;
@@ -519,7 +519,7 @@ function exportProjectSnapshot() {
   gap: 0.25rem;
   margin-top: 0.5rem;
   color: var(--workspace-muted);
-  font-size: 0.4375rem;
+  font-size: 0.75rem;
 }
 .heatmap-legend i {
   width: 0.625rem;
@@ -571,12 +571,12 @@ function exportProjectSnapshot() {
 }
 .user-bar-row strong {
   color: var(--workspace-text);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .user-bar-row small,
 .user-bar-row > span {
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .user-bar-track {
   height: 0.4375rem;
@@ -593,7 +593,7 @@ function exportProjectSnapshot() {
 .usage-empty {
   margin: 1rem 0;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .token-usage-chart {
   width: 100%;
@@ -613,7 +613,7 @@ function exportProjectSnapshot() {
   gap: 0.5rem;
   min-width: 0;
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .token-breakdown-row > span {
   min-width: 0;
@@ -635,7 +635,7 @@ function exportProjectSnapshot() {
 .token-breakdown-header {
   padding-bottom: 0.25rem;
   color: var(--workspace-subtle);
-  font-size: 0.4375rem;
+  font-size: 0.75rem;
 }
 .token-breakdown-header > span:first-child {
   color: var(--workspace-subtle);
@@ -645,7 +645,7 @@ function exportProjectSnapshot() {
 }
 .statistics-source {
   color: var(--teal-dark);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   white-space: nowrap;
 }
 .project-stat-grid {
@@ -673,7 +673,7 @@ function exportProjectSnapshot() {
 .project-stat-grid span {
   margin-top: 0.375rem;
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   line-height: 1.45;
 }
 .statistics-breakdowns {
@@ -693,7 +693,7 @@ function exportProjectSnapshot() {
 .breakdown-title {
   width: 100%;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .breakdown-item,
 .breakdown-empty {
@@ -701,7 +701,7 @@ function exportProjectSnapshot() {
   border-radius: 999px;
   background: color-mix(in oklab, var(--teal) 9%, var(--surface));
   color: var(--teal-dark);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .breakdown-empty {
   color: var(--workspace-muted);
@@ -730,7 +730,7 @@ function exportProjectSnapshot() {
 }
 .asset-health span {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .health-progress {
   display: grid;
@@ -742,11 +742,11 @@ function exportProjectSnapshot() {
   align-items: center;
   justify-content: space-between;
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .health-progress strong {
   color: var(--teal-dark);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .health-progress > i {
   display: block;
@@ -934,13 +934,13 @@ function exportProjectSnapshot() {
 }
 .follow-up-copy strong {
   color: var(--workspace-text);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   font-weight: 650;
 }
 .follow-up-copy small,
 .follow-up-priority {
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .follow-up-priority {
   flex: 0 0 auto;
@@ -948,20 +948,20 @@ function exportProjectSnapshot() {
 }
 .recent-run-copy strong {
   color: var(--workspace-text);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   font-weight: 650;
 }
 .recent-run-copy small {
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .capability-list strong {
   color: var(--workspace-text);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .capability-list small {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   margin-top: 0.25rem;
 }
 .health-ring {
@@ -996,7 +996,7 @@ function exportProjectSnapshot() {
 }
 .health-ring small {
   color: #91a2a3;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   margin-top: 0.1875rem;
 }
 .health-list {
@@ -1011,7 +1011,7 @@ function exportProjectSnapshot() {
 }
 .health-list span {
   color: #849398;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .health-list strong {
   color: #3a4d52;
@@ -1052,14 +1052,14 @@ function exportProjectSnapshot() {
 }
 .mini-run strong {
   color: #3c4d52;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .mini-run small {
   color: #9aa7a9;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   margin-top: 0.25rem;
 }
 .report-highlight {
@@ -1083,11 +1083,11 @@ function exportProjectSnapshot() {
 }
 .report-highlight strong {
   color: #315052;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .report-highlight p {
   color: #899fa0;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   margin: 0.375rem 0 0;
 }
 
@@ -1120,11 +1120,11 @@ function exportProjectSnapshot() {
 }
 .upload-zone strong {
   color: #37625f;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .upload-zone p {
   color: #89a7a3;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   margin: 0.375rem 0 0;
 }
 

@@ -24,6 +24,7 @@ class ResearchState(TypedDict, total=False):
     evaluation: dict[str, Any] | None
     report_draft: dict[str, Any] | None
     review_result: dict[str, Any] | None
+    review_policy: dict[str, Any]
     errors: list[dict[str, Any]]
     cancelled: bool
     review_attempts: int

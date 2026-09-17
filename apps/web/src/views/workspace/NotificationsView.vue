@@ -60,7 +60,7 @@ function openNotification(notification: NotificationItem) {
       title="通知中心"
       subtitle="集中查看调研、知识库、报告和工作区中的最新动态。"
     >
-      <template #actions>
+      <template #action>
         <button
           class="notifications-mark-all"
           type="button"
@@ -179,7 +179,7 @@ function openNotification(notification: NotificationItem) {
   background: var(--surface);
   color: var(--workspace-muted);
   font: inherit;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   cursor: pointer;
 }
 
@@ -219,7 +219,7 @@ function openNotification(notification: NotificationItem) {
 .notifications-summary-card span,
 .notifications-summary-card small {
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 
 .notifications-summary-card strong {
@@ -251,7 +251,7 @@ function openNotification(notification: NotificationItem) {
 
 .section-kicker {
   color: var(--teal-dark);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.12em;
 }
@@ -274,7 +274,7 @@ function openNotification(notification: NotificationItem) {
   background: transparent;
   color: var(--workspace-muted);
   font: inherit;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   cursor: pointer;
 }
 
@@ -356,7 +356,7 @@ function openNotification(notification: NotificationItem) {
   border-radius: 999px;
   background: var(--teal-soft);
   color: var(--teal-dark);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   font-style: normal;
   font-weight: 700;
 }
@@ -364,20 +364,20 @@ function openNotification(notification: NotificationItem) {
 .notifications-feed-copy small {
   overflow: hidden;
   color: var(--workspace-muted);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .notifications-feed-copy em {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   font-style: normal;
 }
 
 .notifications-feed-arrow {
   color: var(--teal-dark);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   opacity: 0;
   transition: opacity 160ms ease;
 }
@@ -398,7 +398,7 @@ function openNotification(notification: NotificationItem) {
 
 .notifications-page-empty svg { color: var(--teal); }
 .notifications-page-empty strong { color: var(--workspace-text); font-size: 0.875rem; }
-.notifications-page-empty span { font-size: 0.6875rem; }
+.notifications-page-empty span { font-size:0.8125rem; }
 
 @media (max-width: 47.5rem) {
   .notifications-summary { grid-template-columns: 1fr; }

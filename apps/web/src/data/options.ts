@@ -13,7 +13,7 @@ export const assetDetailCopy = {
 };
 
 export const timezoneOptions = [
-  { value: "zh-CN", label: "中国标准时间（UTC+8）" },
-  { value: "en-US", label: "美国标准时间（UTC-5）" },
+  { value: "Asia/Shanghai", label: "中国标准时间（UTC+8）" },
+  { value: "America/New_York", label: "美国东部时间（UTC-5）" },
   { value: "UTC", label: "协调世界时（UTC）" },
 ];

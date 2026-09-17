@@ -27,6 +27,7 @@ services:
       WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-brave}
       WEB_SEARCH_BASE_URL: ${WEB_SEARCH_BASE_URL:-https://api.search.brave.com/res/v1/web/search}
       WEB_SEARCH_LANGUAGE: ${WEB_SEARCH_LANGUAGE:-zh-hans}
+      WEB_SEARCH_SOURCES: ${WEB_SEARCH_SOURCES:-general,arxiv,openalex,crossref,github,stackoverflow}
       STORAGE_MODE: ${STORAGE_MODE:-minio}
       MINIO_ENDPOINT: ${AI_MINIO_ENDPOINT:-http://minio:9000}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-shinkou_minio}
@@ -43,8 +44,24 @@ services:
       MCP_API_KEY: ${MCP_API_KEY:-local-dev-key}
       MCP_ALLOWED_TOOLS: ${MCP_ALLOWED_TOOLS:-search_knowledge,search_graph}
       MCP_TIMEOUT_SECONDS: ${MCP_TIMEOUT_SECONDS:-15}
+      CUSTOM_TOOLS_ENABLED: ${CUSTOM_TOOLS_ENABLED:-true}
+      CUSTOM_TOOLS_DIR: ${CUSTOM_TOOLS_DIR:-custom_tools}
+      CUSTOM_TOOLS_MODULES: ${CUSTOM_TOOLS_MODULES:-}
+      CUSTOM_TOOLS_STRICT: ${CUSTOM_TOOLS_STRICT:-false}
+      FILE_OCR_ENABLED: ${FILE_OCR_ENABLED:-true}
+      FILE_OCR_LANGUAGES: ${FILE_OCR_LANGUAGES:-chi_sim+eng}
+      FILE_PDF_DPI: ${FILE_PDF_DPI:-180}
+      FILE_MAX_OCR_PAGES: ${FILE_MAX_OCR_PAGES:-100}
+      FILE_MAX_VIDEO_FRAMES: ${FILE_MAX_VIDEO_FRAMES:-8}
+      FILE_WHISPER_MODEL: ${FILE_WHISPER_MODEL:-base}
+      FILE_WHISPER_DEVICE: ${FILE_WHISPER_DEVICE:-cpu}
+      FILE_WHISPER_COMPUTE_TYPE: ${FILE_WHISPER_COMPUTE_TYPE:-int8}
+      FILE_ANALYSIS_TIMEOUT_SECONDS: ${FILE_ANALYSIS_TIMEOUT_SECONDS:-180}
+      FILE_ANALYSIS_MAX_CHARS: ${FILE_ANALYSIS_MAX_CHARS:-20000}
     ports:
       - "${AI_SERVICE_PORT:-8000}:8000"
+    volumes:
+      - ./apps/ai-service/custom_tools:/app/custom_tools
     depends_on:
       postgres:
         condition: service_healthy

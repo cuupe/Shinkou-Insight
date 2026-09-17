@@ -8,6 +8,9 @@ import com.cuupe.backend.modules.research.mapper.ResearchRunMapper;
 import com.cuupe.backend.modules.ai.AiIndexingClient;
 import com.cuupe.backend.modules.ai.RuntimeConfigResolver;
 import com.cuupe.backend.modules.notification.service.NotificationService;
+import com.cuupe.backend.modules.project.mapper.ProjectMapper;
+import com.cuupe.backend.modules.project.entity.ProjectReviewPolicy;
+import com.cuupe.backend.modules.project.mapper.ProjectReviewMapper;
 import com.cuupe.backend.modules.user.security.UserLoginByPassword;
 import com.cuupe.backend.modules.workspace.entity.Workspace;
 import com.cuupe.backend.modules.workspace.mapper.WorkspaceMapper;
@@ -33,6 +36,8 @@ public class ResearchRunController {
     private final RuntimeConfigResolver runtimeConfigResolver;
     private final AuditLogService auditLogService;
     private final WorkspaceMapper workspaceMapper;
+    private final ProjectMapper projectMapper;
+    private final ProjectReviewMapper projectReviewMapper;
 
     @GetMapping
     public Result<List<ResearchRun>> list(@PathVariable Long projectId, Authentication auth) {
@@ -74,8 +79,15 @@ public class ResearchRunController {
     }
 
     @GetMapping("/{runId}")
-    public Result<ResearchRun> detail(@PathVariable Long projectId, @PathVariable Long runId, Authentication auth) {
-        return Result.success(required(runId, projectId, userId(auth)));
+    public Result<Map<String, Object>> detail(@PathVariable Long projectId, @PathVariable Long runId, Authentication auth) {
+        ResearchRun run = required(runId, projectId, userId(auth));
+        Map<String, Object> detail = new LinkedHashMap<>(objectMapper.convertValue(run, Map.class));
+        try {
+            detail.putAll(aiClient.runDetail(String.valueOf(runId)));
+        } catch (Exception ignored) {
+            // The Java record remains available while the AI service is restarting.
+        }
+        return Result.success(detail);
     }
 
     @PostMapping("/{runId}/cancel")
@@ -95,6 +107,27 @@ public class ResearchRunController {
         ResearchRun run = required(runId, projectId, userId);
         dispatch(run, workspaceId, userId, readConfig(run.getConfig()));
         return result;
+    }
+
+    @PatchMapping("/{runId}/plan")
+    public Result<Map<String, Object>> updatePlan(
+            @PathVariable Long workspaceId,
+            @PathVariable Long projectId,
+            @PathVariable Long runId,
+            @RequestBody Map<String, Object> body,
+            Authentication auth
+    ) {
+        Long userId = userId(auth);
+        requiredWriteProject(workspaceId, projectId, userId);
+        required(runId, projectId, userId);
+        try {
+            Map<String, Object> response = aiClient.updatePlan(String.valueOf(runId), body);
+            auditLogService.record(workspaceId, projectId, userId, "RESEARCH_PLAN_UPDATED", "RESEARCH_RUN", runId,
+                    Map.of("mode", String.valueOf(body.getOrDefault("mode", "APPEND"))));
+            return Result.success(response);
+        } catch (Exception exception) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "RESEARCH_PLAN_UPDATE_FAILED", "AI 计划更新失败：" + exception.getMessage());
+        }
     }
 
     private String toConfig(Map<String, Object> body) {
@@ -119,9 +152,9 @@ public class ResearchRunController {
         Long resolvedWorkspaceId = workspaceId;
         Thread.startVirtualThread(() -> {
             try {
-                Map<String, Object> runtime = runtimeConfigResolver.resolve(run.getProjectId(), userId, requestConfig);
+                Map<String, Object> runtime = runtimeConfigResolver.resolve(resolvedWorkspaceId, run.getProjectId(), userId, requestConfig);
                 Map<String, Object> config = readConfig(run.getConfig());
-                config.putAll(agentPolicy(resolvedWorkspaceId, userId));
+                config.putAll(agentPolicy(resolvedWorkspaceId, run.getProjectId(), userId));
                 aiClient.executeRun(run.getId(), resolvedWorkspaceId, run.getProjectId(), userId, run.getGoal(), objectMapper.writeValueAsString(config), runtime);
             } catch (Exception exception) {
                 mapper.updateStatus(run.getId(), run.getProjectId(), userId, "FAILED");
@@ -129,19 +162,43 @@ public class ResearchRunController {
         });
     }
 
+    private void requiredWriteProject(Long workspaceId, Long projectId, Long userId) {
+        if (projectMapper.findAccessibleById(workspaceId, projectId, userId) == null) throw notFound();
+        if (!projectMapper.hasWriteAccess(workspaceId, projectId, userId)) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "RESEARCH_PLAN_FORBIDDEN", "只有项目创建者或管理员可以修改执行计划");
+        }
+    }
+
     @SuppressWarnings("unchecked")
-    private Map<String, Object> agentPolicy(Long workspaceId, Long userId) {
+    private Map<String, Object> agentPolicy(Long workspaceId, Long projectId, Long userId) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        ProjectReviewPolicy reviewPolicy = projectReviewMapper.findPolicy(workspaceId, projectId);
+        if (reviewPolicy != null) {
+            result.put("reviewPolicy", Map.of(
+                    "requireCitations", reviewPolicy.isRequireCitations(),
+                    "verifyNumbers", reviewPolicy.isVerifyNumbers(),
+                    "escalateConflicts", reviewPolicy.isEscalateConflicts(),
+                    "labelExternal", reviewPolicy.isLabelExternal()));
+        }
         Workspace workspace = workspaceMapper.findAccessible(workspaceId, userId);
-        if (workspace == null || workspace.getPreferences() == null || workspace.getPreferences().isBlank()) return Map.of();
+        if (workspace == null || workspace.getPreferences() == null || workspace.getPreferences().isBlank()) return result;
         try {
             Map<String, Object> preferences = objectMapper.readValue(workspace.getPreferences(), Map.class);
             Object raw = preferences.get("agentPolicy");
-            if (!(raw instanceof Map<?, ?> policy)) return Map.of();
-            Map<String, Object> result = new LinkedHashMap<>();
-            if (policy.get("maxCalls") != null) result.put("toolMaxCalls", policy.get("maxCalls"));
-            if (policy.get("requireApproval") != null) result.put("requireToolApproval", policy.get("requireApproval"));
+            if (raw instanceof Map<?, ?> policy) {
+                if (policy.get("maxCalls") != null) result.put("toolMaxCalls", policy.get("maxCalls"));
+                if (policy.get("requireApproval") != null) result.put("requireToolApproval", policy.get("requireApproval"));
+            }
+            Object localTools = preferences.get("localTools");
+            if (localTools instanceof Map<?, ?> configuredTools) {
+                List<String> disabledTools = new java.util.ArrayList<>();
+                for (Map.Entry<?, ?> entry : configuredTools.entrySet()) {
+                    if (Boolean.FALSE.equals(entry.getValue())) disabledTools.add(String.valueOf(entry.getKey()));
+                }
+                if (!disabledTools.isEmpty()) result.put("disabledTools", disabledTools);
+            }
             return result;
-        } catch (Exception ignored) { return Map.of(); }
+        } catch (Exception ignored) { return result; }
     }
 
     @SuppressWarnings("unchecked")

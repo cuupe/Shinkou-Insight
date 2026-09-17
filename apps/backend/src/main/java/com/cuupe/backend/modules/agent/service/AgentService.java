@@ -349,7 +349,8 @@ public class AgentService {
             if (eventType.startsWith("node.")) {
                 String node = String.valueOf(payload.getOrDefault("node", "agent"));
                 String status = eventType.endsWith("started") ? "running" : "completed";
-                publishStep(run, node.toLowerCase(Locale.ROOT), String.valueOf(payload.getOrDefault("title", node)), String.valueOf(payload.getOrDefault("detail", "")), status, payload);
+                String kind = "ATTACHMENT_ANALYSIS".equalsIgnoreCase(node) ? "file" : node.toLowerCase(Locale.ROOT);
+                publishStep(run, kind, String.valueOf(payload.getOrDefault("title", node)), String.valueOf(payload.getOrDefault("detail", "")), status, payload);
                 return;
             }
             if (eventType.startsWith("tool.")) {
@@ -415,6 +416,7 @@ public class AgentService {
                 if (payload.get("startedAt") != null) completion.put("startedAt", payload.get("startedAt"));
                 if (payload.get("durationMs") != null) completion.put("durationMs", payload.get("durationMs"));
                 if (payload.get("strategy") != null) completion.put("strategy", payload.get("strategy"));
+                if (payload.get("multiAgent") != null) completion.put("multiAgent", payload.get("multiAgent"));
                 publish(run, "run.completed", completion);
                 completeSubscribers(runKey);
                 return;
@@ -481,6 +483,7 @@ public class AgentService {
             putIfPresent(config, "allowWebSearch", request.getAllowWebSearch());
             putIfPresent(config, "reflectionEnabled", request.getReflectionEnabled());
             putIfPresent(config, "strategy", request.getStrategy());
+            putIfPresent(config, "multiAgentMode", request.getMultiAgentMode());
             putIfPresent(config, "maxResearchRounds", request.getMaxResearchRounds());
             putIfPresent(config, "topK", request.getTopK());
             putIfPresent(config, "retrievalMode", request.getRetrievalMode());
@@ -495,7 +498,7 @@ public class AgentService {
             config.putAll(agentPolicy(workspaceId, userId));
             Map<String, Object> requested = new LinkedHashMap<>();
             putIfPresent(requested, "modelConfigId", request.getModelConfigId());
-            Map<String, Object> runtime = runtimeConfigResolver.resolve(projectId, userId, requested);
+            Map<String, Object> runtime = runtimeConfigResolver.resolve(workspaceId, projectId, userId, requested);
             // 只有本次运行明确开启联网搜索时，才把独立搜索凭证传给 AI 服务。
             if (!Boolean.TRUE.equals(request.getAllowWebSearch())) runtime.remove("webSearch");
             // 没有项目级模型时，仍把本次生成参数作为独立覆盖传给 AI 服务默认模型。
@@ -510,7 +513,7 @@ public class AgentService {
                 if (!generation.isEmpty()) config.put("generation", generation);
             }
             applyGenerationOverrides(runtime, request);
-            aiClient.executeAgentRun(run.getRunKey(), workspaceId, projectId, userId, findMessageKey(run.getAssistantMessageId()), query, config, runtime, request.getContextMessages());
+            aiClient.executeAgentRun(run.getRunKey(), workspaceId, projectId, userId, findMessageKey(run.getAssistantMessageId()), query, config, runtime, request.getContextMessages(), attachmentPayload(workspaceId, projectId, userId, request.getAttachments()));
         } catch (Exception exception) {
             String message = exception.getMessage() == null ? "Agent 运行失败" : shortText(exception.getMessage(), 900);
             mapper.updateMessage(run.getAssistantMessageId(), message, "FAILED");
@@ -531,10 +534,19 @@ public class AgentService {
         try {
             Map<String, Object> preferences = objectMapper.readValue(workspace.getPreferences(), Map.class);
             Object raw = preferences.get("agentPolicy");
-            if (!(raw instanceof Map<?, ?> policy)) return Map.of();
             Map<String, Object> result = new LinkedHashMap<>();
-            if (policy.get("maxCalls") != null) result.put("toolMaxCalls", policy.get("maxCalls"));
-            if (policy.get("requireApproval") != null) result.put("requireToolApproval", policy.get("requireApproval"));
+            if (raw instanceof Map<?, ?> policy) {
+                if (policy.get("maxCalls") != null) result.put("toolMaxCalls", policy.get("maxCalls"));
+                if (policy.get("requireApproval") != null) result.put("requireToolApproval", policy.get("requireApproval"));
+            }
+            Object localTools = preferences.get("localTools");
+            if (localTools instanceof Map<?, ?> configuredTools) {
+                List<String> disabledTools = new java.util.ArrayList<>();
+                for (Map.Entry<?, ?> entry : configuredTools.entrySet()) {
+                    if (Boolean.FALSE.equals(entry.getValue())) disabledTools.add(String.valueOf(entry.getKey()));
+                }
+                if (!disabledTools.isEmpty()) result.put("disabledTools", disabledTools);
+            }
             return result;
         } catch (Exception ignored) { return Map.of(); }
     }
@@ -622,6 +634,7 @@ public class AgentService {
         citation.put("content", value(item, "content", ""));
         citation.put("sourceType", value(item, "sourceType", value(item, "source_type", "internal")));
         citation.put("assetId", value(item, "assetId", value(item, "asset_id", null)));
+        citation.put("chunkId", value(item, "chunkId", value(item, "chunk_id", null)));
         citation.put("score", value(item, "score", null));
         citation.put("pageNumber", page);
         citation.put("url", item.get("url"));
@@ -674,6 +687,9 @@ public class AgentService {
         putNormalized(normalized, "finalTokenEstimate", raw, "finalTokenEstimate", "final_token_estimate");
         putNormalized(normalized, "finalMessageCount", raw, "finalMessageCount", "final_message_count");
         putNormalized(normalized, "compressedContextTokens", raw, "compressedContextTokens", "compressed_context_tokens");
+        putNormalized(normalized, "modelContextWindow", raw, "modelContextWindow", "model_context_window");
+        putNormalized(normalized, "contextTokenBudget", raw, "contextTokenBudget", "context_token_budget");
+        putNormalized(normalized, "compressionTriggered", raw, "compressionTriggered", "compression_triggered");
         return normalized.isEmpty() ? null : normalized;
     }
 
@@ -841,11 +857,34 @@ public class AgentService {
 
     private String kindOf(String mimeType, String fileName) {
         String mime = mimeType == null ? "" : mimeType.toLowerCase(Locale.ROOT);
+        String extension = extension(fileName);
         if (mime.startsWith("image/")) return "image";
         if (mime.startsWith("video/")) return "video";
         if (mime.startsWith("audio/")) return "audio";
-        if (mime.contains("pdf") || extension(fileName).equals("pdf")) return "pdf";
+        if (mime.contains("pdf") || extension.equals("pdf")) return "pdf";
+        if (Set.of("doc", "docx", "odt", "rtf").contains(extension)) return "document";
+        if (Set.of("xls", "xlsx", "ods", "csv").contains(extension)) return "spreadsheet";
+        if (Set.of("ppt", "pptx", "odp").contains(extension)) return "presentation";
         return "file";
+    }
+
+    private List<Map<String, Object>> attachmentPayload(Long workspaceId, Long projectId, Long userId, List<Map<String, Object>> references) {
+        if (references == null || references.isEmpty()) return List.of();
+        List<Map<String, Object>> payload = new java.util.ArrayList<>();
+        for (Map<String, Object> reference : references) {
+            Long attachmentId = longValue(reference == null ? null : reference.get("uploadId"));
+            if (attachmentId == null) continue;
+            AgentAttachment attachment = mapper.findAttachment(attachmentId, workspaceId, projectId, userId);
+            if (attachment == null || attachment.getStorageKey() == null || attachment.getStorageKey().isBlank()) continue;
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("attachmentId", attachment.getId());
+            item.put("fileName", attachment.getFileName());
+            item.put("mimeType", attachment.getMimeType());
+            item.put("storageKey", attachment.getStorageKey());
+            item.put("fileSize", attachment.getFileSize());
+            payload.add(item);
+        }
+        return payload;
     }
 
     private void validateAttachmentReference(Long workspaceId, Long projectId, Long userId, Map<String, Object> attachment) {

@@ -365,7 +365,7 @@ onUnmounted(stopIndexPolling);
     class="sr-only"
     type="file"
     multiple
-    accept=".pdf,.md,.markdown,.txt,.doc,.docx"
+    accept=".pdf,.md,.markdown,.txt,.csv,.json,.html,.htm,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.rtf,image/*,audio/*,video/*"
     @change="onFilesSelected"
   />
 
@@ -661,7 +661,7 @@ onUnmounted(stopIndexPolling);
         {{
           searchQuery || actionableOnly
             ? "尝试清除搜索或筛选条件。"
-            : "上传 PDF、Markdown 或 TXT 文件，让 Agent 有可引用的内容。"
+            : "上传 PDF、Office、图片、音频或视频，系统会使用本地解析、OCR 和语音转写生成可引用内容。"
         }}
       </p>
       <button
@@ -779,7 +779,7 @@ onUnmounted(stopIndexPolling);
 }
 .health-card span {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .health-card strong {
   color: var(--workspace-text);
@@ -789,7 +789,7 @@ onUnmounted(stopIndexPolling);
 .health-card small {
   overflow: hidden;
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -827,12 +827,12 @@ onUnmounted(stopIndexPolling);
 .health-ring strong {
   position: relative;
   z-index: 1;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .health-ring small {
   position: relative;
   z-index: 1;
-  font-size: 0.4375rem;
+  font-size: 0.75rem;
 }
 .asset-table-panel {
   overflow: visible;
@@ -863,7 +863,7 @@ onUnmounted(stopIndexPolling);
 }
 .chunking-settings-grid label > span {
   color: var(--workspace-text);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   font-weight: 650;
 }
 .chunking-settings-grid input,
@@ -876,11 +876,11 @@ onUnmounted(stopIndexPolling);
   background: var(--surface);
   color: var(--workspace-text);
   font: inherit;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .chunking-settings-grid small {
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .chunking-checkbox {
   grid-template-columns: auto minmax(0, 1fr);
@@ -898,7 +898,7 @@ onUnmounted(stopIndexPolling);
 }
 .settings-scope-label {
   color: var(--teal-dark);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .chunking-settings-footer {
   display: flex;
@@ -911,7 +911,7 @@ onUnmounted(stopIndexPolling);
 .chunking-settings-footer p {
   margin: 0;
   color: var(--workspace-muted);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   line-height: 1.45;
 }
 .chunking-settings-footer .chunking-error {
@@ -943,12 +943,12 @@ onUnmounted(stopIndexPolling);
 .toolbar-topline p {
   margin: 0.25rem 0 0;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .actionable-toggle {
   gap: 0.375rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   cursor: pointer;
 }
 .actionable-toggle input,
@@ -979,7 +979,7 @@ onUnmounted(stopIndexPolling);
   background: transparent;
   color: #91a0a4;
   font: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   cursor: pointer;
   transition:
     color 160ms ease,
@@ -996,7 +996,7 @@ onUnmounted(stopIndexPolling);
 }
 .segmented-tabs button span {
   margin-left: 0.3125rem;
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   opacity: 0.75;
 }
 .sort-control {
@@ -1004,7 +1004,7 @@ onUnmounted(stopIndexPolling);
   align-items: center;
   gap: 0.375rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   white-space: nowrap;
 }
 .sort-control select {
@@ -1016,7 +1016,7 @@ onUnmounted(stopIndexPolling);
   background: var(--surface);
   color: var(--workspace-text);
   font: inherit;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .sort-control select:focus {
   border-color: var(--teal);
@@ -1037,11 +1037,11 @@ onUnmounted(stopIndexPolling);
   gap: 0.5rem;
 }
 .selection-bar strong {
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .selection-bar span {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .clear-selection {
   display: grid;
@@ -1062,7 +1062,7 @@ onUnmounted(stopIndexPolling);
 .button-compact {
   min-height: 1.875rem;
   padding: 0.4375rem 0.625rem;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .button-danger {
   display: inline-flex;
@@ -1075,7 +1075,7 @@ onUnmounted(stopIndexPolling);
   color: #b65353;
   cursor: pointer;
   font: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .button-danger:hover {
   border-color: #d98b8b;
@@ -1094,7 +1094,7 @@ onUnmounted(stopIndexPolling);
 .select-all-control {
   gap: 0.4375rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   cursor: pointer;
 }
 .filter-hint {
@@ -1102,7 +1102,7 @@ onUnmounted(stopIndexPolling);
   border-radius: 0.25rem;
   background: #edf8f6;
   color: var(--teal-dark);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .asset-table-panel .table-row {
   position: relative;
@@ -1157,7 +1157,7 @@ onUnmounted(stopIndexPolling);
 }
 .asset-title small {
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   line-height: 1.4;
 }
 .asset-row > .status-badge,
@@ -1207,7 +1207,7 @@ onUnmounted(stopIndexPolling);
   border-radius: 0.375rem;
   color: #b45b49;
   background: #fff0ea;
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   font-weight: 800;
 }
 .file-type.markdown,
@@ -1242,7 +1242,7 @@ onUnmounted(stopIndexPolling);
 }
 .progress-cell small {
   color: #98a5a8;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .row-actions {
   display: flex;
@@ -1288,7 +1288,7 @@ onUnmounted(stopIndexPolling);
   max-width: 22rem;
   margin: 0 0 0.5rem;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 .delete-dialog {
@@ -1302,7 +1302,7 @@ onUnmounted(stopIndexPolling);
   border-radius: 0.4375rem;
   background: #fff7f7;
   color: #a95757;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 @media (max-width: 72rem) {

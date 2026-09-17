@@ -506,13 +506,13 @@ function priorityClass(priority: string) {
 }
 .action-summary-card span:not(.summary-icon) {
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .action-summary-card small {
   grid-column: 2;
   margin-top: 0.125rem;
   color: var(--workspace-subtle);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .action-toolbar {
   display: flex;
@@ -547,7 +547,7 @@ function priorityClass(priority: string) {
   background: transparent;
   color: var(--workspace-text);
   font: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .search-control input::placeholder {
   color: var(--workspace-subtle);
@@ -557,7 +557,7 @@ function priorityClass(priority: string) {
   align-items: center;
   gap: 0.4375rem;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .toolbar-filters select,
 .editor-form select {
@@ -568,7 +568,7 @@ function priorityClass(priority: string) {
   background: var(--surface);
   color: var(--workspace-text);
   font: inherit;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .toolbar-filters select:focus,
 .editor-form select:focus {
@@ -611,12 +611,12 @@ function priorityClass(priority: string) {
   border-radius: 0.3125rem;
   background: var(--surface);
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .action-column-header p {
   margin: 0.3125rem 0 0 0.8125rem;
   color: var(--workspace-subtle);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .column-dot {
   width: 0.4375rem;
@@ -675,7 +675,7 @@ function priorityClass(priority: string) {
   align-items: center;
   padding: 0.25rem 0.375rem;
   border-radius: 0.25rem;
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 .priority-high {
   color: #bd5f5f;
@@ -716,7 +716,7 @@ function priorityClass(priority: string) {
   align-items: center;
   gap: 0.75rem;
   color: var(--workspace-muted);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .action-card-meta span {
   display: inline-flex;
@@ -740,7 +740,7 @@ function priorityClass(priority: string) {
   border: 0;
   background: transparent;
   font: inherit;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   cursor: pointer;
 }
 .card-detail-button {
@@ -768,7 +768,7 @@ function priorityClass(priority: string) {
   gap: 0.375rem;
   min-height: 7.5rem;
   color: var(--workspace-subtle);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .add-card-button {
   display: flex;
@@ -783,7 +783,7 @@ function priorityClass(priority: string) {
   background: transparent;
   color: var(--workspace-muted);
   font: inherit;
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
   cursor: pointer;
 }
 .add-card-button:hover {
@@ -802,7 +802,7 @@ function priorityClass(priority: string) {
   display: grid;
   gap: 0.375rem;
   color: var(--workspace-muted);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
 }
 .editor-form input,
 .editor-form select {
@@ -817,7 +817,7 @@ function priorityClass(priority: string) {
   background: var(--surface-soft);
   color: var(--workspace-text);
   font: inherit;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .editor-form input:focus {
   border-color: var(--teal);
