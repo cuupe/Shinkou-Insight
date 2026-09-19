@@ -26,7 +26,7 @@ function resolveTimeZone(zone: string) {
 }
 
 export function dateFormatWithday(zone: string, date: Date) {
-  if (!date) {
+  if (!date || Number.isNaN(date.getTime())) {
     return null;
   }
 
@@ -35,11 +35,11 @@ export function dateFormatWithday(zone: string, date: Date) {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  });
+  }).replace(/\//g, "-");
 }
 
 export function dateFormatWithseconds(zone: string, date: Date) {
-  if (!date) {
+  if (!date || Number.isNaN(date.getTime())) {
     return null;
   }
 
@@ -55,4 +55,39 @@ export function dateFormatWithseconds(zone: string, date: Date) {
       hour12: false,
     })
     .replace(/\//g, "-");
+}
+
+export type DateTimeLike = Date | string | number | null | undefined;
+
+/** Format backend timestamps for the UI without ISO delimiters or fractions. */
+export function formatDateTime(
+  value: unknown,
+  fallback = "—",
+  zone = "Asia/Shanghai",
+) {
+  if (value == null || value === "") return fallback;
+
+  if (typeof value === "string") {
+    const raw = value.trim();
+    if (!raw) return fallback;
+    if (["—", "暂无", "等待中", "刚刚"].includes(raw)) return raw;
+  }
+
+  const date =
+    value instanceof Date
+      ? value
+      : typeof value === "string" || typeof value === "number"
+        ? new Date(value)
+        : null;
+  if (date && !Number.isNaN(date.getTime())) {
+    return dateFormatWithseconds(zone, date) || fallback;
+  }
+
+  if (typeof value !== "string" && typeof value !== "number") return fallback;
+
+  return String(value)
+    .trim()
+    .replace("T", " ")
+    .replace(/\.\d+(?=(Z|[+-]\d{2}:?\d{2})?$)/, "")
+    .replace(/Z$/, "") || fallback;
 }

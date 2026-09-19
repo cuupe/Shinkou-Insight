@@ -21,6 +21,33 @@ T = TypeVar(
     bound=BaseModel,
 )
 
+_SILICONFLOW_THINKING_BUDGETS = {
+    "low": 1_024,
+    "medium": 4_096,
+    "high": 16_384,
+}
+
+
+def _siliconflow_thinking_options(
+    effort: str,
+    extra_body: dict[str, Any],
+    kwargs: dict[str, Any],
+) -> None:
+    """Translate the UI's three thinking levels into provider controls.
+
+    SiliconFlow maps low/medium ``reasoning_effort`` to high for DeepSeek
+    V4/V4-Flash, so the budget is the control that keeps the levels distinct.
+    """
+
+    extra_body["enable_thinking"] = effort != "none"
+    budget = _SILICONFLOW_THINKING_BUDGETS.get(effort)
+    if budget is not None:
+        extra_body["thinking_budget"] = budget
+    else:
+        extra_body.pop("thinking_budget", None)
+    if effort == "high":
+        kwargs["reasoning_effort"] = effort
+
 
 # =========================================================
 # Exceptions
@@ -450,9 +477,7 @@ class LangChainModelGateway:
         extra_body = dict(generation.extra_body)
         if self.provider in {"siliconflow", "silicon flow", "硅基流动"}:
             effort = generation.reasoning_effort or "none"
-            extra_body.setdefault("enable_thinking", effort != "none")
-            if effort != "none":
-                kwargs["reasoning_effort"] = "high" if effort in {"low", "medium"} else effort
+            _siliconflow_thinking_options(effort, extra_body, kwargs)
         elif generation.reasoning_effort and generation.reasoning_effort != "none":
             kwargs["reasoning_effort"] = generation.reasoning_effort
         if generation.top_k is not None:
@@ -815,9 +840,9 @@ class HttpModelGateway:
         extra_body = dict(generation.extra_body)
         if self.provider in {"siliconflow", "silicon flow", "硅基流动"}:
             effort = generation.reasoning_effort or "none"
-            extra_body.setdefault("enable_thinking", effort != "none")
-            if effort != "none":
-                payload["reasoning_effort"] = "high" if effort in {"low", "medium"} else effort
+            options: dict[str, Any] = {}
+            _siliconflow_thinking_options(effort, extra_body, options)
+            payload.update(options)
         elif generation.reasoning_effort and generation.reasoning_effort != "none":
             payload["reasoning_effort"] = generation.reasoning_effort
         payload.update(extra_body)

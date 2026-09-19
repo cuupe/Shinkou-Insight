@@ -21,6 +21,7 @@ import PageHeader from "@/components/common/PageHeader.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { reviewApi } from "@/api/review";
 import type { ProjectReviewRun } from "@/api/types";
+import { formatDateTime } from "@/lib/utils";
 
 const {
   selectedProject,
@@ -239,7 +240,7 @@ onMounted(loadGovernance);
 
     <section class="panel audit-panel">
       <div class="panel-heading"><div><h2>审查记录</h2><p>为每次发布保留规则版本和处理结果</p></div><FileText :size="17" class="rules-heading-icon" /></div>
-      <div v-if="reviewRun" class="audit-result"><span class="audit-result-icon"><ShieldAlert :size="17" /></span><div><strong>结构化检查结果已生成</strong><small>{{ auditSummary }}</small><em>{{ reviewRun.createdAt || "数据库时间不可用" }}</em></div></div>
+      <div v-if="reviewRun" class="audit-result"><span class="audit-result-icon"><ShieldAlert :size="17" /></span><div><strong>结构化检查结果已生成</strong><small>{{ auditSummary }}</small><em>{{ formatDateTime(reviewRun.createdAt, "数据库时间不可用") }}</em></div></div>
       <div v-else class="audit-empty"><FileText :size="18" /><strong>暂无本次审查记录</strong><span>运行结构化检查后，系统会在这里记录检查时间与阻断原因。</span></div>
       <div class="audit-actions"><button class="text-button" type="button" @click="router.push(routeTo('project-evaluation'))">打开评估用例 <ArrowRight :size="14" /></button><button class="text-button" type="button" @click="router.push(routeTo('project-reports'))">查看报告版本 <ArrowRight :size="14" /></button></div>
     </section>

@@ -6,6 +6,7 @@ import { useWorkspace } from "@/composables/useWorkspace";
 import { runsApi } from "@/api/runs";
 import type { ResearchPlanStep } from "@/api/types";
 import PageHeader from "@/components/common/PageHeader.vue";
+import { formatDateTime } from "@/lib/utils";
 const router = useRouter();
 const route = useRoute();
 const {
@@ -114,7 +115,7 @@ onMounted(async () => {
       project: "—",
       status,
       statusLabel: statusLabel(status),
-      time: String(detail.updatedAt || detail.createdAt || ""),
+      time: formatDateTime(detail.updatedAt || detail.createdAt, ""),
       goal: String(detail.goal || ""),
       duration: String(detail.duration || "—"),
       tokens: String(detail.tokens || "—"),

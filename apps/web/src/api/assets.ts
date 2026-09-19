@@ -21,12 +21,13 @@ export const assetsApi = {
     workspaceId: number | string,
     projectId: number,
     file: File,
-    options: { name?: string; language?: string } = {},
+    options: { name?: string; language?: string; sourceUrl?: string } = {},
   ) => {
     const formData = new FormData();
     formData.append("file", file);
     if (options.name) formData.append("name", options.name);
     if (options.language) formData.append("language", options.language);
+    if (options.sourceUrl) formData.append("sourceUrl", options.sourceUrl);
 
     return unwrap<KnowledgeAsset>(
       anet.post<ApiResponse<KnowledgeAsset>>(

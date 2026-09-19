@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { dateFormatWithseconds } from "@/lib/utils";
+import { formatDateTime } from "@/lib/utils";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { workspaceApi } from "@/api/workspace";
 import { getApiErrorMessage } from "@/api/core";
@@ -61,10 +61,11 @@ function memberDisplayFields(member: { department?: string; title?: string }) {
 function memberActivityFields(member: { lastActiveAt?: string; status?: string }) {
   return {
     active: member.lastActiveAt
-      ? String(dateFormatWithseconds(
+      ? formatDateTime(
+          member.lastActiveAt,
+          "暂无",
           currentUser.value?.timezone || "Asia/Shanghai",
-          new Date(member.lastActiveAt),
-        ) || "暂无")
+        )
       : member.status || "暂无",
   };
 }
@@ -89,20 +90,14 @@ async function loadMembers() {
       */ inviteNote: "",
       role: member.role || "MEMBER",
       date:
-        dateFormatWithseconds(
+        formatDateTime(
+          member.createdAt,
+          "—",
           currentUser.value?.timezone || "Asia/Shanghai",
-          new Date(member.createdAt),
-        ) || "—",
+        ),
       active: member.status || "—",
-      ...(memberActivityFields(member) as unknown as Record<string, never>), /*
-        active: member.lastActiveAt
-          ? dateFormatWithseconds(
-              currentUser.value?.timezone || "Asia/Shanghai",
-              new Date(member.lastActiveAt),
-            )
-          : member.status || "暂无",
-      },
-    */ }));
+      ...(memberActivityFields(member) as unknown as Record<string, never>),
+    }));
   } catch (error) {
     loadError.value = getApiErrorMessage(error, "成员列表加载失败，请稍后重试");
   } finally {

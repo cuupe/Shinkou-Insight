@@ -61,6 +61,13 @@ class RuntimeWebSearchConfig(ApiModel):
     base_url: str = Field(min_length=1, max_length=1_000)
     language: str = "zh-hans"
     sources: list[str] = Field(default_factory=list, max_length=8)
+    timeout_seconds: float = Field(default=12, gt=0, le=30)
+
+
+class WebSourceValidationRequest(ApiModel):
+    url: str = Field(min_length=1, max_length=4_000)
+    title: str = Field(default="", max_length=1_000)
+    excerpt: str = Field(default="", max_length=20_000)
 
 
 class RuntimeEmbeddingConfig(ApiModel):
@@ -117,6 +124,8 @@ class Evidence(ApiModel):
     keyword_score: float | None = None
     fusion_score: float | None = None
     rerank_score: float | None = None
+    content_kind: Literal["fulltext", "abstract", "search_snippet"] | None = None
+    published_at: str | None = None
 
 
 class Finding(ApiModel):

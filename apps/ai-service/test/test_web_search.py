@@ -2,7 +2,7 @@ import httpx
 import pytest
 
 from tools.multi_source_search import MultiSourceWebSearch
-from tools.web import BraveWebSearch, DuckDuckGoWebSearch
+from tools.web import BingWebSearch, BraveWebSearch, DuckDuckGoWebSearch, validate_web_source
 
 
 @pytest.mark.asyncio
@@ -96,6 +96,55 @@ async def test_duckduckgo_search_maps_redirected_html_results():
 
 
 @pytest.mark.asyncio
+async def test_duckduckgo_search_falls_back_to_bing_when_no_results_are_parseable():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "duck.test":
+            return httpx.Response(200, text="<html><body>challenge</body></html>", request=request)
+        assert request.url.host == "www.bing.com"
+        return httpx.Response(
+            200,
+            text=(
+                '<li class="b_algo">'
+                '<h2><a href="https://graphics.example.org">Graphics progress</a></h2>'
+                '<div class="b_caption"><p>Recent graphics research.</p></div>'
+                "</li>"
+            ),
+            request=request,
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        results = await DuckDuckGoWebSearch(client=client, base_url="https://duck.test").search(
+            "graphics", top_k=1
+        )
+        assert results[0].url == "https://graphics.example.org"
+
+
+@pytest.mark.asyncio
+async def test_bing_search_maps_html_results_to_citable_evidence():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                '<li class="b_algo">'
+                '<h2><a href="https://graphics.example.org">Graphics <strong>progress</strong></a></h2>'
+                '<div class="b_caption"><p>Latest <b>graphics</b> progress.</p></div>'
+                "</li>"
+            ),
+            request=request,
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        results = await BingWebSearch(client=client).search("graphics progress", top_k=1)
+
+    assert len(results) == 1
+    assert results[0].url == "https://graphics.example.org"
+    assert "<strong>" not in results[0].content
+    assert "<b>" not in results[0].content
+
+
+@pytest.mark.asyncio
 async def test_multi_source_search_fuses_general_and_technical_sources():
     calls = []
 
@@ -121,3 +170,48 @@ async def test_multi_source_search_fuses_general_and_technical_sources():
     assert calls == ["api.github.com"]
     assert results[0].url == "https://github.com/psycopg/psycopg"
     assert results[0].fusion_score is not None
+
+
+@pytest.mark.asyncio
+async def test_validate_web_source_requires_reachable_matching_content():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text="<html><title>3D Gaussian Splatting</title><main>3D Gaussian Splatting enables real-time scene rendering. This page describes the method, its reconstruction pipeline, and the rendering tradeoffs observed in dynamic graphics scenes. The paper evaluates quality, speed, and view synthesis on several public datasets.</main></html>",
+            headers={"content-type": "text/html; charset=utf-8"},
+            request=request,
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await validate_web_source(
+            client,
+            url="https://graphics.example.org/paper",
+            title="3D Gaussian Splatting",
+            excerpt="real-time scene rendering",
+        )
+
+    assert result["valid"] is True
+
+
+@pytest.mark.asyncio
+async def test_validate_web_source_rejects_challenge_pages_and_mismatched_excerpt():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text="<html><body>Access denied. Please verify you are human.</body></html>",
+            headers={"content-type": "text/html"},
+            request=request,
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await validate_web_source(
+            client,
+            url="https://graphics.example.org/blocked",
+            title="Computer graphics research",
+            excerpt="unrelated fabricated evidence",
+        )
+
+    assert result["valid"] is False
+    assert str(result["reason"])

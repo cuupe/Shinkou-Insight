@@ -26,6 +26,7 @@ type AgentRunCallbacks = {
   onCitation: (citation: AgentCitation) => void;
   onUsageUpdated?: (data?: AgentRunMetrics) => void;
   onMedia: (messageId: string, media: AgentMedia) => void;
+  onArtifact?: (messageId: string, artifact: AgentAttachment) => void;
   onComplete: (messageId: string) => void;
   onRunCompleted?: (data?: AgentRunMetrics) => void;
   onError: (message: string) => void;
@@ -83,8 +84,29 @@ const threadOrder = ref<string[]>([]);
 const activeThreadId = ref<string | null>(null);
 const draft = ref("");
 const composerError = ref("");
-const cancelling = ref(false);
-let activeRunToken = 0;
+const cancellingThreads = reactive(new Set<string>());
+const threadRunTokens = new Map<string, number>();
+const runControls = new Map<string, ActiveRunControl>();
+type ActiveRunControl = {
+  token: number;
+  remoteRunId: string | null;
+  cancelRequested: boolean;
+  cancelPromise?: Promise<void>;
+};
+
+function cancelRemoteRun(
+  control: ActiveRunControl,
+  workspaceId: number | string,
+  projectId: number,
+) {
+  if (!control.remoteRunId) return Promise.resolve();
+  if (!control.cancelPromise) {
+    control.cancelPromise = agentApi
+      .cancelRun(workspaceId, projectId, control.remoteRunId)
+      .then(() => undefined);
+  }
+  return control.cancelPromise;
+}
 
 function mergeTokenUsage(current: TokenUsage | undefined, incoming: TokenUsage | undefined) {
   if (!incoming) return current;
@@ -134,6 +156,7 @@ function createHttpTransport(): AgentTransport {
 
       await new Promise<void>((resolve, reject) => {
         let settled = false;
+        const seenEventIds = new Set<string>();
         let retryTimer: number | undefined;
         const clearRetryTimer = () => {
           if (retryTimer !== undefined) window.clearTimeout(retryTimer);
@@ -142,9 +165,24 @@ function createHttpTransport(): AgentTransport {
         eventSource.onmessage = (message) => {
           const event = agentApi.parseEvent(message);
           if (!event) return;
+          const eventId = String(event.eventId || message.lastEventId || "");
+          if (eventId) {
+            if (seenEventIds.has(eventId)) return;
+            seenEventIds.add(eventId);
+            // Bound memory for a long-lived/reconnecting stream.
+            if (seenEventIds.size > 4096) {
+              const oldest = seenEventIds.values().next().value;
+              if (oldest) seenEventIds.delete(oldest);
+            }
+          }
           if (event.type === "run.completed" || event.type === "run.failed") {
+            if (settled) return;
             settled = true;
             clearRetryTimer();
+          } else if (settled) {
+            // Do not allow a late delta from a recovered/duplicate worker to
+            // mutate the already finalized assistant message.
+            return;
           }
           handleStreamEvent(event, callbacks, resolve, reject, eventSource);
         };
@@ -181,6 +219,7 @@ function handleStreamEvent(
   if (event.type === "message.replace") callbacks.onReplace(event.messageId, event.content);
   if (event.type === "citation.added") callbacks.onCitation(event.citation);
   if (event.type === "media.added") callbacks.onMedia(event.messageId, event.media);
+  if (event.type === "artifact.added") callbacks.onArtifact?.(event.messageId, event.artifact);
   if (event.type === "message.completed") callbacks.onComplete(event.messageId);
   if (event.type === "usage.updated") {
     callbacks.onUsageUpdated?.({
@@ -238,6 +277,9 @@ export function useAgentWorkspace() {
     threadOrder.value.splice(0);
     activeThreadId.value = null;
     Object.keys(threadStates).forEach((id) => delete threadStates[id]);
+    threadRunTokens.clear();
+    runControls.clear();
+    cancellingThreads.clear();
     try {
       const storedThreads = await agentApi.threads(workspaceId.value, projectId.value);
       storedThreads.forEach((stored) => {
@@ -284,6 +326,9 @@ export function useAgentWorkspace() {
     const wasActive = activeThreadId.value === threadId;
     if (index >= 0) threadOrder.value.splice(index, 1);
     delete threadStates[threadId];
+    threadRunTokens.delete(threadId);
+    runControls.delete(threadId);
+    cancellingThreads.delete(threadId);
 
     if (wasActive) {
       activeThreadId.value = threadOrder.value[index] || threadOrder.value[index - 1] || null;
@@ -293,7 +338,6 @@ export function useAgentWorkspace() {
   }
 
   function createThread() {
-    if (isRunning.value) return;
     const id = `thread-${Date.now()}`;
     threadStates[id] = {
       id,
@@ -320,17 +364,17 @@ export function useAgentWorkspace() {
     composerError.value = "";
   }
 
-  function updateEvent(nextEvent: AgentEvent) {
+  function updateEvent(thread: ThreadState, nextEvent: AgentEvent) {
     if (!nextEvent?.id) return;
-    const current = activeThread.value.events;
+    const current = thread.events;
     const index = current.findIndex((event) => event.id === nextEvent.id);
     if (index >= 0) current[index] = nextEvent;
     else current.push(nextEvent);
   }
 
-  function rememberEvent(nextEvent: AgentEvent) {
+  function rememberEvent(thread: ThreadState, nextEvent: AgentEvent) {
     if (!nextEvent?.id) return;
-    const history = activeThread.value.eventHistory;
+    const history = thread.eventHistory;
     const previous = history.at(-1);
     const sameAsPrevious = previous && previous.id === nextEvent.id && previous.status === nextEvent.status && previous.detail === nextEvent.detail;
     if (!sameAsPrevious) history.push({ ...nextEvent, meta: nextEvent.meta ? { ...nextEvent.meta } : undefined });
@@ -342,16 +386,15 @@ export function useAgentWorkspace() {
       composerError.value = "先输入你希望 Agent 处理的问题";
       return;
     }
-    if (hasRunningThread.value) {
-      composerError.value = "已有对话正在运行，请先暂停后再发送新消息";
-      return;
-    }
     composerError.value = "";
     draft.value = "";
     if (!activeThreadId.value) createThread();
     const thread = activeThread.value;
+    if (thread.status === "running") {
+      composerError.value = "当前对话正在运行，请切换到其他对话或等待完成";
+      return;
+    }
     const messageId = `message-${Date.now()}`;
-    const runId = `agent-run-${Date.now()}`;
     const assistantMessage: AgentMessage = {
       id: messageId,
       role: "assistant",
@@ -384,7 +427,8 @@ export function useAgentWorkspace() {
     thread.eventHistory.splice(0);
     thread.citations.splice(0);
     thread.status = "running";
-    thread.runId = runId;
+    // Only a backend-issued run ID is safe to send to the cancel endpoint.
+    thread.runId = null;
     thread.runStartedAt = undefined;
     thread.runFinishedAt = undefined;
     thread.runDurationMs = undefined;
@@ -396,7 +440,15 @@ export function useAgentWorkspace() {
     });
     thread.queueTaskId = queueTask.id;
     updateTask(queueTask.id, { status: "running", currentStep: "等待 Agent 开始规划" });
-    const token = ++activeRunToken;
+    const token = (threadRunTokens.get(thread.id) || 0) + 1;
+    threadRunTokens.set(thread.id, token);
+    const runControl: ActiveRunControl = {
+      token,
+      remoteRunId: null,
+      cancelRequested: false,
+    };
+    runControls.set(thread.id, runControl);
+    const isCurrentRun = () => threadRunTokens.get(thread.id) === token;
     const contextChars = contextMessages.reduce((total, message) => total + message.content.length, content.length);
     thread.contextUsage = {
       originalChars: contextChars,
@@ -439,7 +491,7 @@ export function useAgentWorkspace() {
     };
     const pumpDisplay = () => {
       displayTimer = undefined;
-      if (token !== activeRunToken) {
+      if (!isCurrentRun()) {
         abortDisplay();
         return;
       }
@@ -480,18 +532,27 @@ export function useAgentWorkspace() {
         {
           onAccepted: (acceptedRunId) => {
             thread.persisted = true;
-            if (token === activeRunToken) thread.runId = String(acceptedRunId);
+            runControl.remoteRunId = String(acceptedRunId);
+            if (runControl.cancelRequested) {
+              void cancelRemoteRun(
+                runControl,
+                workspaceId.value,
+                projectId.value,
+              ).catch(() => undefined);
+            } else if (isCurrentRun()) {
+              thread.runId = String(acceptedRunId);
+            }
           },
           onRunStarted: (data) => {
-            if (token !== activeRunToken) return;
+            if (!isCurrentRun()) return;
             thread.runStartedAt = data?.startedAt;
             thread.runFinishedAt = undefined;
             thread.runDurationMs = undefined;
           },
           onEvent: (event) => {
-            if (token === activeRunToken) {
-              rememberEvent(event);
-              updateEvent(event);
+            if (isCurrentRun()) {
+              rememberEvent(thread, event);
+              updateEvent(thread, event);
               const completed = thread.events.filter((item) => item.status === "completed").length;
               updateTask(queueTask.id, {
                 status: event.status === "failed" ? "failed" : "running",
@@ -501,35 +562,41 @@ export function useAgentWorkspace() {
             }
           },
           onDelta: (id, delta) => {
-            if (token !== activeRunToken || id !== messageId) return;
+            if (!isCurrentRun() || id !== messageId) return;
             enqueueDelta(delta);
           },
           onReplace: (id, content) => {
-            if (token !== activeRunToken || id !== messageId) return;
+            if (!isCurrentRun() || id !== messageId) return;
             pendingDelta = "";
             assistantMessage.content = content;
           },
           onCitation: (citation) => {
-            if (token !== activeRunToken || !citation?.id) return;
+            if (!isCurrentRun() || !citation?.id) return;
             if (!thread.citations.some((item) => item.id === citation.id)) {
               thread.citations.push(citation);
               assistantMessage.citations?.push(citation);
             }
           },
           onUsageUpdated: (data) => {
-            if (token !== activeRunToken || !data?.usage) return;
+            if (!isCurrentRun() || !data?.usage) return;
             thread.tokenUsage = mergeTokenUsage(thread.tokenUsage, data.usage);
           },
           onMedia: (id, media) => {
-            if (token !== activeRunToken || id !== messageId || !media?.id || !media.url) return;
+            if (!isCurrentRun() || id !== messageId || !media?.id || !media.url) return;
             assistantMessage.media?.push(media);
           },
+          onArtifact: (id, artifact) => {
+            if (!isCurrentRun() || id !== messageId || !artifact?.id || !artifact.url) return;
+            if (!assistantMessage.attachments?.some((item) => item.id === artifact.id)) {
+              assistantMessage.attachments = [...(assistantMessage.attachments || []), artifact];
+            }
+          },
           onComplete: (id) => {
-            if (token !== activeRunToken || id !== messageId) return;
+            if (!isCurrentRun() || id !== messageId) return;
             endDisplay();
           },
           onRunCompleted: (data) => {
-            if (token === activeRunToken) {
+            if (isCurrentRun()) {
               if (data?.contextCompression) thread.contextUsage = data.contextCompression;
               if (data?.usage) thread.tokenUsage = data.usage;
               if (data?.startedAt) thread.runStartedAt = data.startedAt;
@@ -538,7 +605,8 @@ export function useAgentWorkspace() {
             }
           },
           onError: (message) => {
-            composerError.value = message;
+            if (!isCurrentRun()) return;
+            if (activeThreadId.value === thread.id) composerError.value = message;
             updateTask(queueTask.id, {
               status: "failed",
               currentStep: "运行失败，需要重试",
@@ -547,15 +615,15 @@ export function useAgentWorkspace() {
           },
         },
       );
-      if (token === activeRunToken) {
+      if (isCurrentRun()) {
         thread.runId = String(accepted.runId);
       }
       endDisplay();
       await displayDone;
-      if (token === activeRunToken) thread.status = "completed";
+      if (isCurrentRun()) thread.status = "completed";
     } catch (error) {
       abortDisplay();
-      if (token === activeRunToken) {
+      if (isCurrentRun()) {
         thread.status = "failed";
         updateTask(queueTask.id, {
           status: "failed",
@@ -564,34 +632,47 @@ export function useAgentWorkspace() {
         });
         assistantMessage.status = "failed";
         assistantMessage.content = assistantMessage.content || "这次运行没有完成，请检查 Agent 接口或稍后重试。";
-        composerError.value = error instanceof Error ? error.message : "Agent 运行失败";
+        if (activeThreadId.value === thread.id) {
+          composerError.value = error instanceof Error ? error.message : "Agent 运行失败";
+        }
       }
+    }
+    if (runControls.get(thread.id) === runControl && isCurrentRun()) {
+      runControls.delete(thread.id);
     }
   }
 
   async function stopRun() {
     if (!isRunning.value) return;
-    cancelling.value = true;
-    if (activeThread.value.runId) {
-      try {
-        await agentApi.cancelRun(workspaceId.value, projectId.value, activeThread.value.runId);
-      } catch (error) {
-        cancelling.value = false;
-        composerError.value = error instanceof Error ? error.message : "Agent 运行取消失败";
-        return;
-      }
+    const thread = activeThread.value;
+    cancellingThreads.add(thread.id);
+    const control = runControls.get(thread.id);
+    const currentToken = threadRunTokens.get(thread.id) || 0;
+    if (control && control.token === currentToken) {
+      control.cancelRequested = true;
+      void cancelRemoteRun(control, workspaceId.value, projectId.value).catch(
+        () => undefined,
+      );
+    } else if (thread.runId) {
+      void agentApi
+        .cancelRun(workspaceId.value, projectId.value, thread.runId)
+        .catch(() => undefined);
     }
-    activeRunToken += 1;
-    activeThread.value.status = "completed";
-    if (activeThread.value.queueTaskId) pauseTask(activeThread.value.queueTaskId);
-    const message = activeThread.value.messages.at(-1);
-    if (message?.role === "assistant" && message.status === "streaming") {
-      message.status = "completed";
-      message.content += "\n\n已由你暂停本次运行。";
+    // Unlock the composer immediately. If the POST is still pending, its
+    // onAccepted callback will cancel the real backend run asynchronously.
+    threadRunTokens.set(thread.id, currentToken + 1);
+    runControls.delete(thread.id);
+    thread.status = "completed";
+    thread.runId = null;
+    if (thread.queueTaskId) pauseTask(thread.queueTaskId);
+    const stoppedMessage = thread.messages.at(-1);
+    if (stoppedMessage?.role === "assistant" && stoppedMessage.status === "streaming") {
+      stoppedMessage.status = "completed";
+      stoppedMessage.content += "\n\n已由你暂停本次运行。";
     }
-    window.setTimeout(() => {
-      cancelling.value = false;
-    }, 250);
+    cancellingThreads.delete(thread.id);
+    return;
+
   }
 
   return {
@@ -606,7 +687,7 @@ export function useAgentWorkspace() {
     composerError,
     isRunning,
     hasRunningThread,
-    cancelling,
+    cancelling: computed(() => Boolean(activeThreadId.value && cancellingThreads.has(activeThreadId.value))),
     selectThread,
     deleteThread,
     createThread,

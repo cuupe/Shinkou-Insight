@@ -51,6 +51,12 @@
     <update id="updateMessage">
         UPDATE agent_messages SET content = #{content}, status = #{status} WHERE id = #{id}
     </update>
+    <select id="findMessageAttachments" resultType="string">
+        SELECT attachments::text FROM agent_messages WHERE id = #{id}
+    </select>
+    <update id="updateMessageAttachments">
+        UPDATE agent_messages SET attachments = CAST(#{attachments} AS jsonb) WHERE id = #{id}
+    </update>
     <select id="findMessageKey" resultType="string">
         SELECT client_message_id FROM agent_messages WHERE id = #{id}
     </select>
@@ -159,5 +165,13 @@
         JOIN workspace_members wm ON wm.workspace_id = a.workspace_id
             AND wm.user_id = #{userId} AND wm.status = 'ACTIVE'
         WHERE a.id = #{id} AND a.workspace_id = #{workspaceId} AND a.project_id = #{projectId}
+    </select>
+    <select id="findAttachmentByStorageKey" resultType="com.cuupe.backend.modules.agent.entity.AgentAttachment">
+        SELECT a.id, a.workspace_id, a.project_id, a.uploaded_by, a.file_name, a.kind, a.mime_type, a.file_size, a.storage_key, a.content
+        FROM agent_attachments a
+        JOIN workspace_members wm ON wm.workspace_id = a.workspace_id
+            AND wm.user_id = #{userId} AND wm.status = 'ACTIVE'
+        WHERE a.storage_key = #{storageKey} AND a.workspace_id = #{workspaceId} AND a.project_id = #{projectId}
+        LIMIT 1
     </select>
 </mapper>

@@ -9,6 +9,8 @@ import java.util.Map;
 @Mapper
 public interface KnowledgeAssetMapper {
     List<KnowledgeAsset> findByProject(@Param("projectId") Long projectId, @Param("userId") Long userId);
+    KnowledgeAsset findByProjectAndChecksum(@Param("projectId") Long projectId, @Param("checksum") String checksum, @Param("userId") Long userId);
+    KnowledgeAsset findByProjectAndSourceUrl(@Param("projectId") Long projectId, @Param("sourceUrl") String sourceUrl, @Param("userId") Long userId);
     KnowledgeAsset findById(@Param("id") Long id, @Param("projectId") Long projectId, @Param("userId") Long userId);
     int insert(KnowledgeAsset asset);
     int markDeleted(@Param("id") Long id, @Param("projectId") Long projectId, @Param("userId") Long userId);

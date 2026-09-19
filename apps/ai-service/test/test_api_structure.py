@@ -17,6 +17,7 @@ def test_public_and_internal_routes_are_registered():
         "/internal/tools/chains",
         "/internal/tools/chains/{chain_id}",
         "/internal/files/tools",
+        "/internal/web-source/validate",
         "/internal/research/runs/{run_id}",
         "/internal/research/runs/{run_id}/events",
     } <= paths

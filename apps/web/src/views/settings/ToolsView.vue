@@ -34,6 +34,7 @@ import {
 } from "@/api/settings";
 import { projectApi } from "@/api/projects";
 import { workspaceApi } from "@/api/workspace";
+import { getLastProjectId } from "@/utils/lastProject";
 
 type OperationKey = "read" | "search" | "create" | "update";
 type AgentAutonomy = "受控模式" | "自主模式" | "仅建议不执行";
@@ -68,7 +69,7 @@ type ToolRecord = {
   note: string;
 };
 
-const { notify, workspaceId, projectId } = useWorkspace();
+const { notify, workspaceId, projectId, selectedProject } = useWorkspace();
 const settingsProjectId = ref(-1);
 const hasProject = computed(() => settingsProjectId.value > 0);
 const toolIcons = { database: Database, globe: Globe2, list: ListChecks };
@@ -255,10 +256,14 @@ onMounted(async () => {
     } catch {
       // Malformed legacy preferences are treated as unavailable data.
     }
+    const projects = await projectApi.list(workspaceId.value);
     const resolvedProjectId =
       projectId.value > 0
         ? projectId.value
-        : (await projectApi.list(workspaceId.value))[0]?.id || -1;
+        : selectedProject.value?.id ||
+          projects.find((project) => project.id === getLastProjectId(workspaceId.value))?.id ||
+          projects[0]?.id ||
+          -1;
     settingsProjectId.value = resolvedProjectId;
     if (resolvedProjectId <= 0) return;
     await loadLocalTools();

@@ -50,7 +50,7 @@ REFLECTION_HINTS = (
     "安全", "成本", "迁移", "最新", "详细", "代码", "决策", "compare", "analyse", "analyze",
     "recommend", "architecture", "risk", "trade-off", "why", "how", "explain",
 )
-RECENCY_HINTS = ("最新", "最近", "目前", "当前", "latest", "recent", "newest", "current")
+RECENCY_HINTS = ("最新", "最近", "目前", "当前", "近期", "今天", "今日", "本周", "本月", "今年", "latest", "recent", "newest", "current", "today")
 PAPER_SEARCH_HINTS = (
     "论文", "文献", "学术", "期刊", "研究", "摘要", "引用", "doi", "arxiv", "paper", "academic",
     "journal", "publication", "literature", "citation",

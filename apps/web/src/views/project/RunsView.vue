@@ -5,6 +5,7 @@ import PageHeader from "@/components/common/PageHeader.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { runsApi } from "@/api/runs";
 import type { ResearchRun } from "@/api/types";
+import { formatDateTime } from "@/lib/utils";
 
 type QueueStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
 type QueueTask = {
@@ -59,7 +60,7 @@ function mapRun(run: ResearchRun): QueueTask {
     priority: rawPriority === "HIGH" ? "high" : rawPriority === "LOW" ? "low" : "normal",
     source: "research",
     projectName: selectedProject.value?.name || "—",
-    time: String(run.updatedAt || run.createdAt || "—"),
+    time: formatDateTime(run.updatedAt || run.createdAt, "—"),
     duration: String(run.duration || "—"),
     tokens: String(run.tokens || "—"),
   };

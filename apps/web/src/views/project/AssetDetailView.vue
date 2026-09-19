@@ -16,6 +16,7 @@ import { useWorkspace } from "@/composables/useWorkspace";
 import PageHeader from "@/components/common/PageHeader.vue";
 import { assetsApi } from "@/api/assets";
 import type { KnowledgeAsset } from "@/api/types";
+import { formatDateTime } from "@/lib/utils";
 
 const route = useRoute();
 const {
@@ -56,7 +57,7 @@ function mapRemoteAsset(item: KnowledgeAsset): AssetViewModel {
     type: String(item.assetType || "FILE"),
     size: item.fileSize ? String(Math.round(Number(item.fileSize) / 1024)) + " KB" : "—",
     uploader: "—",
-    updated: String(item.updatedAt || "—"),
+    updated: formatDateTime(item.updatedAt, "—"),
     chunks: Number(item.chunkCount || 0),
     progress: Number(item.progress ?? (status === "indexed" ? 100 : 0)),
     status,

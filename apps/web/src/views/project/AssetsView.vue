@@ -29,6 +29,7 @@ import type { AssetStatus } from "@/data/options";
 import { assetsApi } from "@/api/assets";
 import { projectApi } from "@/api/projects";
 import { getApiErrorMessage } from "@/api/core";
+import { formatDateTime } from "@/lib/utils";
 
 const {
   filteredAssets,
@@ -124,7 +125,7 @@ function mapAsset(asset: Awaited<ReturnType<typeof assetsApi.detail>>) {
     type: asset.assetType,
     size: asset.fileSize ? `${Math.round(Number(asset.fileSize) / 1024)} KB` : "—",
     uploader: "—",
-    updated: asset.updatedAt || "—",
+    updated: formatDateTime(asset.updatedAt, "—"),
     chunks: asset.chunkCount || 0,
     progress: Number(asset.progress || (status === "indexed" ? 100 : 0)),
     status: status as AssetStatus,

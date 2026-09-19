@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date
 
 import pytest
@@ -9,6 +10,7 @@ from agents.runtime import (
     _chat_retrieval_limit,
     _compact_chat_context,
     _evidence_excerpt,
+    _normalize_model_markdown,
     _select_chat_context,
     _select_chat_strategy,
     _should_enable_multi_agent,
@@ -19,7 +21,7 @@ from core.events import EventBus
 from core.repository import InMemoryRunRepository
 from graph.store import GraphEdge, GraphNode
 from models.llm import MockModelGateway, ModelStreamChunk
-from models.schemas import ChatMessage, ExecuteRunRequest, ModelChatResult, ReflectionResult, ResearchConfig, TokenUsage
+from models.schemas import ChatMessage, Evidence, ExecuteRunRequest, ModelChatResult, ReflectionResult, ResearchConfig, TokenUsage
 from rag.retriever import InMemoryRetriever
 from tools.knowledge import KnowledgeTool
 from tools.registry import ToolRegistry, ToolSpec
@@ -77,11 +79,19 @@ class RecordingGraphStore:
         return nodes[:limit], edges[:limit]
 
 
-def test_latest_web_search_gets_current_release_terms():
+def test_latest_web_search_preserves_topic_without_inventing_years():
     query = _augment_web_search_query("ZUN latest work")
-    assert str(date.today().year) in query
-    assert str(date.today().year - 1) in query
-    assert "official" in query
+    assert query == "ZUN latest work"
+    assert _augment_web_search_query("2024年人工智能进展") == "2024年人工智能进展"
+
+
+def test_model_markdown_unescapes_provider_artifacts_but_keeps_code():
+    value = "\\#标题\\n\\n\\*\\*重点\\*\\*\\n\\n```text\n\\#keep\n```"
+
+    normalized = _normalize_model_markdown(value)
+
+    assert normalized.startswith("# 标题\n\n**重点**")
+    assert "```text\n\\#keep\n```" in normalized
 
 
 def test_aggregate_usage_keeps_the_model_used_by_the_run():
@@ -209,6 +219,24 @@ async def test_graph_completes_with_citations():
     assert run.report is not None
     assert run.evidence
     assert any(event.event_type == "run.completed" for event in repository.list_events("run-1"))
+
+
+@pytest.mark.asyncio
+async def test_duplicate_execution_for_same_run_is_ignored():
+    runtime, repository = make_runtime()
+    request = ExecuteRunRequest(
+        run_id="duplicate-run",
+        workspace_id=1,
+        project_id=1,
+        goal="What database does production use?",
+        config=ResearchConfig(),
+    )
+
+    await asyncio.gather(runtime.execute(request), runtime.execute(request))
+
+    events = repository.list_events("duplicate-run")
+    assert sum(event.event_type == "run.started" for event in events) == 1
+    assert sum(event.event_type == "run.completed" for event in events) == 1
 
 
 @pytest.mark.asyncio
@@ -370,10 +398,10 @@ def test_chat_knowledge_search_is_on_demand():
     assert _should_search_graph("请分析 PostgreSQL 和 Redis 的依赖关系")
 
 
-def test_chat_retrieval_limit_keeps_routine_questions_focused():
-    assert _chat_retrieval_limit("这个项目使用什么数据库？", requested=8, maximum=12) == 1
+def test_chat_retrieval_limit_honors_requested_value_for_routine_questions():
+    assert _chat_retrieval_limit("这个项目使用什么数据库？", requested=8, maximum=12) == 8
     assert _chat_retrieval_limit("请全面比较项目的部署方案", requested=8, maximum=12) == 8
-    assert _chat_retrieval_limit("普通项目问题", requested=2, maximum=12) == 1
+    assert _chat_retrieval_limit("普通项目问题", requested=2, maximum=12) == 2
 
 
 def test_narrow_evidence_excerpt_keeps_the_query_hit():
@@ -642,13 +670,70 @@ async def test_chat_reuses_previous_question_for_permission_follow_up():
     await runtime.execute(request)
 
     assert len(web_search.queries) == 1
-    assert web_search.queries[0].startswith("ZUN 最新作品是什么")
-    assert str(date.today().year) in web_search.queries[0]
+    assert web_search.queries[0] == "ZUN 最新作品"
     web_event = next(
         event for event in repository.list_events("chat-web-follow-up-1")
         if event.event_type == "tool.started" and event.payload.get("tool") == "web_search"
     )
     assert web_event.payload["query"] == web_search.queries[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["empty", "snippet", "irrelevant", "stale", "failed"])
+async def test_web_summary_never_falls_back_to_model_memory_when_evidence_fails(mode):
+    class Search:
+        async def search(self, query, top_k=5):
+            if mode == "empty":
+                return []
+            if mode == "failed":
+                raise RuntimeError("offline")
+            return [Evidence(
+                id="W1", chunk_id="w1", source_name="人工智能进展",
+                content="房地产的房价报告" if mode == "irrelevant" else "人工智能最新评测结果",
+                source_type="web", url="https://example.org/report",
+                content_kind="search_snippet" if mode == "snippet" else "fulltext",
+                published_at="2020-01-01" if mode == "stale" else date.today().isoformat(),
+            )]
+
+    model = ReflectingModelGateway()
+    runtime, repository = make_runtime(model, web_search=Search())
+    request = ExecuteRunRequest(
+        run_id=f"grounding-{mode}", workspace_id=1, project_id=1,
+        goal="当前最新的人工智能相关的进展", agent_message_id="grounding-message",
+        config=ResearchConfig(strategy="DIRECT", allow_web_search=True, multi_agent_enabled=False, reflection_enabled=True),
+    )
+    await runtime.execute(request)
+    run = repository.get(request.run_id)
+    assert run.status == "COMPLETED"
+    assert "不能给出可核验的总结" in run.report["answer"]
+    assert model.chat_calls == 0
+    assert model.structured_calls == 0
+    deltas = [event.payload["delta"] for event in repository.list_events(request.run_id) if event.event_type == "message.delta"]
+    assert "".join(deltas) == run.report["answer"]
+
+
+@pytest.mark.asyncio
+async def test_good_web_evidence_still_reaches_summary_with_dates_and_grounding_rules():
+    class Search:
+        async def search(self, query, top_k=5):
+            return [Evidence(id="W1", chunk_id="w1", source_name="人工智能评测",
+                             content="人工智能评测结果只覆盖公开的测试集，模型的实际表现仍需针对具体任务验证。",
+                             source_type="web", url="https://example.org/report", content_kind="fulltext",
+                             published_at=date.today().isoformat())]
+    class Model(MockModelGateway):
+        async def chat(self, messages, **kwargs):
+            self.messages = messages
+            return ModelChatResult(content="人工智能评测仅覆盖公开测试集。[W1]")
+    model = Model()
+    runtime, repository = make_runtime(model, web_search=Search())
+    request = ExecuteRunRequest(run_id="grounding-success", workspace_id=1, project_id=1,
+                                goal="最新人工智能进展", agent_message_id="good-message",
+                                config=ResearchConfig(strategy="DIRECT", allow_web_search=True, multi_agent_enabled=False, reflection_enabled=False))
+    await runtime.execute(request)
+    assert repository.get(request.run_id).report["answer"].endswith("[W1]")
+    context = "\n".join(message["content"] for message in model.messages)
+    assert "网页发布日期不等于事件发生日" in context
+    assert "页面发布日期：" + date.today().isoformat() in context
 
 
 @pytest.mark.asyncio

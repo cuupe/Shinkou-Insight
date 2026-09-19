@@ -7,6 +7,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import okhttp3.Dispatcher;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -36,7 +37,13 @@ public class AiIndexingClient {
         this.baseUrl = baseUrl.replaceAll("/+$", "");
         this.internalApiKey = internalApiKey;
         this.callbackBaseUrl = callbackBaseUrl.replaceAll("/+$", "");
-        this.client = new OkHttpClient.Builder().callTimeout(Duration.ofSeconds(90)).build();
+        Dispatcher dispatcher = new Dispatcher();
+        dispatcher.setMaxRequests(128);
+        dispatcher.setMaxRequestsPerHost(64);
+        this.client = new OkHttpClient.Builder()
+                .dispatcher(dispatcher)
+                .callTimeout(Duration.ofSeconds(90))
+                .build();
     }
 
     public void index(KnowledgeAsset asset, Long workspaceId, Long userId, Map<String, Object> runtimeEmbedding, String chunkingConfig) throws IOException {
@@ -138,6 +145,14 @@ public class AiIndexingClient {
 
     public Map<String, Object> testWebSearch(Map<String, Object> webSearch) throws IOException {
         return post("/internal/web-search/test", webSearch);
+    }
+
+    public Map<String, Object> validateWebSource(String url, String title, String excerpt) throws IOException {
+        return post("/internal/web-source/validate", Map.of(
+                "url", url == null ? "" : url,
+                "title", title == null ? "" : title,
+                "excerpt", excerpt == null ? "" : excerpt
+        ));
     }
 
     public Map<String, Object> runDetail(String runId) throws IOException {

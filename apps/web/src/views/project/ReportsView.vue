@@ -28,6 +28,7 @@ import {
 import { useWorkspace } from "@/composables/useWorkspace";
 import { reportsApi } from "@/api/reports";
 import { useRoute } from "vue-router";
+import { formatDateTime } from "@/lib/utils";
 
 const { reports, notify, workspaceId, projectId } = useWorkspace();
 const route = useRoute();
@@ -132,7 +133,7 @@ async function saveReport() {
       summary: String(updated.summary ?? (editForm.summary.trim() || content)),
       recommendation: String(updated.recommendation ?? editForm.recommendation.trim()),
       recommendationDetail: String(updated.recommendationDetail ?? editForm.recommendationDetail.trim()),
-      updated: String(updated.updatedAt || report.updated),
+      updated: formatDateTime(updated.updatedAt || report.updated, "—"),
     });
   } catch (error) {
     notify(error instanceof Error ? error.message : "报告保存失败");

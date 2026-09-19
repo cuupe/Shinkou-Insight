@@ -13,6 +13,7 @@ import {
   BarChart3,
   Bot,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Circle,
   Clock3,
@@ -58,6 +59,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import DOMPurify from "dompurify";
+import MarkdownIt from "markdown-it";
 import { useAgentWorkspace } from "@/composables/useAgentWorkspace";
 import type {
   AgentAttachment,
@@ -68,6 +71,7 @@ import type {
   AgentThreadSummary,
 } from "@/api/types";
 import { useWorkspace } from "@/composables/useWorkspace";
+import { formatDateTime } from "@/lib/utils";
 
 const { notify, router, routeTo, workspaceId, projectId, allowWeb } =
   useWorkspace();
@@ -81,7 +85,6 @@ const {
   draft,
   composerError,
   isRunning,
-  hasRunningThread,
   cancelling,
   selectThread,
   deleteThread,
@@ -92,7 +95,7 @@ const {
 } = useAgentWorkspace();
 const projectAssetCount = ref(0);
 const canSubmitMessage = computed(
-  () => Boolean(draft.value.trim() || pendingAttachments.value.length) && !hasRunningThread.value,
+  () => Boolean(draft.value.trim() || pendingAttachments.value.length) && !isRunning.value,
 );
 const contextLoading = ref(false);
 const conversationScroll = ref<HTMLElement | null>(null);
@@ -118,7 +121,9 @@ type ChatGenerationForm = {
   reasoningEffort: "low" | "medium" | "high";
 };
 const generationOpen = ref(false);
+const configOpen = ref(false);
 const reflectionEnabled = ref(true);
+const webSearchExplicitChoice = ref(false);
 const generation = reactive<ChatGenerationForm>({
   strategy: "AUTO",
   retrievalTopK: 1,
@@ -137,8 +142,27 @@ const webSearchReady = computed(() =>
     webSearchConfig.value?.enabled && webSearchConfig.value?.hasCredential,
   ),
 );
+
+function needsFreshExternalSources(value: string) {
+  return /最新|最近|近期|目前|当前|进展|现状|新闻|发布|更新|趋势|版本|today|latest|recent|current|release|update|trend|news/i.test(
+    value,
+  );
+}
+
+function handleWebSearchToggle(event: Event) {
+  webSearchExplicitChoice.value = true;
+  allowWeb.value = (event.target as HTMLInputElement).checked;
+}
+
+const requestUsesWebSearch = computed(
+  () =>
+    webSearchReady.value &&
+    (allowWeb.value ||
+      (!webSearchExplicitChoice.value && needsFreshExternalSources(draft.value))),
+);
+
 const agentConfig = computed(() => ({
-  allowWebSearch: allowWeb.value && webSearchReady.value,
+  allowWebSearch: requestUsesWebSearch.value,
   reflectionEnabled: reflectionEnabled.value,
   strategy: generation.strategy,
   multiAgentMode: multiAgentMode.value,
@@ -322,6 +346,14 @@ const activeModel = computed(
     ) || modelOptions.value[0],
 );
 
+const configSummary = computed(() =>
+  [
+    activeModel.value?.name || "项目默认模型",
+    requestUsesWebSearch.value ? "联网搜索已开启" : "联网搜索已关闭",
+    `T ${generation.temperature} · ${generation.maxTokens} tokens`,
+  ].join(" · "),
+);
+
 function modelConfig(model: ProjectModelConfig | undefined) {
   if (!model?.config) return {} as Record<string, unknown>;
   try {
@@ -366,6 +398,7 @@ async function loadModelOptions() {
 }
 
 async function loadWebSearchConfig() {
+  webSearchExplicitChoice.value = false;
   if (projectId.value <= 0) {
     webSearchConfig.value = null;
     allowWeb.value = false;
@@ -415,9 +448,123 @@ function eventIcon(kind: AgentEventKind) {
 type MessageCitation = NonNullable<AgentMessage["citations"]>[number];
 type MessageSegment = { text: string; citation?: MessageCitation };
 
+const messageMarkdown = new MarkdownIt({
+  html: false,
+  breaks: true,
+  linkify: true,
+});
+
+const citationMarkerPattern = /(?:\[([^\]\r\n]{1,100})\]|【([^】\r\n]{1,100})】)/g;
+
+function citationForUrl(message: AgentMessage, url: string) {
+  const normalizedUrl = url.trim().replace(/^<|>$/g, "");
+  return (message.citations || []).find(
+    (citation) => citation.url && citation.url.trim() === normalizedUrl,
+  );
+}
+
+function citationTooltip(message: AgentMessage, citation: MessageCitation) {
+  const number = citationNumber(message, citation);
+  const source = citation.source || citation.title || "引用来源";
+  const excerpt = (citation.quote || citation.content || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 220);
+  return [
+    `引用 ${number}：${citationTitle(citation)}`,
+    source,
+    citation.pageNumber ? `第 ${citation.pageNumber} 页` : "",
+    excerpt,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function citationBadge(message: AgentMessage, citation: MessageCitation) {
+  const citationId = encodeURIComponent(citation.id);
+  const label = `[${citationNumber(message, citation)}]`;
+  const tooltip = messageMarkdown.utils.escapeHtml(
+    citationTooltip(message, citation),
+  );
+  return `<button type="button" class="inline-citation" data-citation-id="${citationId}" data-tooltip="${tooltip}" aria-label="${tooltip}">${label}</button>`;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function citationMarkerExpression(marker: string) {
+  const escaped = escapeRegExp(marker);
+  return `(?:\\[${escaped}\\]|【${escaped}】)`;
+}
+
+function normalizeCitationLinks(value: string, message: AgentMessage) {
+  let normalized = value.replace(
+    /\[([^\]\r\n]+)\]\((<[^>]+>|[^)\s]+)\)/g,
+    (full, _label: string, rawUrl: string) => {
+      const citation = citationForUrl(message, rawUrl);
+      return citation ? `【${citation.id}】` : full;
+    },
+  );
+  for (const citation of message.citations || []) {
+    const number = citationNumber(message, citation);
+    const markers = [
+      citationMarkerExpression(citation.id),
+      citationMarkerExpression(String(number)),
+    ].join("|");
+    const labels = [
+      citation.title,
+      citation.source.replace(/\s*[·•|]\s*第\s*\d+\s*页\s*$/i, ""),
+    ]
+      .map((label) => label.trim())
+      .filter(Boolean);
+    for (const label of labels) {
+      normalized = normalized.replace(
+        new RegExp(`${escapeRegExp(label)}\\s*(?=${markers})`, "gi"),
+        "",
+      );
+    }
+    normalized = normalized.replace(
+      new RegExp(`(${markers})\\s*(?:${markers})`, "g"),
+      "$1",
+    );
+  }
+  return normalized;
+}
+
+messageMarkdown.renderer.rules.text = (tokens, index, _options, env) => {
+  const token = tokens[index];
+  if (!token) return "";
+  const message = (env as { message?: AgentMessage } | undefined)?.message;
+  if (!message || !token.content)
+    return messageMarkdown.utils.escapeHtml(token.content);
+
+  let html = "";
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  citationMarkerPattern.lastIndex = 0;
+  while ((match = citationMarkerPattern.exec(token.content))) {
+    const citation = citationForMarker(message, match[1] || match[2] || "");
+    if (!citation) continue;
+
+    html += messageMarkdown.utils.escapeHtml(
+      token.content.slice(cursor, match.index),
+    );
+    html += citationBadge(message, citation);
+    cursor = match.index + match[0].length;
+  }
+  citationMarkerPattern.lastIndex = 0;
+
+  return html + messageMarkdown.utils.escapeHtml(token.content.slice(cursor));
+};
+
 function citationForMarker(message: AgentMessage, marker: string) {
   const citationsForMessage = message.citations || [];
-  const normalizedMarker = marker.trim().toLowerCase();
+  const normalizedMarker = marker
+    .trim()
+    .replace(/^(?:来源|引用|证据|source|citation|evidence)\s*(?:[:：]\s*)?/i, "")
+    .trim()
+    .toLowerCase();
   const direct = citationsForMessage.find(
     (citation) => citation.id.toLowerCase() === normalizedMarker,
   );
@@ -456,6 +603,15 @@ function messageCitations(message: AgentMessage) {
   while ((match = markerPattern.exec(message.content))) {
     const citation = citationForMarker(message, match[1] || match[2] || "");
     if (citation && !referenced.some((item) => item.id === citation.id)) {
+      referenced.push(citation);
+    }
+  }
+  for (const citation of citationsForMessage) {
+    if (
+      citation.url &&
+      message.content.includes(citation.url) &&
+      !referenced.some((item) => item.id === citation.id)
+    ) {
       referenced.push(citation);
     }
   }
@@ -543,6 +699,58 @@ function citationTitle(citation: MessageCitation) {
   return citation.title || citation.source || "引用来源";
 }
 
+function renderMessageMarkdown(message: AgentMessage) {
+  if (!message.content) return "";
+  const normalized = normalizeCitationLinks(
+    normalizeAgentMarkdown(message.content),
+    message,
+  );
+  const rendered = messageMarkdown.render(normalized, { message });
+  return DOMPurify.sanitize(rendered, {
+    ADD_ATTR: ["data-citation-id", "data-tooltip"],
+  });
+}
+
+function normalizeAgentMarkdown(value: string) {
+  const fencedBlocks: string[] = [];
+  const protectedValue = value.replace(/(```[\s\S]*?```|~~~[\s\S]*?~~~)/g, (block) => {
+    const index = fencedBlocks.push(block) - 1;
+    return `\u0000SHINKOU_CODE_${index}\u0000`;
+  });
+  const normalized = protectedValue
+    // Some providers return JSON-style line breaks instead of real newlines.
+    .replace(/\\r?\\n/g, "\n")
+    // A stray backslash before a real newline is an escaping artifact, not content.
+    .replace(/\\(?=\r?\n)/g, "")
+    // Recover Markdown markers escaped by the model (\\#, \\*, \\**, \\[, …).
+    .replace(/\\([#>*_`~\-\[\]])/g, "$1")
+    // CommonMark requires whitespace after an ATX heading marker.
+    .replace(/^(#{1,6})(?=\S)/gm, "$1 ")
+    // Recover list markers and common Chinese report section headings.
+    .replace(/^(\s*)([-+])(?=\S)/gm, "$1$2 ")
+    .replace(/^(\s*)\*(?=[^\s*])/gm, "$1* ")
+    .replace(/^(\s*)(\d+[.)])(?=\S)/gm, "$1$2 ")
+    .replace(/^([一二三四五六七八九十]+、)(?=\S)/gm, "## $1 ");
+  return normalized.replace(/\u0000SHINKOU_CODE_(\d+)\u0000/g, (_match, index) => {
+    return fencedBlocks[Number(index)] || "";
+  });
+}
+
+function openMessageCitation(event: MouseEvent, message: AgentMessage) {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  const button = target.closest<HTMLButtonElement>(
+    "button[data-citation-id]",
+  );
+  if (!button?.dataset.citationId) return;
+
+  const citationId = decodeURIComponent(button.dataset.citationId);
+  const citation = (message.citations || []).find(
+    (item) => item.id === citationId,
+  );
+  if (citation) openCitation(citation);
+}
+
 function eventStatusLabel(event: AgentEvent) {
   if (event.status === "running") return "进行中";
   if (event.status === "failed") return "失败";
@@ -552,7 +760,8 @@ function eventStatusLabel(event: AgentEvent) {
 }
 
 function eventTimeLabel(event: AgentEvent) {
-  return event.completedAt || event.startedAt || event.duration || "等待中";
+  const timestamp = event.completedAt || event.startedAt;
+  return timestamp ? formatDateTime(timestamp, "等待中") : event.duration || "等待中";
 }
 
 const attachmentIcons = {
@@ -676,24 +885,43 @@ function isWebCitation(
   return citation.sourceType === "web" || Boolean(citation.url);
 }
 
+function canSaveCitation(citation: MessageCitation) {
+  return isWebCitation(citation) && citation.contentKind === "fulltext" && Boolean(citation.url);
+}
+
+function citationKnowledgeKey(
+  citation: NonNullable<AgentMessage["citations"]>[number],
+) {
+  return citationSourceKey(citation);
+}
+
+function savedCitationAsset(citation: MessageCitation) {
+  return savedCitationAssets[citationKnowledgeKey(citation)];
+}
+
+function isSavingCitation(citation: MessageCitation) {
+  return savingCitationIds.has(citationKnowledgeKey(citation));
+}
+
 async function saveCitationToKnowledge(
   citation: NonNullable<AgentMessage["citations"]>[number],
 ) {
+  const knowledgeKey = citationKnowledgeKey(citation);
   if (
-    !isWebCitation(citation) ||
-    savedCitationAssets[citation.id] ||
-    savingCitationIds.has(citation.id)
+    !canSaveCitation(citation) ||
+    savedCitationAssets[knowledgeKey] ||
+    savingCitationIds.has(knowledgeKey)
   )
     return;
   const excerpt = (citation.content || citation.quote || "").trim();
   if (!excerpt) {
-    notify("这条外部结果没有可保存的证据摘录");
+    notify("这条引用没有可保存的原文摘录");
     return;
   }
-  savingCitationIds.add(citation.id);
+  savingCitationIds.add(knowledgeKey);
   try {
     const source = citation.url || citation.source;
-    const markdown = `# ${citation.title}\n\n来源类型：外部网络搜索\n来源地址：${source}\n\n检索摘录：\n\n${excerpt}\n`;
+    const markdown = `# ${citation.title}\n\n来源类型：外部网页原文\n来源地址：${source}\n\n原文摘录：\n\n${excerpt}\n`;
     const safeTitle =
       citation.title
         .replace(/[\\/:*?"<>|\r\n]+/g, " ")
@@ -703,10 +931,14 @@ async function saveCitationToKnowledge(
       workspaceId.value,
       projectId.value,
       new File([markdown], `${safeTitle}.md`, { type: "text/markdown" }),
-      { name: `外部来源｜${safeTitle}`, language: "zh-CN" },
+      {
+        name: `外部来源｜${safeTitle}`,
+        language: "zh-CN",
+        sourceUrl: citation.url || "",
+      },
     );
-    savedCitationAssets[citation.id] = String(asset.id);
-    notify(`已手动加入知识库：${asset.name}`);
+    savedCitationAssets[knowledgeKey] = String(asset.id);
+    notify(`已加入知识库：${asset.name}`);
   } catch (error) {
     notify(
       error instanceof Error
@@ -714,7 +946,7 @@ async function saveCitationToKnowledge(
         : "加入知识库失败，未写入数据库",
     );
   } finally {
-    savingCitationIds.delete(citation.id);
+    savingCitationIds.delete(knowledgeKey);
   }
 }
 
@@ -898,15 +1130,31 @@ watch(selectedModelId, applyModelGenerationDefaults);
         </nav>
       </section>
 
-      <section class="agent-config-card" aria-label="Agent 当前配置">
-        <div class="agent-config-intro">
+      <section
+        class="agent-config-card"
+        :class="{ 'is-open': configOpen }"
+        aria-label="Agent 当前配置"
+      >
+        <button
+          class="agent-config-toggle"
+          type="button"
+          aria-controls="agent-config-items"
+          :aria-expanded="configOpen"
+          @click="configOpen = !configOpen"
+        >
           <span class="config-intro-icon"><Settings2 :size="16" /></span>
-          <div>
+          <span class="agent-config-toggle-copy">
             <strong>本次对话配置</strong>
             <small>配置只影响当前 Agent，不改变项目数据</small>
-          </div>
-        </div>
-        <div class="agent-config-items">
+          </span>
+          <span class="agent-config-toggle-summary">{{ configSummary }}</span>
+          <ChevronDown
+            class="agent-config-toggle-chevron"
+            :class="{ 'is-open': configOpen }"
+            :size="16"
+          />
+        </button>
+        <div v-if="configOpen" id="agent-config-items" class="agent-config-items">
           <div class="agent-config-item agent-config-model">
             <span class="config-item-icon"><Cpu :size="15" /></span>
             <label class="config-copy">
@@ -951,7 +1199,9 @@ watch(selectedModelId, applyModelGenerationDefaults);
                   ? "未配置独立搜索服务"
                   : allowWeb
                     ? "本次运行已开启"
-                    : "本次运行已关闭"
+                    : requestUsesWebSearch
+                      ? "当前问题将自动联网"
+                      : "本次运行已关闭"
               }}</strong
               ><small>只保存来源记录，不自动入库</small></span
             >
@@ -962,10 +1212,13 @@ watch(selectedModelId, applyModelGenerationDefaults);
                   ? '请先配置联网搜索'
                   : allowWeb
                     ? '关闭本次运行联网搜索'
-                    : '允许本次运行联网搜索'
+                    : needsFreshExternalSources(draft)
+                      ? '取消本次运行的自动联网搜索'
+                      : '允许本次运行联网搜索'
               "
               ><input
-                v-model="allowWeb"
+                :checked="requestUsesWebSearch"
+                @change="handleWebSearchToggle"
                 :disabled="!webSearchReady"
                 type="checkbox"
                 aria-label="允许本次运行联网搜索" /><span
@@ -1000,7 +1253,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
       </section>
 
       <section
-        v-if="generationOpen"
+        v-if="configOpen && generationOpen"
         class="agent-generation-panel"
         aria-label="本次对话生成参数"
       >
@@ -1193,7 +1446,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
               <span v-if="activeThread.runId"
                 >运行 {{ activeThread.runId }}</span
               >
-              <span><Clock3 :size="13" />{{ activeThread.updatedAt }}</span>
+              <span><Clock3 :size="13" />{{ formatDateTime(activeThread.updatedAt, "刚刚") }}</span>
             </div>
           </header>
 
@@ -1252,41 +1505,21 @@ watch(selectedModelId, applyModelGenerationDefaults);
                   <strong>{{
                     message.role === "assistant" ? "Shinkou Agent" : "你"
                   }}</strong>
-                  <span>{{ message.createdAt }}</span>
+                  <span>{{ formatDateTime(message.createdAt, "刚刚") }}</span>
                   <span
                     v-if="message.status === 'streaming'"
                     class="streaming-label"
                     ><i />生成中</span
                   >
                 </div>
-                <div class="message-bubble">
-                  <p
-                    v-for="(paragraph, paragraphIndex) in messageParagraphs(
-                      message,
-                    )"
-                    :key="paragraphIndex"
-                  >
-                    <template
-                      v-for="(segment, segmentIndex) in paragraph"
-                      :key="segmentIndex"
-                    >
-                      <span v-if="!segment.citation">{{ segment.text }}</span>
-                      <button
-                        v-else
-                        type="button"
-                        class="inline-citation"
-                        :title="
-                          '引用 ' +
-                          citationNumber(message, segment.citation) +
-                          '：' +
-                          citationTitle(segment.citation)
-                        "
-                        @click="openCitation(segment.citation)"
-                      >
-                        【{{ citationNumber(message, segment.citation) }}】
-                      </button>
-                    </template>
-                  </p>
+                <div
+                  class="message-bubble"
+                  @click="openMessageCitation($event, message)"
+                >
+                  <div
+                    class="message-markdown"
+                    v-html="renderMessageMarkdown(message)"
+                  />
                   <span
                     v-if="message.status === 'streaming'"
                     class="typing-caret"
@@ -1438,29 +1671,45 @@ watch(selectedModelId, applyModelGenerationDefaults);
                         ><small>{{ citation.source }}</small
                         ><ChevronRight :size="12" />
                       </button>
-                      <button
+                      <div
                         v-if="isWebCitation(citation)"
-                        type="button"
-                        class="citation-save-mini"
-                        :disabled="
-                          Boolean(savedCitationAssets[citation.id]) ||
-                          savingCitationIds.has(citation.id)
-                        "
-                        @click.stop="saveCitationToKnowledge(citation)"
+                        class="citation-actions"
                       >
-                        <CheckCircle2
-                          v-if="savedCitationAssets[citation.id]"
-                          :size="12"
-                        />
-                        <Plus v-else :size="12" />
-                        {{
-                          savedCitationAssets[citation.id]
-                            ? "已加入"
-                            : savingCitationIds.has(citation.id)
-                              ? "加入中"
-                              : "加入知识库"
-                        }}
-                      </button>
+                        <a
+                          v-if="citation.url"
+                          class="citation-open-link"
+                          :href="citation.url"
+                          target="_blank"
+                          rel="noreferrer"
+                          @click.stop
+                          >打开来源</a
+                        >
+                        <button
+                          type="button"
+                          class="citation-save-mini"
+                          :disabled="
+                            Boolean(savedCitationAsset(citation)) ||
+                            isSavingCitation(citation) ||
+                            !canSaveCitation(citation)
+                          "
+                          @click.stop="saveCitationToKnowledge(citation)"
+                        >
+                          <CheckCircle2
+                            v-if="savedCitationAsset(citation)"
+                            :size="12"
+                          />
+                          <Plus v-else :size="12" />
+                          {{
+                            savedCitationAsset(citation)
+                              ? "已加入"
+                              : !canSaveCitation(citation)
+                                ? "未获取原文"
+                              : isSavingCitation(citation)
+                                ? "加入中"
+                                : "加入知识库"
+                          }}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </details>
@@ -1494,7 +1743,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
               <textarea
                 v-model="draft"
                 rows="3"
-                :disabled="hasRunningThread"
+                :disabled="isRunning"
                 placeholder="问问 Agent：比较方案、查找证据或整理下一步…"
                 aria-label="输入给 Agent 的问题"
                 @keydown.enter.exact.prevent="handleSubmit"
@@ -1531,7 +1780,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
                   type="submit"
                   :disabled="!canSubmitMessage"
                 >
-                  {{ hasRunningThread ? "请先暂停运行" : canSubmitMessage ? "发送" : "输入内容" }}
+                  {{ canSubmitMessage ? "发送" : "输入内容" }}
                   <Send :size="14" />
                 </button>
               </div>
@@ -1834,7 +2083,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 
 .agent-config-card {
   display: grid;
-  grid-template-columns: minmax(11rem, 0.72fr) minmax(0, 2.28fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 0.75rem;
   flex: 0 0 auto;
@@ -1846,6 +2095,69 @@ watch(selectedModelId, applyModelGenerationDefaults);
     color-mix(in oklab, var(--teal) 6%, var(--surface)),
     var(--surface)
   );
+}
+
+.agent-config-toggle {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-config-toggle-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.125rem;
+}
+
+.agent-config-toggle-copy strong,
+.agent-config-toggle-copy small {
+  display: block;
+}
+
+.agent-config-toggle-copy strong {
+  color: var(--workspace-text);
+  font-size: 0.75rem;
+}
+
+.agent-config-toggle-copy small {
+  overflow: hidden;
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-config-toggle-summary {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-config-toggle-chevron {
+  flex: 0 0 auto;
+  color: var(--workspace-subtle);
+  transition: transform 0.18s ease;
+}
+
+.agent-config-toggle-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.agent-config-card.is-open .agent-config-toggle {
+  padding-bottom: 0.5rem;
+  border-bottom: 0.0625rem solid var(--workspace-divider);
 }
 
 .agent-config-intro,
@@ -1889,6 +2201,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 
 .agent-config-items {
   display: grid;
+  grid-column: 1 / -1;
   min-width: 0;
   flex: 1;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2566,6 +2879,133 @@ watch(selectedModelId, applyModelGenerationDefaults);
 
 .message-bubble p + p {
   margin-top: 0.5rem;
+}
+
+.message-markdown {
+  overflow-wrap: anywhere;
+  font-size: 0.875rem;
+  line-height: 1.8;
+}
+
+.message-markdown :deep(p) {
+  margin: 0;
+}
+
+.message-markdown :deep(p + p),
+.message-markdown :deep(ul + p),
+.message-markdown :deep(ol + p),
+.message-markdown :deep(pre + p),
+.message-markdown :deep(blockquote + p) {
+  margin-top: 0.625rem;
+}
+
+.message-markdown :deep(h1),
+.message-markdown :deep(h2),
+.message-markdown :deep(h3) {
+  margin: 1.15rem 0 0.55rem;
+  color: var(--workspace-text);
+  font-weight: 720;
+  line-height: 1.35;
+}
+
+.message-markdown :deep(h1) {
+  margin-top: 0;
+  padding-bottom: 0.45rem;
+  border-bottom: 0.0625rem solid var(--workspace-divider);
+  font-size: 1.4rem;
+}
+
+.message-markdown :deep(h2) {
+  font-size: 1.18rem;
+}
+
+.message-markdown :deep(h3) {
+  font-size: 1rem;
+}
+
+.message-markdown :deep(strong) {
+  color: var(--workspace-text);
+  font-weight: 720;
+}
+
+.message-markdown :deep(em) {
+  color: var(--workspace-muted);
+}
+
+.message-markdown :deep(ul),
+.message-markdown :deep(ol) {
+  margin: 0.55rem 0;
+  padding-left: 1.25rem;
+}
+
+.message-markdown :deep(li + li) {
+  margin-top: 0.25rem;
+}
+
+.message-markdown :deep(blockquote) {
+  margin: 0.5rem 0;
+  padding-left: 0.75rem;
+  border-left: 0.1875rem solid var(--teal);
+  color: var(--workspace-muted);
+}
+
+.message-markdown :deep(table) {
+  width: 100%;
+  margin: 0.75rem 0;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+
+.message-markdown :deep(th),
+.message-markdown :deep(td) {
+  padding: 0.45rem 0.55rem;
+  border: 0.0625rem solid var(--workspace-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.message-markdown :deep(th) {
+  background: color-mix(in oklab, var(--teal) 8%, var(--surface-raised));
+  color: var(--workspace-text);
+  font-weight: 700;
+}
+
+.message-markdown :deep(pre) {
+  max-width: 100%;
+  margin: 0.625rem 0;
+  overflow-x: auto;
+  padding: 0.75rem;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, #102326 92%, var(--surface-raised));
+  color: #dff7f3;
+  font-size: 0.9em;
+  line-height: 1.55;
+}
+
+.message-markdown :deep(code) {
+  padding: 0.08rem 0.25rem;
+  border-radius: 0.25rem;
+  background: color-mix(in oklab, var(--teal) 10%, var(--surface-raised));
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.92em;
+}
+
+.message-markdown :deep(pre code) {
+  padding: 0;
+  background: transparent;
+}
+
+.message-markdown :deep(a) {
+  color: var(--teal-dark);
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
+.message-markdown :deep(hr) {
+  margin: 0.75rem 0;
+  border: 0;
+  border-top: 0.0625rem solid var(--workspace-divider);
 }
 
 .typing-caret {
@@ -3736,7 +4176,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 @media (max-width: 75rem) {
   .agent-config-card {
     align-items: flex-start;
-    grid-template-columns: minmax(10rem, 0.72fr) minmax(0, 2.28fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .agent-workspace {
@@ -3789,6 +4229,10 @@ watch(selectedModelId, applyModelGenerationDefaults);
     gap: 0.75rem;
     padding: 0.75rem;
     grid-template-columns: 1fr;
+  }
+
+  .agent-config-toggle-summary {
+    max-width: 42%;
   }
 
   .agent-config-items {
@@ -3996,10 +4440,11 @@ watch(selectedModelId, applyModelGenerationDefaults);
 }
 /* Inline source markers keep citations attached to the claim that uses them. */
 .message-bubble .inline-citation {
+  position: relative;
   display: inline-flex;
   align-items: center;
   margin: 0 0.1rem;
-  padding: 0.05rem 0.25rem;
+  padding: 0.04rem 0.3rem;
   border: 0.0625rem solid
     color-mix(in oklab, var(--teal) 42%, var(--workspace-border));
   border-radius: 0.25rem;
@@ -4010,6 +4455,35 @@ watch(selectedModelId, applyModelGenerationDefaults);
   font-weight: 700;
   line-height: 1.35;
   cursor: pointer;
+  text-decoration: none;
+}
+
+.message-bubble .inline-citation::after {
+  position: absolute;
+  z-index: 5;
+  bottom: calc(100% + 0.5rem);
+  left: 50%;
+  width: min(22rem, 70vw);
+  padding: 0.6rem 0.7rem;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.5rem;
+  background: #102326;
+  color: #e6fbf7;
+  content: attr(data-tooltip);
+  font-size: 0.75rem;
+  font-weight: 450;
+  line-height: 1.55;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 0.25rem);
+  transition: opacity 140ms ease, transform 140ms ease;
+  white-space: pre-line;
+}
+
+.message-bubble .inline-citation:hover::after,
+.message-bubble .inline-citation:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .message-bubble .inline-citation:hover,
@@ -4087,7 +4561,34 @@ watch(selectedModelId, applyModelGenerationDefaults);
   min-width: 0;
 }
 
-.message-citation-row > .citation-save-mini {
+.citation-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.25rem;
+}
+
+.citation-open-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.75rem;
+  padding: 0 0.4375rem;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.375rem;
+  color: var(--teal-dark);
+  font-size: 0.6875rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.citation-open-link:hover,
+.citation-open-link:focus-visible {
+  border-color: var(--teal);
+  background: var(--surface-soft);
+  outline: none;
+}
+
+.citation-actions > .citation-save-mini {
   display: inline-flex;
   width: auto;
   min-width: 6.25rem;

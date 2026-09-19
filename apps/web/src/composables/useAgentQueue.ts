@@ -1,6 +1,7 @@
 import { computed, onMounted, reactive } from "vue";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { runsApi } from "@/api/runs";
+import { formatDateTime } from "@/lib/utils";
 import type {
   AgentQueuePriority,
   AgentQueueStatus,
@@ -55,7 +56,7 @@ export function useAgentQueue() {
           priority: "normal" as const,
           progress: Number(run.progress || 0),
           currentStep: String(run.currentStep || run.status),
-          time: String(run.updatedAt || run.createdAt || ""),
+          time: formatDateTime(run.updatedAt || run.createdAt, ""),
           duration: String(run.duration || "-"),
           tokens: String(run.tokens || "—"),
         })),

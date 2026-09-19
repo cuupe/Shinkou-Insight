@@ -18,6 +18,7 @@ import {
 import PageHeader from "@/components/common/PageHeader.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { planningApi } from "@/api/planning";
+import { formatDateTime } from "@/lib/utils";
 
 const {
   selectedProject,
@@ -251,7 +252,7 @@ onMounted(() => void loadDraft());
       <div class="planning-hero-meta">
         <span><LockKeyhole :size="13" />项目级草稿</span>
         <span><CheckCircle2 :size="13" />引用门禁已启用</span>
-        <span v-if="savedAt">最近保存 {{ savedAt }}</span>
+        <span v-if="savedAt">最近保存 {{ formatDateTime(savedAt, "—") }}</span>
       </div>
     </div>
     <div class="readiness-meter" aria-label="规划准备度">

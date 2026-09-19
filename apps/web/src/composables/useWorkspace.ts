@@ -28,6 +28,11 @@ import { evaluationApi } from "@/api/evaluation";
 import { authApi } from "@/api/auth";
 import { workspaceApi } from "@/api/workspace";
 import { statisticsApi } from "@/api/statistics";
+import {
+  getLastProjectId,
+  rememberLastProject,
+} from "@/utils/lastProject";
+import { formatDateTime } from "@/lib/utils";
 import type {
   AuthUser,
   KnowledgeAsset,
@@ -169,7 +174,7 @@ function mapRemoteAsset(asset: KnowledgeAsset) {
     type: String(asset.assetType || "FILE"),
     size: asset.fileSize ? `${Math.round(Number(asset.fileSize) / 1024)} KB` : "—",
     uploader: "—",
-    updated: String(asset.updatedAt || "—"),
+    updated: formatDateTime(asset.updatedAt, "—"),
     chunks: Number(asset.chunkCount || 0),
     progress: Number(asset.progress ?? (status === "indexed" ? 100 : 0)),
     status,
@@ -222,7 +227,7 @@ function mapRemoteRun(run: ResearchRun, projectName = "", owningProjectId?: numb
     title: String(run.title || run.goal || "未命名运行"),
     status,
     statusLabel: statusLabel(status),
-    time: String(run.updatedAt || run.createdAt || "—"),
+    time: formatDateTime(run.updatedAt || run.createdAt, "—"),
     duration: runDisplayFields(run).duration,
     tokens: runDisplayFields(run).tokens,
   };
@@ -256,7 +261,7 @@ function mapRemoteReport(report: Record<string, unknown>, projectName = "", owni
     projectId: owningProjectId,
     title: String(report.title || "未命名报告"),
     project: projectName,
-    updated: String(report.updatedAt || report.createdAt || "—"),
+    updated: formatDateTime(report.updatedAt || report.createdAt, "—"),
     status: status === "PUBLISHED" ? "已发布" : "草稿",
     citations: report.citations == null ? null : Number(report.citations),
     ...reportDisplayFields(report),
@@ -305,7 +310,9 @@ export function useWorkspace() {
     () =>
       projectId.value > 0
         ? projectList.find((item) => item.id === projectId.value)
-        : projectList[0],
+        : projectList.find(
+            (item) => item.id === getLastProjectId(workspaceId.value),
+          ) || projectList[0],
   );
   const filteredAssets = computed(() =>
     assets.filter((asset) => {
@@ -417,19 +424,29 @@ export function useWorkspace() {
       );
 
       // Project pages must always carry a real project ID. When navigation
-      // starts from a workspace-level page, the previous implementation kept
-      // the sentinel -1 in the URL while rendering the first project as a
-      // fallback. That made every project-scoped request return 404.
-      const firstProject = projectData[0]?.project;
-      if (isProject.value && projectId.value <= 0 && firstProject) {
+      // starts from a workspace-level page, prefer the remembered project and
+      // only fall back to the first available project. This also prevents the
+      // sentinel -1 from reaching project-scoped requests.
+      const lastProjectId = getLastProjectId(workspaceId.value);
+      const projectToOpen =
+        projectData.find(({ project }) => project.id === lastProjectId)?.project ||
+        projectData[0]?.project;
+      if (isProject.value && projectId.value <= 0 && projectToOpen) {
         await router.replace({
           name: currentName.value,
           params: {
             workspaceId: workspaceId.value,
-            projectId: firstProject.id,
+            projectId: projectToOpen.id,
           },
         });
         return;
+      }
+
+      if (
+        projectId.value > 0 &&
+        projectList.some((project) => project.id === projectId.value)
+      ) {
+        rememberLastProject(workspaceId.value, projectId.value);
       }
 
       const currentProjectData = projectData.find(
@@ -490,6 +507,7 @@ export function useWorkspace() {
     if (next && next !== previous) void loadWorkspaceData();
   });
   watch(projectId, (next, previous) => {
+    if (next > 0) rememberLastProject(workspaceId.value, next);
     if (next !== previous && next > 0) void loadWorkspaceData();
   });
 

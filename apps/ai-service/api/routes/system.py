@@ -20,11 +20,12 @@ from models.schemas import (
     RuntimeEmbeddingConfig,
     RuntimeModelConfig,
     RuntimeWebSearchConfig,
+    WebSourceValidationRequest,
 )
 from documents.parser import SUPPORTED_EXTENSIONS
 from tools.multi_source_search import MultiSourceWebSearch
 from tools.mcp_bridge import MCPToolBridge
-from tools.web import DEFAULT_DUCKDUCKGO_BASE_URL, BraveWebSearch, DuckDuckGoWebSearch
+from tools.web import DEFAULT_DUCKDUCKGO_BASE_URL, BraveWebSearch, DuckDuckGoWebSearch, validate_web_source as validate_source
 
 router = APIRouter(tags=["system"])
 settings = get_settings()
@@ -247,3 +248,11 @@ async def test_web_search(request: RuntimeWebSearchConfig, http_request: Request
         "resultCount": len(results),
         "latencyMs": int((time.perf_counter() - started) * 1000),
     }
+
+
+@router.post("/internal/web-source/validate", dependencies=[Depends(verify_internal_api_key)])
+async def validate_external_source(request: WebSourceValidationRequest, http_request: Request) -> dict[str, object]:
+    client = http_request.app.state.container.http_client
+    if client is None:
+        raise HTTPException(500, "Web source validation HTTP client is not available")
+    return await validate_source(client, url=request.url, title=request.title, excerpt=request.excerpt)

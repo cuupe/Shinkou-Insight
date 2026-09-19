@@ -15,6 +15,7 @@ import com.cuupe.backend.modules.user.security.UserLoginByPassword;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import java.nio.charset.StandardCharsets;
@@ -38,11 +39,33 @@ public class KnowledgeAssetController {
     @GetMapping("/{assetId}") public Result<KnowledgeAsset> detail(@PathVariable Long projectId, @PathVariable Long assetId, Authentication auth) { return Result.success(required(projectId, assetId, auth)); }
 
     @PostMapping(consumes = "multipart/form-data")
-    public Result<KnowledgeAsset> upload(@PathVariable Long workspaceId, @PathVariable Long projectId, @RequestPart("file") MultipartFile file, @RequestParam(required=false) String name, @RequestParam(required=false) String language, Authentication auth) throws Exception {
+    public Result<KnowledgeAsset> upload(@PathVariable Long workspaceId, @PathVariable Long projectId, @RequestPart("file") MultipartFile file, @RequestParam(required=false) String name, @RequestParam(required=false) String language, @RequestParam(required=false) String sourceUrl, Authentication auth) throws Exception {
         if (file.isEmpty()) throw ApiException.badRequest("EMPTY_FILE", "上传文件不能为空");
+        Long currentUserId = userId(auth);
         KnowledgeAsset asset = new KnowledgeAsset();
-        asset.setProjectId(projectId); asset.setCreatedBy(userId(auth)); asset.setName(name == null || name.isBlank() ? file.getOriginalFilename() : name.trim());
+        asset.setProjectId(projectId); asset.setCreatedBy(currentUserId); asset.setName(name == null || name.isBlank() ? file.getOriginalFilename() : name.trim());
         asset.setAssetType(typeOf(file.getOriginalFilename())); asset.setMimeType(file.getContentType()); asset.setLanguage(language); asset.setFileSize(file.getSize()); asset.setChecksum(hex(MessageDigest.getInstance("SHA-256").digest(file.getBytes())));
+        String normalizedSourceUrl = sourceUrl == null ? "" : sourceUrl.trim();
+        if (!normalizedSourceUrl.isBlank()) {
+            KnowledgeAsset sourceMatch = assetMapper.findByProjectAndSourceUrl(projectId, normalizedSourceUrl, currentUserId);
+            if (sourceMatch != null) return Result.success(sourceMatch);
+            Map<String, Object> validation;
+            try {
+                validation = aiIndexingClient.validateWebSource(
+                        normalizedSourceUrl,
+                        asset.getName(),
+                        new String(file.getBytes(), StandardCharsets.UTF_8)
+                );
+            } catch (Exception exception) {
+                throw new ApiException(HttpStatus.BAD_GATEWAY, "SOURCE_VALIDATION_UNAVAILABLE", "暂时无法验证引用来源，请稍后重试");
+            }
+            if (!Boolean.TRUE.equals(validation.get("valid"))) {
+                String reason = String.valueOf(validation.getOrDefault("reason", "来源页面无效"));
+                throw ApiException.badRequest("INVALID_SOURCE", "引用来源未通过验证：" + reason);
+            }
+        }
+        KnowledgeAsset existing = assetMapper.findByProjectAndChecksum(projectId, asset.getChecksum(), currentUserId);
+        if (existing != null) return Result.success(existing);
         String storageKey = "workspaces/" + workspaceId + "/projects/" + projectId + "/assets/" + asset.getChecksum() + "/" + safeFileName(file.getOriginalFilename());
         try (var input = file.getInputStream()) {
             objectStorageService.put(storageKey, input, file.getSize(), file.getContentType());
@@ -67,6 +90,11 @@ public class KnowledgeAssetController {
                 }
             });
         } catch (RuntimeException exception) {
+            KnowledgeAsset duplicate = assetMapper.findByProjectAndChecksum(projectId, asset.getChecksum(), currentUserId);
+            if (duplicate != null) {
+                try { objectStorageService.remove(storageKey); } catch (Exception ignored) { }
+                return Result.success(duplicate);
+            }
             try { objectStorageService.remove(storageKey); } catch (Exception ignored) { }
             throw exception;
         }

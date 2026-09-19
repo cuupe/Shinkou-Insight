@@ -103,6 +103,7 @@ class Settings(BaseSettings):
     task_queue_stream: str = "shinkou:research-tasks"
     task_queue_group: str = "ai-service"
     task_queue_max_retries: int = Field(default=3, ge=0, le=10)
+    task_queue_concurrency: int = Field(default=8, ge=1, le=64)
     storage_mode: str = "local"
     storage_root: str = "./data"
     minio_endpoint: str | None = None

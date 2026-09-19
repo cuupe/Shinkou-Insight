@@ -148,6 +148,65 @@ async def test_http_gateway_request_generation_override_reaches_provider():
     assert seen["reasoning_effort"] == "high"
 
 
+@pytest.mark.parametrize(
+    "effort, budget, enabled",
+    [("none", None, False), ("low", 1024, True), ("medium", 4096, True), ("high", 16384, True)],
+)
+def test_siliconflow_gateway_maps_reasoning_effort_to_thinking_budget(effort, budget, enabled):
+    gateway = LangChainModelGateway(
+        base_url="https://mock.local/v1",
+        api_key="test-key",
+        model="demo-model",
+        provider="siliconflow",
+        generation=ModelGenerationConfig(reasoning_effort=effort),
+    )
+
+    kwargs = gateway._invoke_kwargs(None)
+
+    assert kwargs["extra_body"]["enable_thinking"] is enabled
+    if budget is None:
+        assert "thinking_budget" not in kwargs["extra_body"]
+    else:
+        assert kwargs["extra_body"]["thinking_budget"] == budget
+    if effort == "high":
+        assert kwargs["reasoning_effort"] == "high"
+    else:
+        assert "reasoning_effort" not in kwargs
+
+
+@pytest.mark.parametrize(
+    "effort, budget, enabled",
+    [("none", None, False), ("low", 1024, True), ("medium", 4096, True), ("high", 16384, True)],
+)
+@pytest.mark.asyncio
+async def test_http_siliconflow_gateway_maps_reasoning_effort_to_thinking_budget(effort, budget, enabled):
+    async with httpx.AsyncClient() as client:
+        gateway = HttpModelGateway(
+            client=client,
+            base_url="https://mock.local/v1",
+            api_key="test-key",
+            model="demo-model",
+            provider="siliconflow",
+            generation=ModelGenerationConfig(reasoning_effort=effort),
+        )
+
+        payload = gateway._build_payload(
+            [{"role": "user", "content": "test"}],
+            temperature=None,
+            stream=False,
+        )
+
+    assert payload["enable_thinking"] is enabled
+    if budget is None:
+        assert "thinking_budget" not in payload
+    else:
+        assert payload["thinking_budget"] == budget
+    if effort == "high":
+        assert payload["reasoning_effort"] == "high"
+    else:
+        assert "reasoning_effort" not in payload
+
+
 @pytest.mark.asyncio
 async def test_http_gateway_streams_openai_compatible_sse_deltas():
     seen: dict = {}

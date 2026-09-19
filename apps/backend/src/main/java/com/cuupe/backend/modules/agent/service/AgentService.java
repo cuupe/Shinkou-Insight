@@ -49,6 +49,8 @@ public class AgentService {
     private final WorkspaceMapper workspaceMapper;
     private final Map<String, CopyOnWriteArrayList<SseEmitter>> subscribers = new ConcurrentHashMap<>();
     private final Set<String> streamedMessageRuns = ConcurrentHashMap.newKeySet();
+    private final Map<String, Set<String>> receivedUpstreamEvents = new ConcurrentHashMap<>();
+    private final Map<String, Object> callbackLocks = new ConcurrentHashMap<>();
 
     public AgentRunAccepted accept(Long workspaceId, Long projectId, Long userId, AgentMessageRequest request) {
         if (!mapper.hasProjectAccess(workspaceId, projectId, userId)) {
@@ -319,12 +321,28 @@ public class AgentService {
 
     @SuppressWarnings("unchecked")
     public void handleAiCallback(String runKey, Map<String, Object> body) {
+        Object callbackLock = callbackLocks.computeIfAbsent(runKey, ignored -> new Object());
+        synchronized (callbackLock) {
+            handleAiCallbackLocked(runKey, body);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void handleAiCallbackLocked(String runKey, Map<String, Object> body) {
         Long projectId = longValue(body.get("projectId"));
         Long userId = longValue(body.get("userId"));
         if (projectId == null || userId == null) return;
         AgentRun run = mapper.findRun(runKey, projectId, userId);
         if (run == null) return;
         String eventType = String.valueOf(body.getOrDefault("eventType", ""));
+        // A late callback from a retried/recovered worker must never append to
+        // a message that has already been finalized.
+        if (isTerminal(run.getStatus())) return;
+        String upstreamEventId = String.valueOf(body.getOrDefault("eventId", "")).trim();
+        if (!upstreamEventId.isBlank()) {
+            Set<String> seen = receivedUpstreamEvents.computeIfAbsent(runKey, ignored -> ConcurrentHashMap.newKeySet());
+            if (!seen.add(upstreamEventId)) return;
+        }
         Map<String, Object> payload = body.get("payload") instanceof Map<?, ?> value
                 ? (Map<String, Object>) value : Map.of();
         try {
@@ -374,6 +392,10 @@ public class AgentService {
                 }
                 return;
             }
+            if ("artifact.added".equals(eventType)) {
+                publishArtifact(run, body, payload);
+                return;
+            }
             if ("message.delta".equals(eventType)) {
                 String messageId = findMessageKey(run.getAssistantMessageId());
                 String delta = String.valueOf(payload.getOrDefault("delta", ""));
@@ -399,6 +421,20 @@ public class AgentService {
                 return;
             }
             if ("run.completed".equals(eventType)) {
+                Object rawArtifacts = payload.get("artifacts");
+                if (rawArtifacts instanceof List<?> artifacts) {
+                    for (Object rawArtifact : artifacts) {
+                        if (!(rawArtifact instanceof Map<?, ?>)) continue;
+                        Map<String, Object> artifactPayload = new LinkedHashMap<>();
+                        artifactPayload.put("artifact", rawArtifact);
+                        artifactPayload.put("messageId", findMessageKey(run.getAssistantMessageId()));
+                        try {
+                            publishArtifact(run, body, artifactPayload);
+                        } catch (IOException ignored) {
+                            // The artifact event relay may already have persisted this file.
+                        }
+                    }
+                }
                 String answer = formatReport(payload.get("report"));
                 saveTokenUsage(run, body, payload);
                 mapper.updateMessage(run.getAssistantMessageId(), answer, "COMPLETED");
@@ -419,6 +455,8 @@ public class AgentService {
                 if (payload.get("multiAgent") != null) completion.put("multiAgent", payload.get("multiAgent"));
                 publish(run, "run.completed", completion);
                 completeSubscribers(runKey);
+                receivedUpstreamEvents.remove(runKey);
+                callbackLocks.remove(runKey);
                 return;
             }
             if ("run.failed".equals(eventType)) {
@@ -428,10 +466,14 @@ public class AgentService {
                 streamedMessageRuns.remove(runKey);
                 publish(run, "run.failed", Map.of("type", "run.failed", "runId", runKey, "message", message));
                 completeSubscribers(runKey);
+                receivedUpstreamEvents.remove(runKey);
+                callbackLocks.remove(runKey);
             }
         } catch (IOException exception) {
             mapper.updateRun(run.getId(), "FAILED", "Agent 事件转发失败");
             completeSubscribers(runKey);
+            receivedUpstreamEvents.remove(runKey);
+            callbackLocks.remove(runKey);
         }
     }
 
@@ -459,6 +501,8 @@ public class AgentService {
         mapper.updateMessage(run.getAssistantMessageId(), "本次运行已取消。", "COMPLETED");
         mapper.updateRun(run.getId(), "CANCELLED", null);
         streamedMessageRuns.remove(runKey);
+        receivedUpstreamEvents.remove(runKey);
+        callbackLocks.remove(runKey);
         try {
             String messageId = findMessageKey(run.getAssistantMessageId());
             publish(run, "message.delta", Map.of("type", "message.delta", "runId", runKey, "messageId", messageId, "delta", "本次运行已取消。"));
@@ -638,7 +682,77 @@ public class AgentService {
         citation.put("score", value(item, "score", null));
         citation.put("pageNumber", page);
         citation.put("url", item.get("url"));
+        citation.put("contentKind", valueAny(item, "contentKind", "content_kind", null));
         publish(run, "citation.added", Map.of("type", "citation.added", "runId", run.getRunKey(), "citation", citation));
+    }
+
+    @SuppressWarnings("unchecked")
+    private void publishArtifact(AgentRun run, Map<String, Object> body, Map<String, Object> payload) throws IOException {
+        if (!(payload.get("artifact") instanceof Map<?, ?> raw)) return;
+        Long workspaceId = longValue(body.get("workspaceId"));
+        Long projectId = longValue(body.get("projectId"));
+        Long userId = longValue(body.get("userId"));
+        String storageKey = String.valueOf(value(raw, "storageKey", ""));
+        String expectedPrefix = "workspaces/" + workspaceId + "/projects/" + projectId + "/agent/" + run.getRunKey() + "/artifacts/";
+        if (workspaceId == null || projectId == null || userId == null || !storageKey.startsWith(expectedPrefix)) {
+            throw new IOException("生成文件存储路径无效");
+        }
+        String fileName = safeFileName(String.valueOf(valueAny(raw, "fileName", "file_name", "generated-file")));
+        String mimeType = String.valueOf(valueAny(raw, "mimeType", "mime_type", "application/octet-stream"));
+        long fileSize = Math.max(0L, longValue(valueAny(raw, "fileSize", "file_size", 0L)) == null ? 0L : longValue(valueAny(raw, "fileSize", "file_size", 0L)));
+        if (fileSize > MAX_ATTACHMENT_BYTES) throw new IOException("生成文件超过大小限制");
+        AgentAttachment attachment = mapper.findAttachmentByStorageKey(storageKey, workspaceId, projectId, userId);
+        if (attachment == null) {
+            attachment = new AgentAttachment();
+            attachment.setWorkspaceId(workspaceId);
+            attachment.setProjectId(projectId);
+            attachment.setUploadedBy(userId);
+            attachment.setFileName(fileName);
+            attachment.setKind(kindOf(mimeType, fileName));
+            attachment.setMimeType(mimeType);
+            attachment.setFileSize(fileSize);
+            attachment.setStorageKey(storageKey);
+            mapper.insertAttachment(attachment);
+        }
+        Map<String, Object> attachmentMap = new LinkedHashMap<>();
+        attachmentMap.put("id", String.valueOf(attachment.getId()));
+        attachmentMap.put("uploadId", attachment.getId());
+        attachmentMap.put("name", attachment.getFileName());
+        attachmentMap.put("kind", attachment.getKind());
+        attachmentMap.put("mimeType", attachment.getMimeType());
+        attachmentMap.put("size", formatFileSize(attachment.getFileSize()));
+        attachmentMap.put("url", "/api/workspaces/" + workspaceId + "/projects/" + projectId + "/agent/attachments/" + attachment.getId() + "/content");
+        attachmentMap.put("generated", true);
+        appendMessageAttachment(run.getAssistantMessageId(), attachmentMap);
+        String messageId = String.valueOf(value(payload, "messageId", findMessageKey(run.getAssistantMessageId())));
+        publish(run, "artifact.added", Map.of(
+                "type", "artifact.added",
+                "runId", run.getRunKey(),
+                "messageId", messageId,
+                "artifact", attachmentMap
+        ));
+    }
+
+    @SuppressWarnings("unchecked")
+    private void appendMessageAttachment(Long messageId, Map<String, Object> attachment) throws IOException {
+        List<Map<String, Object>> attachments = new java.util.ArrayList<>();
+        String current = mapper.findMessageAttachments(messageId);
+        if (current != null && !current.isBlank()) {
+            try {
+                List<?> parsed = objectMapper.readValue(current, List.class);
+                for (Object item : parsed) if (item instanceof Map<?, ?> value) attachments.add(new LinkedHashMap<>((Map<String, Object>) value));
+            } catch (RuntimeException exception) {
+                throw new IOException("消息附件格式无效", exception);
+            }
+        }
+        String attachmentId = String.valueOf(attachment.get("id"));
+        boolean exists = attachments.stream().anyMatch(item -> attachmentId.equals(String.valueOf(item.get("id"))));
+        if (!exists) attachments.add(attachment);
+        try {
+            mapper.updateMessageAttachments(messageId, objectMapper.writeValueAsString(attachments));
+        } catch (RuntimeException exception) {
+            throw new IOException("消息附件保存失败", exception);
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -794,6 +908,7 @@ public class AgentService {
     private void send(SseEmitter emitter, AgentRunEvent event) throws IOException {
         try {
             Map<String, Object> payload = objectMapper.readValue(event.getPayload(), Map.class);
+            payload.putIfAbsent("eventId", String.valueOf(event.getId()));
             emitter.send(SseEmitter.event().id(String.valueOf(event.getId())).data(payload));
         } catch (RuntimeException exception) {
             throw new IOException("Agent SSE 推送失败", exception);
@@ -817,7 +932,7 @@ public class AgentService {
     }
 
     private boolean isTerminal(String status) {
-        return "COMPLETED".equals(status) || "FAILED".equals(status);
+        return "COMPLETED".equals(status) || "FAILED".equals(status) || "CANCELLED".equals(status);
     }
 
     private String safeKey(String value, String fallback) {
@@ -855,6 +970,13 @@ public class AgentService {
         return shortText(cleaned, 260);
     }
 
+    private String formatFileSize(Long bytes) {
+        long value = bytes == null ? 0L : Math.max(0L, bytes);
+        if (value < 1024) return value + " B";
+        if (value < 1024 * 1024) return String.format(Locale.ROOT, "%.1f KB", value / 1024.0);
+        return String.format(Locale.ROOT, "%.1f MB", value / (1024.0 * 1024.0));
+    }
+
     private String kindOf(String mimeType, String fileName) {
         String mime = mimeType == null ? "" : mimeType.toLowerCase(Locale.ROOT);
         String extension = extension(fileName);
@@ -862,7 +984,7 @@ public class AgentService {
         if (mime.startsWith("video/")) return "video";
         if (mime.startsWith("audio/")) return "audio";
         if (mime.contains("pdf") || extension.equals("pdf")) return "pdf";
-        if (Set.of("doc", "docx", "odt", "rtf").contains(extension)) return "document";
+        if (Set.of("doc", "docx", "odt", "rtf", "md", "markdown", "txt").contains(extension)) return "document";
         if (Set.of("xls", "xlsx", "ods", "csv").contains(extension)) return "spreadsheet";
         if (Set.of("ppt", "pptx", "odp").contains(extension)) return "presentation";
         return "file";

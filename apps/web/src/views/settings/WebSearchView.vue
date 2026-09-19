@@ -6,8 +6,9 @@ import { getApiErrorMessage } from "@/api/core";
 import { projectApi } from "@/api/projects";
 import { settingsApi, type WebSearchConfig } from "@/api/settings";
 import { useWorkspace } from "@/composables/useWorkspace";
+import { getLastProjectId } from "@/utils/lastProject";
 
-const { notify, workspaceId, projectId } = useWorkspace();
+const { notify, workspaceId, projectId, selectedProject } = useWorkspace();
 const settingsProjectId = ref(-1);
 const hasProject = computed(() => settingsProjectId.value > 0);
 const config = ref<WebSearchConfig | null>(null);
@@ -57,9 +58,13 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
+    const projects = await projectApi.list(workspaceId.value);
     const resolvedProjectId = projectId.value > 0
       ? projectId.value
-      : (await projectApi.list(workspaceId.value))[0]?.id || -1;
+      : selectedProject.value?.id ||
+        projects.find((project) => project.id === getLastProjectId(workspaceId.value))?.id ||
+        projects[0]?.id ||
+        -1;
     settingsProjectId.value = resolvedProjectId;
     if (resolvedProjectId > 0) loadForm(await settingsApi.webSearch.get(workspaceId.value, resolvedProjectId));
   } catch (cause) {

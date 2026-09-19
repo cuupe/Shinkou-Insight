@@ -19,6 +19,8 @@ import httpx
 from models.schemas import Evidence
 from prompts.search_prompts import PAPER_SEARCH_HINTS, TECH_SEARCH_HINTS
 from rag.hybrid import fuse_ranked_candidates
+from tools.search_quality import canonical_url, rank_web_evidence
+from tools.web import WebSearchError
 
 
 SourceSearch = Callable[[str, int], Awaitable[list[Evidence]]]
@@ -42,6 +44,7 @@ def _evidence(prefix: str, title: str, url: str, description: str, rank: int) ->
         content=f"{title}\n{description}" if description else title,
         source_name=title,
         source_type="web",
+        content_kind="search_snippet",
         url=url,
         score=1.0 / max(rank, 1),
     )
@@ -102,13 +105,17 @@ class MultiSourceWebSearch:
         selected = [source for source in self._selected_sources(query) if source in handlers]
         results = await asyncio.gather(
             *(self._safe_search(source, handlers[source], query, limit) for source in selected),
-            return_exceptions=False,
+            return_exceptions=True,
         )
+        if results and all(isinstance(result, BaseException) for result in results):
+            raise WebSearchError("所有搜索渠道请求失败，未取得可核验来源")
         channels: dict[str, list[tuple[str, Evidence, float]]] = {}
         for source, items in zip(selected, results):
+            if isinstance(items, BaseException):
+                continue
             channels[source] = [
-                (item.url or item.id, item, float(item.score or 0.0))
-                for item in items
+                (canonical_url(item.url or ""), item, float(item.score or 0.0))
+                for item in rank_web_evidence(query, items, limit)
             ]
         fused = fuse_ranked_candidates(
             channels,
@@ -130,13 +137,10 @@ class MultiSourceWebSearch:
             output.append(item)
             if len(output) >= limit:
                 break
-        return output
+        return rank_web_evidence(query, output, limit)
 
     async def _safe_search(self, source: str, handler: SourceSearch, query: str, limit: int) -> list[Evidence]:
-        try:
-            return await asyncio.wait_for(handler(query, limit), timeout=self.timeout_seconds)
-        except Exception:
-            return []
+        return await asyncio.wait_for(handler(query, limit), timeout=self.timeout_seconds)
 
     async def _get_json(self, url: str, params: dict[str, Any]) -> dict[str, Any]:
         response = await self.client.get(
@@ -162,10 +166,20 @@ class MultiSourceWebSearch:
         items: list[Evidence] = []
         for rank, entry in enumerate(root.findall("atom:entry", namespace), start=1):
             title = entry.findtext("atom:title", default="", namespaces=namespace)
-            url = entry.findtext("atom:id", default="", namespaces=namespace)
+            abstract_url = entry.findtext("atom:id", default="", namespaces=namespace)
+            pdf_url = next(
+                (
+                    str(link.get("href"))
+                    for link in entry.findall("atom:link", namespace)
+                    if str(link.get("title") or "").casefold() == "pdf" and link.get("href")
+                ),
+                "",
+            )
+            url = pdf_url or abstract_url
             summary = entry.findtext("atom:summary", default="", namespaces=namespace)
             item = _evidence("A", title, url, summary, rank)
             if item:
+                item.published_at = entry.findtext("atom:published", default="", namespaces=namespace) or None
                 items.append(item)
         return items[:limit]
 
@@ -184,7 +198,8 @@ class MultiSourceWebSearch:
                 key=lambda item: item[0],
             )
             abstract = " ".join(word for _position, word in words)
-            url = str(work.get("doi") or work.get("id") or "")
+            location = work.get("primary_location") or {}
+            url = str(location.get("pdf_url") or work.get("doi") or work.get("id") or "")
             item = _evidence("O", work.get("title"), url, f"{work.get('publication_year') or ''} {abstract}".strip(), rank)
             if item:
                 items.append(item)
@@ -202,7 +217,16 @@ class MultiSourceWebSearch:
             title = (work.get("title") or [""])[0]
             url = f"https://doi.org/{work.get('DOI')}" if work.get("DOI") else ""
             abstract = re.sub(r"<[^>]+>", "", str(work.get("abstract") or ""))
-            item = _evidence("C", title, url, abstract, rank)
+            links = work.get("link") or []
+            pdf_url = next(
+                (
+                    str(link.get("URL"))
+                    for link in links
+                    if isinstance(link, dict) and "pdf" in str(link.get("content-type") or "").casefold() and link.get("URL")
+                ),
+                "",
+            )
+            item = _evidence("C", title, pdf_url or url, abstract, rank)
             if item:
                 items.append(item)
         return items[:limit]

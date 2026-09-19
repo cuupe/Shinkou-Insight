@@ -42,6 +42,7 @@ import { useAuth } from "@/composables/useAuth";
 import { useSmsCode } from "@/composables/useSmsCode";
 import { ApiError, api } from "@/api";
 import { getAuthFeedback } from "@/utils/authFeedback";
+import { getLastProject } from "@/utils/lastProject";
 import { useRouter } from "vue-router";
 type Status = {
   type: "success" | "error" | "info";
@@ -150,9 +151,10 @@ async function submit() {
     await new Promise((resolve) => window.setTimeout(resolve, 450));
 
     try {
+      const landingRoute = await resolveLandingRoute();
       const navigationFailure = await router.replace({
-        name: "workspace-dashboard",
-        params: { workspaceId: "shinkou-labs" },
+        name: landingRoute.name,
+        params: landingRoute.params,
       });
 
       if (navigationFailure) {
@@ -189,6 +191,34 @@ async function submit() {
   } finally {
     isSubmitting.value = false;
   }
+}
+
+async function resolveLandingRoute() {
+  const workspaces = await api.workspace.list().catch(() => []);
+  const lastProject = getLastProject();
+
+  if (lastProject) {
+    const workspace = workspaces.find(
+      (item) => String(item.id) === lastProject.workspaceId,
+    );
+    if (workspace) {
+      const projects = await api.project.list(workspace.id).catch(() => []);
+      if (projects.some((project) => project.id === lastProject.projectId)) {
+        return {
+          name: "project-agent-chat" as const,
+          params: {
+            workspaceId: String(workspace.id),
+            projectId: lastProject.projectId,
+          },
+        };
+      }
+    }
+  }
+
+  return {
+    name: "workspace-dashboard" as const,
+    params: { workspaceId: String(workspaces[0]?.id || "shinkou-labs") },
+  };
 }
 async function sendSms() {
   if (smsSending.value || smsCountdown.value > 0) return;

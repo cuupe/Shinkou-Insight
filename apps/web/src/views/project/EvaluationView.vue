@@ -16,6 +16,7 @@ import PageHeader from "@/components/common/PageHeader.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { evaluationApi } from "@/api/evaluation";
 import { statisticsApi } from "@/api/statistics";
+import { formatDateTime } from "@/lib/utils";
 
 const { evaluationCases: evaluationSeed, notify, workspaceId, projectId, statistics } =
   useWorkspace();
@@ -176,7 +177,9 @@ async function runEvaluation() {
     statistics.value = await (projectId.value > 0
       ? statisticsApi.project(workspaceId.value, projectId.value)
       : statisticsApi.workspace(workspaceId.value));
-    lastRunLabel.value = latest ? `最近同步：${latest}` : "评估数据已同步";
+    lastRunLabel.value = latest
+      ? `最近同步：${formatDateTime(latest, "—")}`
+      : "评估数据已同步";
     notify("评估结果已同步");
   } catch (error) {
     notify(error instanceof Error ? error.message : "评估结果同步失败");

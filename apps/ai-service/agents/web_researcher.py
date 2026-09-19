@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from agents.contracts import AgentContext, AgentMessage, AgentResult
 from models.schemas import Evidence
+from tools.search_quality import rank_web_evidence
 
 
 class WebResearcherAgent:
@@ -13,7 +14,7 @@ class WebResearcherAgent:
         if not message.payload.get("allow_web_search"):
             return AgentResult(agent=self.name, payload={"evidence": []})
         web_items = await context.web_search.search(message.payload["goal"], top_k=5)
-        external = [Evidence.model_validate(item) for item in web_items]
+        external = rank_web_evidence(message.payload["goal"], [Evidence.model_validate(item) for item in web_items], 5, require_body=True)
         unique: dict[str, Evidence] = {
             item.id: item
             for item in (Evidence.model_validate(raw) for raw in message.payload.get("evidence", []))

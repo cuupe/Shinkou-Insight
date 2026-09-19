@@ -97,6 +97,7 @@ $process = Start-Process `
     -FilePath $pythonPath `
     -ArgumentList $argumentList `
     -WorkingDirectory $serviceRoot `
+    -WindowStyle Hidden `
     -PassThru `
     -RedirectStandardOutput $stdoutLogPath `
     -RedirectStandardError $stderrLogPath

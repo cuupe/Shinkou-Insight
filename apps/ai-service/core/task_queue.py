@@ -26,18 +26,20 @@ class ResearchTaskQueue:
         stream: str = "shinkou:research-tasks",
         group: str = "ai-service",
         max_retries: int = 3,
+        concurrency: int = 8,
     ) -> None:
         self.enabled = enabled
         self.redis_url = redis_url
         self.stream = stream
         self.group = group
         self.max_retries = max_retries
+        self.concurrency = max(1, min(int(concurrency), 64))
         self.consumer = f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
         self.backend = "disabled" if not enabled else "memory"
         self._redis: Any | None = None
         self._memory: asyncio.Queue[tuple[ExecuteRunRequest, int]] = asyncio.Queue()
         self._handler: TaskHandler | None = None
-        self._worker: asyncio.Task[None] | None = None
+        self._workers: list[asyncio.Task[None]] = []
         self._stop = asyncio.Event()
         self._enqueued = 0
         self._completed = 0
@@ -94,18 +96,31 @@ class ResearchTaskQueue:
     async def run_worker(self, handler: TaskHandler) -> None:
         self._handler = handler
         self._stop.clear()
-        if self._worker is None or self._worker.done():
-            self._worker = asyncio.create_task(self._worker_loop(), name="research-task-worker")
+        self._workers = [worker for worker in self._workers if not worker.done()]
+        missing = self.concurrency - len(self._workers)
+        for _ in range(missing):
+            worker_index = len(self._workers)
+            self._workers.append(
+                asyncio.create_task(
+                    self._worker_loop(worker_index),
+                    name=f"research-task-worker-{worker_index + 1}",
+                )
+            )
 
-    async def _worker_loop(self) -> None:
+    async def _worker_loop(self, worker_index: int) -> None:
+        consumer = f"{self.consumer}-{worker_index + 1}"
         while not self._stop.is_set():
             try:
-                item = await self._next()
+                item = await self._next(consumer)
                 if item is None:
                     continue
                 request, message_id, attempt = item
                 self._processing += 1
                 acknowledge = True
+                heartbeat = asyncio.create_task(
+                    self._heartbeat(consumer, message_id),
+                    name=f"research-task-heartbeat-{worker_index + 1}",
+                ) if self._redis is not None and message_id else None
                 try:
                     if self._handler is None:
                         raise RuntimeError("task queue handler is not configured")
@@ -127,6 +142,9 @@ class ResearchTaskQueue:
                 else:
                     self._completed += 1
                 finally:
+                    if heartbeat is not None:
+                        heartbeat.cancel()
+                        await asyncio.gather(heartbeat, return_exceptions=True)
                     self._processing = max(0, self._processing - 1)
                     if acknowledge:
                         await self._ack(message_id)
@@ -137,7 +155,37 @@ class ResearchTaskQueue:
                 logger.warning("research task worker iteration failed: %s", exc)
                 await asyncio.sleep(1)
 
-    async def _next(self) -> tuple[ExecuteRunRequest, str, int] | None:
+    async def _heartbeat(self, consumer: str, message_id: str) -> None:
+        """Keep a long-running Redis task owned by its active worker.
+
+        Without this lease refresh, XAUTOCLAIM can hand a still-running LLM
+        request to another worker after the short recovery timeout. That makes
+        one run execute several times and interleaves its stream deltas.
+        """
+
+        try:
+            while not self._stop.is_set() and self._redis is not None:
+                await asyncio.sleep(10)
+                if self._redis is None or self._stop.is_set():
+                    return
+                await self._redis.xclaim(
+                    self.stream,
+                    self.group,
+                    consumer,
+                    min_idle_time=0,
+                    message_ids=[message_id],
+                    justid=True,
+                )
+                self._last_error = None
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # A transient heartbeat failure should not abort the user task;
+            # the worker still acknowledges it when the handler completes.
+            self._last_error = str(exc)[:500]
+            logger.warning("research task heartbeat failed: %s", exc)
+
+    async def _next(self, consumer: str) -> tuple[ExecuteRunRequest, str, int] | None:
         if self._redis is None:
             try:
                 request, attempt = await asyncio.wait_for(self._memory.get(), timeout=0.5)
@@ -147,13 +195,14 @@ class ResearchTaskQueue:
         # First reclaim work left pending by a crashed worker, then read new
         # entries. XAUTOCLAIM is supported by Redis 6.2+.
         try:
-            claimed = await self._redis.xautoclaim(self.stream, self.group, self.consumer, min_idle_time=30_000, start_id="0-0", count=1)
+            claimed = await self._redis.xautoclaim(self.stream, self.group, consumer, min_idle_time=30_000, start_id="0-0", count=1)
             messages = claimed[1] if len(claimed) > 1 else []
             if messages:
                 return self._decode_message(messages[0])
         except Exception:
             pass
-        rows = await self._redis.xreadgroup(self.group, self.consumer, streams={self.stream: ">"}, count=1, block=500)
+        rows = await self._redis.xreadgroup(self.group, consumer, streams={self.stream: ">"}, count=1, block=500)
+        self._last_error = None
         if not rows:
             return None
         return self._decode_message(rows[0][1][0])
@@ -199,6 +248,8 @@ class ResearchTaskQueue:
             "stream": self.stream,
             "group": self.group,
             "consumer": self.consumer,
+            "concurrency": self.concurrency,
+            "workers": sum(1 for worker in self._workers if not worker.done()),
             "queueLength": length,
             "pending": pending,
             "processing": self._processing,
@@ -211,10 +262,11 @@ class ResearchTaskQueue:
 
     async def close(self) -> None:
         self._stop.set()
-        if self._worker is not None:
-            self._worker.cancel()
-            await asyncio.gather(self._worker, return_exceptions=True)
-            self._worker = None
+        for worker in self._workers:
+            worker.cancel()
+        if self._workers:
+            await asyncio.gather(*self._workers, return_exceptions=True)
+        self._workers.clear()
         if self._redis is not None:
             await self._redis.aclose()
             self._redis = None

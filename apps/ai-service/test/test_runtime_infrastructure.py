@@ -49,6 +49,41 @@ async def test_memory_task_queue_executes_and_reports_completion():
 
 
 @pytest.mark.asyncio
+async def test_memory_task_queue_runs_multiple_tasks_concurrently():
+    queue = await ResearchTaskQueue.create(
+        enabled=True,
+        redis_url=None,
+        stream="test-concurrent-stream",
+        group="test-concurrent-group",
+        concurrency=2,
+    )
+    entered = 0
+    both_entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(_request):
+        nonlocal entered
+        entered += 1
+        if entered == 2:
+            both_entered.set()
+        await release.wait()
+
+    await queue.run_worker(handler)
+    await queue.enqueue(ExecuteRunRequest(run_id="queue-test-1", workspace_id=1, project_id=1, goal="任务一"))
+    await queue.enqueue(ExecuteRunRequest(run_id="queue-test-2", workspace_id=1, project_id=1, goal="任务二"))
+    await asyncio.wait_for(both_entered.wait(), timeout=2)
+    assert (await queue.stats())["processing"] == 2
+
+    release.set()
+    for _ in range(200):
+        if (await queue.stats())["completed"] == 2:
+            break
+        await asyncio.sleep(0.01)
+    assert (await queue.stats())["completed"] == 2
+    await queue.close()
+
+
+@pytest.mark.asyncio
 async def test_plan_updates_use_optimistic_version_and_pause_gate():
     repository = InMemoryRunRepository(EventBus())
     await repository.create(RunRecord(run_id="plan-test", workspace_id=1, project_id=1, user_id=1, goal="计划测试", config={}))
@@ -95,7 +130,7 @@ async def test_retrieval_and_web_cache_serialize_pydantic_evidence():
 
         async def search(self, _query, top_k=5):
             self.calls += 1
-            return [Evidence(id="W1", chunk_id="w1", content="网页证据", source_name="网页", source_type="web")]
+            return [Evidence(id="W1", chunk_id="w1", content="网页证据", source_name="网页", source_type="web", url="https://example.org/article", content_kind="fulltext")]
 
     retriever = Retriever()
     web = Web()
@@ -104,7 +139,7 @@ async def test_retrieval_and_web_cache_serialize_pydantic_evidence():
     assert (await cached_retriever.retrieve(workspace_id=1, project_id=1, question="q", top_k=1))[0].id == "E1"
     assert (await cached_retriever.retrieve(workspace_id=1, project_id=1, question="q", top_k=1))[0].id == "E1"
     assert retriever.calls == 1
-    assert (await cached_web.search("q", 1))[0].id == "W1"
-    assert (await cached_web.search("q", 1))[0].id == "W1"
+    assert (await cached_web.search("网页证据", 1))[0].id == "W1"
+    assert (await cached_web.search("网页证据", 1))[0].id == "W1"
     assert web.calls == 1
     await cache.close()

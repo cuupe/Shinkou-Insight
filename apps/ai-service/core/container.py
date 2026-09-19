@@ -28,6 +28,7 @@ from tools.registry import ToolRegistry, ToolSpec
 from tools.multi_source_search import MultiSourceWebSearch
 from tools.web import DEFAULT_DUCKDUCKGO_BASE_URL, BraveWebSearch, DisabledWebSearch, DuckDuckGoWebSearch, WebSearchProvider
 from tools.cached_web import CachedWebSearch
+from tools.document_generation import DocumentGenerationTool
 
 
 @dataclass(slots=True)
@@ -137,6 +138,7 @@ class ServiceContainer:
                     cache,
                     ttl_seconds=settings.cache_web_ttl_seconds,
                     provider_key=f"{settings.web_search_provider}:{settings.web_search_base_url}",
+                    parser=parser,
                 )
 
             # Registry events are used by asynchronous tools/chains. Existing
@@ -198,6 +200,34 @@ class ServiceContainer:
                     ),
                     web_search.search,
                 )
+            document_generator = DocumentGenerationTool()
+            tools.register(
+                ToolSpec(
+                    name="generate_document_bundle",
+                    version="1.0",
+                    description="Generate Markdown, DOCX, PDF and PPTX files from a final Markdown report.",
+                    permission="WRITE",
+                    timeout_seconds=120,
+                    max_concurrency=2,
+                    input_schema={
+                        "type": "object",
+                        "required": ["title", "markdown", "formats", "output_dir"],
+                        "properties": {
+                            "title": {"type": "string", "minLength": 1, "maxLength": 200},
+                            "markdown": {"type": "string", "minLength": 1, "maxLength": 300_000},
+                            "formats": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 4,
+                                "items": {"type": "string", "enum": ["markdown", "docx", "pdf", "pptx"]},
+                            },
+                            "output_dir": {"type": "string", "minLength": 1, "maxLength": 1_000},
+                            "sources": {"type": "array", "maxItems": 30, "items": {"type": "object"}},
+                        },
+                    },
+                ),
+                document_generator.generate,
+            )
             custom_tools_report = load_custom_tools(
                 tools,
                 settings.custom_tools_dir,

@@ -10,7 +10,8 @@ import httpx
 from bs4 import BeautifulSoup
 
 from models.schemas import Evidence
-from prompts.search_prompts import WEB_SEARCH_STOPWORDS
+from security.policy import SecurityPolicyError, validate_external_url
+from tools.search_quality import rank_web_evidence
 
 
 class WebSearchProvider(Protocol):
@@ -21,33 +22,105 @@ class WebSearchError(RuntimeError):
     """Base error for an external search provider."""
 
 
+_BLOCKED_SOURCE_MARKERS = (
+    "captcha",
+    "verify you are human",
+    "access denied",
+    "请求过于频繁",
+    "访问被拒绝",
+    "安全验证",
+)
+
+
 DEFAULT_DUCKDUCKGO_BASE_URL = "https://html.duckduckgo.com/html/"
+DEFAULT_BING_BASE_URL = "https://www.bing.com/search"
+WEB_SEARCH_TIMEOUT_SECONDS = 12.0
 
-def _search_terms(query: str) -> set[str]:
-    """Extract topic anchors while ignoring conversational search commands."""
+def _relevant_candidates(query: str, candidates: list[tuple[str, str, str]], top_k: int) -> list[tuple[str, str, str]]:
+    """Drop search-engine noise before it reaches the model or citation panel."""
 
-    normalized = str(query or "").casefold()
-    for stopword in sorted(WEB_SEARCH_STOPWORDS, key=len, reverse=True):
-        normalized = normalized.replace(stopword, " ")
-    terms = set(re.findall(r"[a-z0-9][a-z0-9._-]{1,}|[\u4e00-\u9fff]{2,}", normalized))
+    rows = [Evidence(id=str(index), chunk_id=str(index), source_name=title,
+                     content=description or title, url=url, source_type="web", content_kind="search_snippet")
+            for index, (title, url, description) in enumerate(candidates)]
+    return [candidates[int(item.id)] for item in rank_web_evidence(query, rows, top_k)]
+
+
+def _source_terms(value: object) -> set[str]:
+    normalized = _plain_text(value).casefold()
+    terms = set(re.findall(r"[a-z0-9][a-z0-9._-]{2,}|[\u4e00-\u9fff]{2,}", normalized))
     for block in re.findall(r"[\u4e00-\u9fff]+", normalized):
         terms.update(block[index : index + 2] for index in range(len(block) - 1))
     return {term for term in terms if len(term) >= 2}
 
 
-def _relevant_candidates(query: str, candidates: list[tuple[str, str, str]], top_k: int) -> list[tuple[str, str, str]]:
-    """Drop search-engine noise before it reaches the model or citation panel."""
+async def validate_web_source(
+    client: httpx.AsyncClient,
+    *,
+    url: str,
+    title: str = "",
+    excerpt: str = "",
+) -> dict[str, object]:
+    """Verify that a citation URL is reachable and contains its claimed evidence."""
 
-    terms = _search_terms(query)
-    if not terms:
-        return candidates[:top_k]
-    relevant: list[tuple[str, str, str]] = []
-    for candidate in candidates:
-        title, url, description = candidate
-        haystack = f"{title} {description} {url}".casefold()
-        if any(term in haystack for term in terms):
-            relevant.append(candidate)
-    return relevant[:top_k]
+    try:
+        normalized_url = validate_external_url(url)
+    except SecurityPolicyError as exc:
+        return {"valid": False, "reason": str(exc), "url": str(url or "")}
+
+    try:
+        response = await client.get(
+            normalized_url,
+            headers={
+                "Accept": "text/html,application/xhtml+xml,application/pdf,text/plain",
+                "User-Agent": "Shinkou-Insight/0.1 (+citation validation)",
+            },
+            timeout=WEB_SEARCH_TIMEOUT_SECONDS,
+            follow_redirects=True,
+        )
+    except httpx.TimeoutException:
+        return {"valid": False, "reason": "来源页面响应超时", "url": normalized_url}
+    except httpx.RequestError as exc:
+        return {"valid": False, "reason": f"来源页面无法访问：{exc}", "url": normalized_url}
+
+    content_type = response.headers.get("content-type", "").casefold()
+    if response.status_code < 200 or response.status_code >= 300:
+        return {
+            "valid": False,
+            "reason": f"来源页面返回 HTTP {response.status_code}",
+            "url": normalized_url,
+            "statusCode": response.status_code,
+        }
+    if "application/pdf" in content_type:
+        valid = len(response.content) >= 1_000
+        return {
+            "valid": valid,
+            "reason": "" if valid else "来源 PDF 内容为空或不完整",
+            "url": str(response.url),
+            "statusCode": response.status_code,
+            "contentType": content_type,
+        }
+
+    soup = BeautifulSoup(response.text[:2_000_000], "html.parser")
+    page_text = _plain_text(soup.get_text(" ", strip=True))
+    lowered = page_text.casefold()
+    if len(page_text) < 80:
+        return {"valid": False, "reason": "来源页面没有可验证的正文内容", "url": str(response.url), "statusCode": response.status_code}
+    if any(marker in lowered for marker in _BLOCKED_SOURCE_MARKERS):
+        return {"valid": False, "reason": "来源页面是验证或拦截页面", "url": str(response.url), "statusCode": response.status_code}
+
+    page_terms = _source_terms(page_text)
+    title_matches = len(_source_terms(title) & page_terms)
+    excerpt_matches = len(_source_terms(excerpt) & page_terms)
+    valid = title_matches >= 2 or excerpt_matches >= 2
+    return {
+        "valid": valid,
+        "reason": "" if valid else "来源页面内容与引用标题或摘录不匹配",
+        "url": str(response.url),
+        "statusCode": response.status_code,
+        "contentType": content_type,
+        "titleMatches": title_matches,
+        "excerptMatches": excerpt_matches,
+    }
 
 
 class DisabledWebSearch:
@@ -79,6 +152,7 @@ class BraveWebSearch:
                     "search_lang": self.search_language,
                     "text_decorations": "false",
                 },
+                timeout=WEB_SEARCH_TIMEOUT_SECONDS,
             )
         except httpx.TimeoutException as exc:
             raise WebSearchError("web search request timed out") from exc
@@ -116,6 +190,73 @@ class BraveWebSearch:
                     chunk_id=f"web:{digest[:16]}",
                     content=f"{title}\n{description}",
                     source_name=title,
+                    content_kind="search_snippet",
+                    score=round(1 / (len(evidence) + 1), 4),
+                    url=url,
+                    source_type="web",
+                )
+            )
+        return evidence
+
+
+class BingWebSearch:
+    """Public Bing HTML adapter used as a fallback for blocked public providers."""
+
+    def __init__(self, *, client: httpx.AsyncClient, base_url: str = DEFAULT_BING_BASE_URL, search_language: str = "zh-hans"):
+        self.client = client
+        self.base_url = base_url
+        self.search_language = search_language
+
+    async def search(self, query: str, top_k: int = 5) -> list[Evidence]:
+        try:
+            response = await self.client.get(
+                self.base_url,
+                headers={
+                    "Accept": "text/html,application/xhtml+xml",
+                    "User-Agent": "Shinkou-Insight/0.1 (+local development)",
+                },
+                params={
+                    "q": query,
+                    "setlang": self.search_language,
+                },
+                timeout=WEB_SEARCH_TIMEOUT_SECONDS,
+            )
+        except httpx.TimeoutException as exc:
+            raise WebSearchError("fallback web search request timed out") from exc
+        except httpx.RequestError as exc:
+            raise WebSearchError(f"fallback web search request failed: {exc}") from exc
+
+        if response.status_code == 429:
+            raise WebSearchError("fallback web search rate limit exceeded")
+        if response.is_error:
+            raise WebSearchError(f"fallback web search failed with HTTP {response.status_code}")
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        candidates: list[tuple[str, str, str]] = []
+        seen_urls: set[str] = set()
+        for item in soup.select("li.b_algo"):
+            link = item.select_one("h2 a")
+            snippet = item.select_one(".b_caption p")
+            title = _plain_text(link.get_text(" ", strip=True) if link else "")
+            url = str(link.get("href") or "").strip() if link else ""
+            description = _plain_text(snippet.get_text(" ", strip=True) if snippet else "")
+            if not title or not url.startswith(("http://", "https://")) or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            candidates.append((title, url, description))
+            if len(candidates) >= max(10, min(top_k * 3, 20)):
+                break
+
+        evidence: list[Evidence] = []
+        for title, url, description in _relevant_candidates(query, candidates, top_k):
+            digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
+            evidence.append(
+                Evidence(
+                    id=f"W{digest[:12]}",
+                    chunk_id=f"web:{digest[:16]}",
+                    content=f"{title}\n{description}" if description else title,
+                    source_name=title,
+                    content_kind="search_snippet",
                     score=round(1 / (len(evidence) + 1), 4),
                     url=url,
                     source_type="web",
@@ -144,18 +285,19 @@ class DuckDuckGoWebSearch:
                     "q": query,
                     "kl": _duckduckgo_region(self.search_language),
                 },
+                timeout=WEB_SEARCH_TIMEOUT_SECONDS,
             )
         except httpx.TimeoutException as exc:
-            raise WebSearchError("web search request timed out") from exc
+            return await self._fallback_to_bing(query, top_k, WebSearchError("web search request timed out"))
         except httpx.RequestError as exc:
-            raise WebSearchError(f"web search request failed: {exc}") from exc
+            return await self._fallback_to_bing(query, top_k, WebSearchError(f"web search request failed: {exc}"))
 
         if response.status_code == 429:
-            raise WebSearchError("web search rate limit exceeded")
+            return await self._fallback_to_bing(query, top_k, WebSearchError("web search rate limit exceeded"))
         if response.status_code in {401, 403}:
-            raise WebSearchError("public web search was blocked by the provider")
+            return await self._fallback_to_bing(query, top_k, WebSearchError("public web search was blocked by the provider"))
         if response.is_error:
-            raise WebSearchError(f"web search failed with HTTP {response.status_code}")
+            return await self._fallback_to_bing(query, top_k, WebSearchError(f"web search failed with HTTP {response.status_code}"))
 
         soup = BeautifulSoup(response.text, "html.parser")
         candidate_limit = max(10, min(top_k * 3, 20))
@@ -182,12 +324,21 @@ class DuckDuckGoWebSearch:
                     chunk_id=f"web:{digest[:16]}",
                     content=f"{title}\n{description}",
                     source_name=title,
+                    content_kind="search_snippet",
                     score=round(1 / (len(evidence) + 1), 4),
                     url=url,
                     source_type="web",
                 )
             )
-        return evidence
+        if evidence:
+            return evidence
+        return await self._fallback_to_bing(query, top_k, WebSearchError("public web search returned no parseable results"))
+
+    async def _fallback_to_bing(self, query: str, top_k: int, original_error: WebSearchError) -> list[Evidence]:
+        try:
+            return await BingWebSearch(client=self.client, search_language=self.search_language).search(query, top_k)
+        except Exception:
+            raise original_error
 
 
 def _duckduckgo_region(language: str) -> str:

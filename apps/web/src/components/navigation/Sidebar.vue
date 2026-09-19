@@ -152,17 +152,6 @@ function closeMenu() {
     </div>
 
     <!-- 底部 -->
-    <div class="sidebar-footer">
-      <div class="usage-label">
-        <span>本月用量</span>
-        <span>{{ workspace.usagePercent || "暂无数据" }}</span>
-      </div>
-
-      <div class="usage-track">
-        <i :style="{ width: workspace.usagePercent || '0%' }" />
-      </div>
-
-    </div>
   </aside>
 </template>
 
@@ -548,45 +537,6 @@ function closeMenu() {
 
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.sidebar-footer {
-  flex: 0 0 auto;
-
-  padding: 1.0625rem 1.125rem 1.1875rem;
-
-  border-top: 0.0625rem solid rgb(255 255 255 / 8%);
-}
-
-.usage-label {
-  display: flex;
-  justify-content: space-between;
-
-  margin-bottom: 0.5rem;
-
-  color: #9aaab3;
-
-  font-size: 0.75rem;
-}
-
-.usage-track {
-  height: 0.3125rem;
-
-  overflow: hidden;
-
-  border-radius: 62.4375rem;
-
-  background: rgb(255 255 255 / 10%);
-}
-
-.usage-track i {
-  display: block;
-
-  height: 100%;
-
-  border-radius: inherit;
-
-  background: var(--teal);
 }
 
 .sidebar-scrim {

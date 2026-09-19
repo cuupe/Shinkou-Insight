@@ -5,8 +5,10 @@ import Layout from "@/components/settings/Layout.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { securityApi, type AuditLogEntry, type HarnessCase, type HarnessResult, type HarnessRun } from "@/api/security";
 import { projectApi } from "@/api/projects";
+import { getLastProjectId } from "@/utils/lastProject";
+import { formatDateTime } from "@/lib/utils";
 
-const { workspaceId, projectId, notify } = useWorkspace();
+const { workspaceId, projectId, selectedProject, notify } = useWorkspace();
 const cases = ref<HarnessCase[]>([]);
 const runs = ref<HarnessRun[]>([]);
 const detail = ref<{ run: HarnessRun; results: HarnessResult[] } | null>(null);
@@ -32,8 +34,7 @@ function resultClass(status: string) {
 }
 
 function formatTime(value?: string) {
-  if (!value) return "暂无";
-  return new Date(value).toLocaleString("zh-CN", { hour12: false });
+  return formatDateTime(value, "暂无");
 }
 
 async function refresh() {
@@ -84,7 +85,13 @@ onMounted(async () => {
   try {
     const projects = await projectApi.list(workspaceId.value);
     projectOptions.value = projects.map((project) => ({ id: Number(project.id), name: project.name }));
-    if (!selectedProjectId.value) selectedProjectId.value = projects[0]?.id || null;
+    if (!selectedProjectId.value) {
+      selectedProjectId.value =
+        selectedProject.value?.id ||
+        projects.find((project) => project.id === getLastProjectId(workspaceId.value))?.id ||
+        projects[0]?.id ||
+        null;
+    }
     await refresh();
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : "安全审计数据加载失败";

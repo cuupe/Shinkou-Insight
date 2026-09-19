@@ -24,7 +24,9 @@ public interface AgentMapper {
     List<AgentMessage> findMessages(@Param("threadId") Long threadId, @Param("projectId") Long projectId, @Param("userId") Long userId);
     AgentMessage findFirstUserMessage(@Param("threadId") Long threadId, @Param("projectId") Long projectId, @Param("userId") Long userId);
     String findMessageKey(@Param("id") Long id);
+    String findMessageAttachments(@Param("id") Long id);
     int updateMessage(@Param("id") Long id, @Param("content") String content, @Param("status") String status);
+    int updateMessageAttachments(@Param("id") Long id, @Param("attachments") String attachments);
     int insertRun(AgentRun run);
     List<AgentRun> findRunsByThread(@Param("threadId") Long threadId);
     AgentTokenUsage findTokenUsage(@Param("runKey") String runKey);
@@ -36,4 +38,5 @@ public interface AgentMapper {
     int insertAttachment(AgentAttachment attachment);
     boolean hasAttachmentAccess(@Param("id") Long id, @Param("workspaceId") Long workspaceId, @Param("projectId") Long projectId, @Param("userId") Long userId);
     AgentAttachment findAttachment(@Param("id") Long id, @Param("workspaceId") Long workspaceId, @Param("projectId") Long projectId, @Param("userId") Long userId);
+    AgentAttachment findAttachmentByStorageKey(@Param("storageKey") String storageKey, @Param("workspaceId") Long workspaceId, @Param("projectId") Long projectId, @Param("userId") Long userId);
 }

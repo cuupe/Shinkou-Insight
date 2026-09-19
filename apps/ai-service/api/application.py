@@ -36,6 +36,7 @@ async def lifespan(app: FastAPI):
         stream=settings.task_queue_stream,
         group=settings.task_queue_group,
         max_retries=settings.task_queue_max_retries,
+        concurrency=settings.task_queue_concurrency,
     )
     app.state.task_queue = task_queue
 
