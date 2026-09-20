@@ -50,7 +50,9 @@ export const authApi = {
     captcha?: string;
   }) =>
     unwrap<SmsResponse>(
-      anet.post<ApiResponse<SmsResponse>>("/auth/sms", null, { params: payload }),
+      anet.post<ApiResponse<SmsResponse>>("/auth/sms", null, {
+        params: payload,
+      }),
     ),
 
   register: (payload: RegisterPayload) =>
@@ -63,7 +65,8 @@ export const authApi = {
     verifyCodeId: string;
     verifyCode: string;
     newPassword: string;
-  }) => unwrap<void>(anet.post<ApiResponse<void>>("/auth/password/reset", payload)),
+  }) =>
+    unwrap<void>(anet.post<ApiResponse<void>>("/auth/password/reset", payload)),
 
   me: () => unwrap<AuthUser>(anet.get<ApiResponse<AuthUser>>("/auth/me")),
 
@@ -91,10 +94,15 @@ export const authApi = {
     currentPassword: string;
     verifyCodeId: string;
     verifyCode: string;
-  }) => unwrap<AuthUser>(anet.put<ApiResponse<AuthUser>>("/auth/me/phone", payload)),
+  }) =>
+    unwrap<AuthUser>(
+      anet.put<ApiResponse<AuthUser>>("/auth/me/phone", payload),
+    ),
 
   logout: async () => {
-    const result = await unwrap<void>(anet.post<ApiResponse<void>>("/auth/logout"));
+    const result = await unwrap<void>(
+      anet.post<ApiResponse<void>>("/auth/logout"),
+    );
     clearLocalSessionFailure();
     return result;
   },

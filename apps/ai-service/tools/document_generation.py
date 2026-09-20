@@ -6,17 +6,24 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-
 FORMAT_META: dict[str, tuple[str, str]] = {
     "markdown": ("text/markdown", ".md"),
-    "docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"),
+    "docx": (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".docx",
+    ),
     "pdf": ("application/pdf", ".pdf"),
-    "pptx": ("application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"),
+    "pptx": (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".pptx",
+    ),
 }
 
 
 def _slug(value: str) -> str:
-    cleaned = re.sub(r"[^\w\u4e00-\u9fff-]+", "-", str(value or "").strip(), flags=re.UNICODE)
+    cleaned = re.sub(
+        r"[^\w\u4e00-\u9fff-]+", "-", str(value or "").strip(), flags=re.UNICODE
+    )
     cleaned = re.sub(r"-+", "-", cleaned).strip("-_")
     return (cleaned or "shinkou-report")[:100]
 
@@ -29,7 +36,9 @@ def _plain_inline(value: str) -> str:
 
 
 def _markdown_lines(markdown: str) -> list[str]:
-    return [line.rstrip() for line in str(markdown or "").replace("\r\n", "\n").split("\n")]
+    return [
+        line.rstrip() for line in str(markdown or "").replace("\r\n", "\n").split("\n")
+    ]
 
 
 def _normalise_markdown(markdown: str, sources: list[dict[str, Any]]) -> str:
@@ -38,7 +47,9 @@ def _normalise_markdown(markdown: str, sources: list[dict[str, Any]]) -> str:
         return content + ("\n" if content else "")
     source_lines = ["", "## 来源", ""]
     for item in sources[:30]:
-        title = str(item.get("title") or item.get("name") or item.get("source") or "未命名来源").strip()
+        title = str(
+            item.get("title") or item.get("name") or item.get("source") or "未命名来源"
+        ).strip()
         source_id = str(item.get("id") or "").strip()
         url = str(item.get("url") or "").strip()
         label = f"[{title}]({url})" if url else title
@@ -47,7 +58,13 @@ def _normalise_markdown(markdown: str, sources: list[dict[str, Any]]) -> str:
     return (content + "\n" if content else "") + "\n".join(source_lines) + "\n"
 
 
-def _set_run_font(run: Any, name: str = "Microsoft YaHei", size: int = 11, bold: bool = False, italic: bool = False) -> None:
+def _set_run_font(
+    run: Any,
+    name: str = "Microsoft YaHei",
+    size: int = 11,
+    bold: bool = False,
+    italic: bool = False,
+) -> None:
     from docx.oxml.ns import qn
     from docx.shared import Pt
 
@@ -84,16 +101,20 @@ def _add_hyperlink(paragraph: Any, label: str, url: str) -> None:
 
 
 def _add_markdown_runs(paragraph: Any, text: str) -> None:
-    pattern = re.compile(r"(\[([^\]]+)\]\((https?://[^)]+)\)|\*\*([^*]+)\*\*|__([^_]+)__|`([^`]+)`)")
+    pattern = re.compile(
+        r"(\[([^\]]+)\]\((https?://[^)]+)\)|\*\*([^*]+)\*\*|__([^_]+)__|`([^`]+)`)"
+    )
     cursor = 0
     for match in pattern.finditer(text):
         if match.start() > cursor:
-            run = paragraph.add_run(text[cursor:match.start()])
+            run = paragraph.add_run(text[cursor : match.start()])
             _set_run_font(run)
         if match.group(2) and match.group(3):
             _add_hyperlink(paragraph, match.group(2), match.group(3))
         else:
-            run = paragraph.add_run(match.group(4) or match.group(5) or match.group(6) or "")
+            run = paragraph.add_run(
+                match.group(4) or match.group(5) or match.group(6) or ""
+            )
             _set_run_font(run, bold=bool(match.group(4) or match.group(5)))
         cursor = match.end()
     if cursor < len(text):
@@ -119,7 +140,12 @@ def _write_docx(path: Path, markdown: str) -> None:
     normal.font.name = "Microsoft YaHei"
     normal.font.size = Pt(10.5)
     normal._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")
-    for style_name, size, color in (("Title", 22, "174b4a"), ("Heading 1", 16, "147d78"), ("Heading 2", 13, "286a68"), ("Heading 3", 11, "286a68")):
+    for style_name, size, color in (
+        ("Title", 22, "174b4a"),
+        ("Heading 1", 16, "147d78"),
+        ("Heading 2", 13, "286a68"),
+        ("Heading 3", 11, "286a68"),
+    ):
         style = styles[style_name]
         style.font.name = "Microsoft YaHei"
         style.font.size = Pt(size)
@@ -144,7 +170,13 @@ def _write_docx(path: Path, markdown: str) -> None:
         heading = re.match(r"^(#{1,3})\s+(.+)$", line)
         if heading:
             level = len(heading.group(1))
-            paragraph = document.add_paragraph(style="Title" if level == 1 and not document.paragraphs else f"Heading {level}")
+            paragraph = document.add_paragraph(
+                style=(
+                    "Title"
+                    if level == 1 and not document.paragraphs
+                    else f"Heading {level}"
+                )
+            )
             _add_markdown_runs(paragraph, heading.group(2))
             continue
         if line.startswith(">"):
@@ -154,7 +186,9 @@ def _write_docx(path: Path, markdown: str) -> None:
         bullet = re.match(r"^(?:[-*+])\s+(.+)$", line)
         ordered = re.match(r"^\d+[.)]\s+(.+)$", line)
         if bullet or ordered:
-            paragraph = document.add_paragraph(style="List Bullet" if bullet else "List Number")
+            paragraph = document.add_paragraph(
+                style="List Bullet" if bullet else "List Number"
+            )
             _add_markdown_runs(paragraph, (bullet or ordered).group(1))
             continue
         paragraph = document.add_paragraph()
@@ -162,12 +196,21 @@ def _write_docx(path: Path, markdown: str) -> None:
     document.save(path)
 
 
-def _add_slide_text(slide: Any, title: str, body: list[str], *, title_size: int = 30, body_size: int = 18) -> None:
+def _add_slide_text(
+    slide: Any,
+    title: str,
+    body: list[str],
+    *,
+    title_size: int = 30,
+    body_size: int = 18,
+) -> None:
     from pptx.dml.color import RGBColor
     from pptx.enum.text import PP_ALIGN, MSO_AUTO_SIZE
     from pptx.util import Inches, Pt
 
-    title_box = slide.shapes.add_textbox(Inches(0.7), Inches(0.45), Inches(12), Inches(0.75))
+    title_box = slide.shapes.add_textbox(
+        Inches(0.7), Inches(0.45), Inches(12), Inches(0.75)
+    )
     title_frame = title_box.text_frame
     title_frame.clear()
     title_frame.word_wrap = True
@@ -179,7 +222,9 @@ def _add_slide_text(slide: Any, title: str, body: list[str], *, title_size: int 
     run.font.size = Pt(title_size)
     run.font.bold = True
     run.font.color.rgb = RGBColor(24, 91, 88)
-    body_box = slide.shapes.add_textbox(Inches(0.85), Inches(1.45), Inches(11.7), Inches(5.45))
+    body_box = slide.shapes.add_textbox(
+        Inches(0.85), Inches(1.45), Inches(11.7), Inches(5.45)
+    )
     frame = body_box.text_frame
     frame.clear()
     frame.word_wrap = True
@@ -195,7 +240,9 @@ def _add_slide_text(slide: Any, title: str, body: list[str], *, title_size: int 
             run.font.color.rgb = RGBColor(46, 59, 67)
 
 
-def _write_pptx(path: Path, title: str, markdown: str, sources: list[dict[str, Any]]) -> None:
+def _write_pptx(
+    path: Path, title: str, markdown: str, sources: list[dict[str, Any]]
+) -> None:
     from pptx import Presentation
     from pptx.enum.text import PP_ALIGN
     from pptx.util import Inches, Pt
@@ -228,7 +275,12 @@ def _write_pptx(path: Path, title: str, markdown: str, sources: list[dict[str, A
         slide = presentation.slides.add_slide(blank)
         source_lines = []
         for item in sources[:20]:
-            label = str(item.get("title") or item.get("name") or item.get("source") or "未命名来源")
+            label = str(
+                item.get("title")
+                or item.get("name")
+                or item.get("source")
+                or "未命名来源"
+            )
             url = str(item.get("url") or "").strip()
             source_lines.append(f"• {label}{f' — {url}' if url else ''}")
         _add_slide_text(slide, "来源", source_lines, title_size=26, body_size=14)
@@ -277,8 +329,14 @@ class DocumentGenerationTool:
         markdown = str(input_data.get("markdown") or "").strip()
         formats = [str(item).lower().strip() for item in input_data.get("formats", [])]
         formats = list(dict.fromkeys(item for item in formats if item in FORMAT_META))
-        sources = input_data.get("sources") if isinstance(input_data.get("sources"), list) else []
-        output_dir = Path(str(input_data.get("output_dir") or "")).expanduser().resolve()
+        sources = (
+            input_data.get("sources")
+            if isinstance(input_data.get("sources"), list)
+            else []
+        )
+        output_dir = (
+            Path(str(input_data.get("output_dir") or "")).expanduser().resolve()
+        )
         if not markdown:
             raise ValueError("markdown 不能为空")
         if not formats:
@@ -301,7 +359,9 @@ class DocumentGenerationTool:
                 artifacts.append(self._artifact(docx_path, "docx"))
         if "pdf" in formats and docx_path is not None:
             try:
-                artifacts.append(self._artifact(_convert_to_pdf(docx_path, output_dir), "pdf"))
+                artifacts.append(
+                    self._artifact(_convert_to_pdf(docx_path, output_dir), "pdf")
+                )
             except Exception as exc:
                 warnings.append(f"PDF 生成失败：{str(exc)[:300]}")
         if "pptx" in formats:

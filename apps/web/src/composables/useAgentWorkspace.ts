@@ -33,16 +33,19 @@ type AgentRunCallbacks = {
 };
 
 type AgentTransport = {
-  run: (context: {
-    workspaceId: number | string;
-    projectId: number;
-    threadId: string;
-    messageId: string;
-    content: string;
-    attachments?: AgentAttachment[];
-    config?: AgentRunConfig;
-    contextMessages?: Array<{ role: "user" | "assistant"; content: string }>;
-  }, callbacks: AgentRunCallbacks) => Promise<AgentRunAccepted>;
+  run: (
+    context: {
+      workspaceId: number | string;
+      projectId: number;
+      threadId: string;
+      messageId: string;
+      content: string;
+      attachments?: AgentAttachment[];
+      config?: AgentRunConfig;
+      contextMessages?: Array<{ role: "user" | "assistant"; content: string }>;
+    },
+    callbacks: AgentRunCallbacks,
+  ) => Promise<AgentRunAccepted>;
 };
 
 type ThreadState = AgentThreadSummary & {
@@ -108,15 +111,21 @@ function cancelRemoteRun(
   return control.cancelPromise;
 }
 
-function mergeTokenUsage(current: TokenUsage | undefined, incoming: TokenUsage | undefined) {
+function mergeTokenUsage(
+  current: TokenUsage | undefined,
+  incoming: TokenUsage | undefined,
+) {
   if (!incoming) return current;
   if (!current) return { ...incoming };
   const currentAvailable = current.available !== false;
   const incomingAvailable = incoming.available !== false;
   return {
-    inputTokens: Number(current.inputTokens || 0) + Number(incoming.inputTokens || 0),
-    outputTokens: Number(current.outputTokens || 0) + Number(incoming.outputTokens || 0),
-    totalTokens: Number(current.totalTokens || 0) + Number(incoming.totalTokens || 0),
+    inputTokens:
+      Number(current.inputTokens || 0) + Number(incoming.inputTokens || 0),
+    outputTokens:
+      Number(current.outputTokens || 0) + Number(incoming.outputTokens || 0),
+    totalTokens:
+      Number(current.totalTokens || 0) + Number(incoming.totalTokens || 0),
     model: current.model || incoming.model,
     available: currentAvailable && incomingAvailable,
     estimated: Boolean(current.estimated || incoming.estimated),
@@ -130,27 +139,42 @@ function summarizeThreadTitle(value: string) {
   if (!text) return "新的问题整理";
   let summary = `整理：${text}`;
   if (/^为什么\s*.+/.test(text)) summary = `排查${text.slice(3).trim()}问题`;
-  else if (/^(如何|怎么|怎样)\s*.+/.test(text)) summary = `梳理${text.replace(/^(如何|怎么|怎样)\s*/, "")}方案`;
-  else if (/^(什么是|是什么)\s*.+/.test(text)) summary = `了解${text.replace(/^(什么是|是什么)\s*/, "")}`;
-  else if (/^(总结|概括)\s*.+/.test(text)) summary = `总结${text.replace(/^(总结|概括)\s*/, "")}`;
-  else if (/^(比较|对比)\s*.+/.test(text)) summary = `比较${text.replace(/^(比较|对比)\s*/, "")}`;
+  else if (/^(如何|怎么|怎样)\s*.+/.test(text))
+    summary = `梳理${text.replace(/^(如何|怎么|怎样)\s*/, "")}方案`;
+  else if (/^(什么是|是什么)\s*.+/.test(text))
+    summary = `了解${text.replace(/^(什么是|是什么)\s*/, "")}`;
+  else if (/^(总结|概括)\s*.+/.test(text))
+    summary = `总结${text.replace(/^(总结|概括)\s*/, "")}`;
+  else if (/^(比较|对比)\s*.+/.test(text))
+    summary = `比较${text.replace(/^(比较|对比)\s*/, "")}`;
   return Array.from(summary).slice(0, 40).join("");
 }
 
 function createHttpTransport(): AgentTransport {
   return {
     async run(context, callbacks) {
-      const accepted = await agentApi.sendMessage(context.workspaceId, context.projectId, {
-        threadId: context.threadId,
-        messageId: context.messageId,
-        content: context.content,
-        ...(context.config || {}),
-        attachments: context.attachments?.map(({ url, previewUrl, file, ...attachment }) => attachment),
-        contextMessages: context.contextMessages,
-      });
+      const accepted = await agentApi.sendMessage(
+        context.workspaceId,
+        context.projectId,
+        {
+          threadId: context.threadId,
+          messageId: context.messageId,
+          content: context.content,
+          ...(context.config || {}),
+          attachments: context.attachments?.map(
+            ({ url, previewUrl, file, ...attachment }) => attachment,
+          ),
+          contextMessages: context.contextMessages,
+        },
+      );
       callbacks.onAccepted?.(accepted.runId);
       const eventSource = new EventSource(
-        accepted.eventsUrl || agentApi.eventsUrl(context.workspaceId, context.projectId, accepted.runId),
+        accepted.eventsUrl ||
+          agentApi.eventsUrl(
+            context.workspaceId,
+            context.projectId,
+            accepted.runId,
+          ),
         { withCredentials: true },
       );
 
@@ -215,11 +239,15 @@ function handleStreamEvent(
     });
   }
   if (event.type === "event.updated") callbacks.onEvent(event.event);
-  if (event.type === "message.delta") callbacks.onDelta(event.messageId, event.delta);
-  if (event.type === "message.replace") callbacks.onReplace(event.messageId, event.content);
+  if (event.type === "message.delta")
+    callbacks.onDelta(event.messageId, event.delta);
+  if (event.type === "message.replace")
+    callbacks.onReplace(event.messageId, event.content);
   if (event.type === "citation.added") callbacks.onCitation(event.citation);
-  if (event.type === "media.added") callbacks.onMedia(event.messageId, event.media);
-  if (event.type === "artifact.added") callbacks.onArtifact?.(event.messageId, event.artifact);
+  if (event.type === "media.added")
+    callbacks.onMedia(event.messageId, event.media);
+  if (event.type === "artifact.added")
+    callbacks.onArtifact?.(event.messageId, event.artifact);
   if (event.type === "message.completed") callbacks.onComplete(event.messageId);
   if (event.type === "usage.updated") {
     callbacks.onUsageUpdated?.({
@@ -235,7 +263,8 @@ function handleStreamEvent(
       finishedAt: event.finishedAt || event.data?.finishedAt,
       durationMs: event.durationMs ?? event.data?.durationMs,
       usage: event.usage || event.data?.usage,
-      contextCompression: event.contextCompression || event.data?.contextCompression,
+      contextCompression:
+        event.contextCompression || event.data?.contextCompression,
     });
     eventSource.close();
     resolve();
@@ -281,23 +310,33 @@ export function useAgentWorkspace() {
     runControls.clear();
     cancellingThreads.clear();
     try {
-      const storedThreads = await agentApi.threads(workspaceId.value, projectId.value);
+      const storedThreads = await agentApi.threads(
+        workspaceId.value,
+        projectId.value,
+      );
       storedThreads.forEach((stored) => {
-      threadStates[stored.id] = {
-        ...stored,
-        persisted: true,
-        messages: stored.messages || [],
-        events: stored.events || [],
-        eventHistory: stored.eventHistory || stored.events || [],
-        citations: stored.citations || [],
-        status: stored.status === "failed" ? "failed" : stored.status === "running" ? "running" : stored.status === "idle" ? "idle" : "completed",
-        runId: stored.runId || null,
-        contextUsage: stored.contextUsage,
-        tokenUsage: stored.tokenUsage,
-        runStartedAt: stored.runStartedAt,
-        runFinishedAt: stored.runFinishedAt,
-        runDurationMs: stored.runDurationMs,
-      };
+        threadStates[stored.id] = {
+          ...stored,
+          persisted: true,
+          messages: stored.messages || [],
+          events: stored.events || [],
+          eventHistory: stored.eventHistory || stored.events || [],
+          citations: stored.citations || [],
+          status:
+            stored.status === "failed"
+              ? "failed"
+              : stored.status === "running"
+                ? "running"
+                : stored.status === "idle"
+                  ? "idle"
+                  : "completed",
+          runId: stored.runId || null,
+          contextUsage: stored.contextUsage,
+          tokenUsage: stored.tokenUsage,
+          runStartedAt: stored.runStartedAt,
+          runFinishedAt: stored.runFinishedAt,
+          runDurationMs: stored.runDurationMs,
+        };
         threadOrder.value.push(stored.id);
       });
       activeThreadId.value = threadOrder.value[0] || null;
@@ -331,7 +370,8 @@ export function useAgentWorkspace() {
     cancellingThreads.delete(threadId);
 
     if (wasActive) {
-      activeThreadId.value = threadOrder.value[index] || threadOrder.value[index - 1] || null;
+      activeThreadId.value =
+        threadOrder.value[index] || threadOrder.value[index - 1] || null;
       draft.value = "";
       composerError.value = "";
     }
@@ -376,11 +416,23 @@ export function useAgentWorkspace() {
     if (!nextEvent?.id) return;
     const history = thread.eventHistory;
     const previous = history.at(-1);
-    const sameAsPrevious = previous && previous.id === nextEvent.id && previous.status === nextEvent.status && previous.detail === nextEvent.detail;
-    if (!sameAsPrevious) history.push({ ...nextEvent, meta: nextEvent.meta ? { ...nextEvent.meta } : undefined });
+    const sameAsPrevious =
+      previous &&
+      previous.id === nextEvent.id &&
+      previous.status === nextEvent.status &&
+      previous.detail === nextEvent.detail;
+    if (!sameAsPrevious)
+      history.push({
+        ...nextEvent,
+        meta: nextEvent.meta ? { ...nextEvent.meta } : undefined,
+      });
   }
 
-  async function sendMessage(value = draft.value, attachments: AgentAttachment[] = [], config?: AgentRunConfig) {
+  async function sendMessage(
+    value = draft.value,
+    attachments: AgentAttachment[] = [],
+    config?: AgentRunConfig,
+  ) {
     const content = value.trim();
     if (!content) {
       composerError.value = "先输入你希望 Agent 处理的问题";
@@ -399,6 +451,7 @@ export function useAgentWorkspace() {
       id: messageId,
       role: "assistant",
       content: "",
+      modelName: config?.modelName || "Shinkou Agent",
       createdAt: "刚刚",
       status: "streaming",
       citations: [],
@@ -414,10 +467,19 @@ export function useAgentWorkspace() {
       content,
       createdAt: "刚刚",
       status: "completed",
-      attachments: attachments.length ? attachments.map((item) => ({ ...item })) : undefined,
+      attachments: attachments.length
+        ? attachments.map((item) => ({ ...item }))
+        : undefined,
     });
     thread.messages.push(assistantMessage);
-    if (!thread.messages.some((message) => message.role === "user" && message.id !== `${messageId}-user` && message.content.trim())) {
+    if (
+      !thread.messages.some(
+        (message) =>
+          message.role === "user" &&
+          message.id !== `${messageId}-user` &&
+          message.content.trim(),
+      )
+    ) {
       thread.title = summarizeThreadTitle(content);
     }
     thread.preview = content;
@@ -439,7 +501,10 @@ export function useAgentWorkspace() {
       priority: "normal",
     });
     thread.queueTaskId = queueTask.id;
-    updateTask(queueTask.id, { status: "running", currentStep: "等待 Agent 开始规划" });
+    updateTask(queueTask.id, {
+      status: "running",
+      currentStep: "等待 Agent 开始规划",
+    });
     const token = (threadRunTokens.get(thread.id) || 0) + 1;
     threadRunTokens.set(thread.id, token);
     const runControl: ActiveRunControl = {
@@ -449,7 +514,10 @@ export function useAgentWorkspace() {
     };
     runControls.set(thread.id, runControl);
     const isCurrentRun = () => threadRunTokens.get(thread.id) === token;
-    const contextChars = contextMessages.reduce((total, message) => total + message.content.length, content.length);
+    const contextChars = contextMessages.reduce(
+      (total, message) => total + message.content.length,
+      content.length,
+    );
     thread.contextUsage = {
       originalChars: contextChars,
       finalChars: contextChars,
@@ -553,10 +621,14 @@ export function useAgentWorkspace() {
             if (isCurrentRun()) {
               rememberEvent(thread, event);
               updateEvent(thread, event);
-              const completed = thread.events.filter((item) => item.status === "completed").length;
+              const completed = thread.events.filter(
+                (item) => item.status === "completed",
+              ).length;
               updateTask(queueTask.id, {
                 status: event.status === "failed" ? "failed" : "running",
-                progress: Math.round((completed / Math.max(thread.events.length, 1)) * 100),
+                progress: Math.round(
+                  (completed / Math.max(thread.events.length, 1)) * 100,
+                ),
                 currentStep: event.title,
               });
             }
@@ -582,13 +654,27 @@ export function useAgentWorkspace() {
             thread.tokenUsage = mergeTokenUsage(thread.tokenUsage, data.usage);
           },
           onMedia: (id, media) => {
-            if (!isCurrentRun() || id !== messageId || !media?.id || !media.url) return;
+            if (!isCurrentRun() || id !== messageId || !media?.id || !media.url)
+              return;
             assistantMessage.media?.push(media);
           },
           onArtifact: (id, artifact) => {
-            if (!isCurrentRun() || id !== messageId || !artifact?.id || !artifact.url) return;
-            if (!assistantMessage.attachments?.some((item) => item.id === artifact.id)) {
-              assistantMessage.attachments = [...(assistantMessage.attachments || []), artifact];
+            if (
+              !isCurrentRun() ||
+              id !== messageId ||
+              !artifact?.id ||
+              !artifact.url
+            )
+              return;
+            if (
+              !assistantMessage.attachments?.some(
+                (item) => item.id === artifact.id,
+              )
+            ) {
+              assistantMessage.attachments = [
+                ...(assistantMessage.attachments || []),
+                artifact,
+              ];
             }
           },
           onComplete: (id) => {
@@ -597,16 +683,19 @@ export function useAgentWorkspace() {
           },
           onRunCompleted: (data) => {
             if (isCurrentRun()) {
-              if (data?.contextCompression) thread.contextUsage = data.contextCompression;
+              if (data?.contextCompression)
+                thread.contextUsage = data.contextCompression;
               if (data?.usage) thread.tokenUsage = data.usage;
               if (data?.startedAt) thread.runStartedAt = data.startedAt;
               if (data?.finishedAt) thread.runFinishedAt = data.finishedAt;
-              if (data?.durationMs != null) thread.runDurationMs = data.durationMs;
+              if (data?.durationMs != null)
+                thread.runDurationMs = data.durationMs;
             }
           },
           onError: (message) => {
             if (!isCurrentRun()) return;
-            if (activeThreadId.value === thread.id) composerError.value = message;
+            if (activeThreadId.value === thread.id)
+              composerError.value = message;
             updateTask(queueTask.id, {
               status: "failed",
               currentStep: "运行失败，需要重试",
@@ -628,12 +717,16 @@ export function useAgentWorkspace() {
         updateTask(queueTask.id, {
           status: "failed",
           currentStep: "运行失败，需要重试",
-          errorMessage: error instanceof Error ? error.message : "Agent 运行失败",
+          errorMessage:
+            error instanceof Error ? error.message : "Agent 运行失败",
         });
         assistantMessage.status = "failed";
-        assistantMessage.content = assistantMessage.content || "这次运行没有完成，请检查 Agent 接口或稍后重试。";
+        assistantMessage.content =
+          assistantMessage.content ||
+          "这次运行没有完成，请检查 Agent 接口或稍后重试。";
         if (activeThreadId.value === thread.id) {
-          composerError.value = error instanceof Error ? error.message : "Agent 运行失败";
+          composerError.value =
+            error instanceof Error ? error.message : "Agent 运行失败";
         }
       }
     }
@@ -666,13 +759,15 @@ export function useAgentWorkspace() {
     thread.runId = null;
     if (thread.queueTaskId) pauseTask(thread.queueTaskId);
     const stoppedMessage = thread.messages.at(-1);
-    if (stoppedMessage?.role === "assistant" && stoppedMessage.status === "streaming") {
+    if (
+      stoppedMessage?.role === "assistant" &&
+      stoppedMessage.status === "streaming"
+    ) {
       stoppedMessage.status = "completed";
       stoppedMessage.content += "\n\n已由你暂停本次运行。";
     }
     cancellingThreads.delete(thread.id);
     return;
-
   }
 
   return {
@@ -687,7 +782,11 @@ export function useAgentWorkspace() {
     composerError,
     isRunning,
     hasRunningThread,
-    cancelling: computed(() => Boolean(activeThreadId.value && cancellingThreads.has(activeThreadId.value))),
+    cancelling: computed(() =>
+      Boolean(
+        activeThreadId.value && cancellingThreads.has(activeThreadId.value),
+      ),
+    ),
     selectThread,
     deleteThread,
     createThread,

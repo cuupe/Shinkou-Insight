@@ -3,43 +3,59 @@ from __future__ import annotations
 from agents.contracts import AgentContext, AgentMessage, AgentResult
 from models.schemas import Evidence, EvidenceEvaluation, Finding
 from prompts.agent_prompts import evidence_evaluation_prompt, finding_prompt
+from tools.search_quality import filter_relevant_evidence
 
 
 class EvidenceAnalystAgent:
     name = "evidence_analyst"
-    description = "评估证据充分性并决定下一步协作路径。"
+    description = "Evaluate evidence coverage and choose a bounded next step."
     capabilities = ("evidence-evaluation", "bounded-routing", "structured-output")
 
     async def handle(self, message: AgentMessage, context: AgentContext) -> AgentResult:
         payload = message.payload
-        evidence_count = len(payload.get("evidence", []))
-        if evidence_count:
+        raw_evidence = list(payload.get("evidence", []))
+        evidence_count = len(raw_evidence)
+        relevant_count = len(filter_relevant_evidence(str(payload["goal"]), raw_evidence))
+        current_round = int(payload.get("current_round", 0))
+        max_rounds = int(payload.get("max_rounds", 3))
+
+        if relevant_count:
             action = "ENOUGH"
-        elif payload.get("allow_web_search") and payload.get("current_round", 0) == 0:
+        elif payload.get("allow_web_search") and current_round == 0:
             action = "NEED_WEB"
-        elif payload.get("current_round", 0) + 1 < payload["max_rounds"]:
+        elif current_round + 1 < max_rounds:
             action = "MORE_INTERNAL"
         else:
             action = "ENOUGH"
+
         evaluation, _ = await context.model_for(self.name).structured(
-            evidence_evaluation_prompt(payload["goal"], evidence_count, payload.get("output_language", "zh-CN")),
+            evidence_evaluation_prompt(
+                payload["goal"],
+                evidence_count,
+                payload.get("output_language", "zh-CN"),
+                [item for item in raw_evidence if isinstance(item, dict)],
+            ),
             EvidenceEvaluation,
         )
         evaluation.next_action = action
-        evaluation.sufficient = action == "ENOUGH" and evidence_count > 0
-        if not evidence_count:
-            evaluation.missing = ["缺少可引用的项目资料"]
+        evaluation.sufficient = action == "ENOUGH" and relevant_count > 0
+        if not relevant_count:
+            evaluation.missing = [
+                "缺少与问题主题直接相关、可追溯的证据"
+                if evidence_count
+                else "缺少可引用的项目资料"
+            ]
         return AgentResult(agent=self.name, payload={"evaluation": evaluation.model_dump()})
 
 
 class FindingAnalystAgent:
     name = "finding_analyst"
-    description = "把证据综合为带引用的研究发现。"
+    description = "Synthesize traceable findings from the supplied evidence."
     capabilities = ("finding-synthesis", "citation-validation", "structured-output")
 
     async def handle(self, message: AgentMessage, context: AgentContext) -> AgentResult:
         payload = message.payload
-        evidence = [Evidence.model_validate(item) for item in payload.get("evidence", [])]
+        evidence = filter_relevant_evidence(payload["goal"], payload.get("evidence", []))
         if not evidence:
             finding = Finding(
                 id="F1",
@@ -50,7 +66,11 @@ class FindingAnalystAgent:
             )
         else:
             finding, _ = await context.model_for(self.name).structured(
-                finding_prompt(payload["goal"], [item.model_dump() for item in evidence], payload.get("output_language", "zh-CN")),
+                finding_prompt(
+                    payload["goal"],
+                    [item.model_dump() for item in evidence],
+                    payload.get("output_language", "zh-CN"),
+                ),
                 Finding,
             )
             valid_ids = {item.id for item in evidence}

@@ -9,7 +9,9 @@ def _camel(value: str) -> str:
 
 
 class ApiModel(BaseModel):
-    model_config = ConfigDict(alias_generator=_camel, populate_by_name=True, extra="ignore")
+    model_config = ConfigDict(
+        alias_generator=_camel, populate_by_name=True, extra="ignore"
+    )
 
 
 class HealthResponse(ApiModel):
@@ -49,7 +51,9 @@ class RuntimeModelConfig(ApiModel):
     timeout_seconds: float = Field(default=60, gt=0, le=600)
     retries: int = Field(default=2, ge=0, le=5)
     generation: ModelGenerationConfig = Field(default_factory=ModelGenerationConfig)
-    structured_output_method: Literal["json_schema", "function_calling", "json_mode"] = "json_schema"
+    structured_output_method: Literal[
+        "json_schema", "function_calling", "json_mode"
+    ] = "json_schema"
 
 
 class RuntimeWebSearchConfig(ApiModel):
@@ -207,7 +211,14 @@ class PlanStep(ApiModel):
 
     id: str = Field(min_length=1, max_length=40)
     objective: str = Field(min_length=1, max_length=500)
-    action: Literal["SEARCH_INTERNAL", "SEARCH_GRAPH", "SEARCH_WEB", "SYNTHESIZE"] = "SYNTHESIZE"
+    feedback: str = Field(
+        default="",
+        max_length=500,
+        description="A concise user-facing progress update for this step, not hidden reasoning.",
+    )
+    action: Literal["SEARCH_INTERNAL", "SEARCH_GRAPH", "SEARCH_WEB", "SYNTHESIZE"] = (
+        "SYNTHESIZE"
+    )
     query: str = Field(default="", max_length=2_000)
 
 
@@ -242,7 +253,9 @@ class ResearchConfig(ApiModel):
     review_policy: ReviewPolicy = Field(default_factory=ReviewPolicy)
     # AUTO selects a suitable path per request. DIRECT is for internal callers
     # and is intentionally not exposed as a separate UI option.
-    strategy: Literal["AUTO", "DIRECT", "REACT", "PLAN_AND_SOLVE", "REFLECTION"] = "AUTO"
+    strategy: Literal["AUTO", "DIRECT", "REACT", "PLAN_AND_SOLVE", "REFLECTION"] = (
+        "AUTO"
+    )
     # AUTO keeps routine chat on the single-agent path. Complex requests or
     # explicit user wording can opt into the coordinator and its child agents.
     multi_agent_mode: Literal["AUTO", "ON", "OFF"] = "AUTO"
@@ -295,7 +308,11 @@ class KnowledgeSearchRequest(ApiModel):
 
     @model_validator(mode="after")
     def validate_search_weights(self) -> "KnowledgeSearchRequest":
-        if self.retrieval_mode == "HYBRID" and self.vector_weight == 0 and self.keyword_weight == 0:
+        if (
+            self.retrieval_mode == "HYBRID"
+            and self.vector_weight == 0
+            and self.keyword_weight == 0
+        ):
             raise ValueError("vector_weight and keyword_weight cannot both be zero")
         return self
 

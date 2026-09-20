@@ -57,7 +57,9 @@ function handleInput(event: Event) {
   border-radius: 0.5rem;
   background: var(--surface-soft);
   color: var(--workspace-muted);
-  transition: border-color 160ms ease, box-shadow 160ms ease;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
 }
 
 .search-field:focus-within {

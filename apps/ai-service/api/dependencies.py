@@ -36,7 +36,9 @@ def http_model_error(error: ModelGatewayError) -> HTTPException:
         return HTTPException(504, str(error))
     if isinstance(error, ModelRateLimitError):
         return HTTPException(429, str(error))
-    if isinstance(error, (ModelAuthError, ModelServerError, ModelResponseError, ModelRequestError)):
+    if isinstance(
+        error, (ModelAuthError, ModelServerError, ModelResponseError, ModelRequestError)
+    ):
         return HTTPException(502, str(error))
     return HTTPException(500, str(error))
 

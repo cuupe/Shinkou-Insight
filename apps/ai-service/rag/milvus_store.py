@@ -30,9 +30,7 @@ def _keyword_terms(question: str, max_terms: int = 64) -> list[str]:
 
 def _like_patterns(terms: list[str]) -> list[str]:
     return [
-        "%"
-        + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        + "%"
+        "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         for term in terms
     ]
 
@@ -107,8 +105,12 @@ class MilvusKnowledgeStore:
             kwargs["db_name"] = self.milvus_db_name
         client = MilvusClient(**kwargs)
         if not client.has_collection(collection_name=self.collection_name):
-            schema = MilvusClient.create_schema(auto_id=False, enable_dynamic_field=False)
-            schema.add_field(field_name="chunk_id", datatype=DataType.INT64, is_primary=True)
+            schema = MilvusClient.create_schema(
+                auto_id=False, enable_dynamic_field=False
+            )
+            schema.add_field(
+                field_name="chunk_id", datatype=DataType.INT64, is_primary=True
+            )
             schema.add_field(field_name="workspace_id", datatype=DataType.INT64)
             schema.add_field(field_name="project_id", datatype=DataType.INT64)
             schema.add_field(field_name="asset_id", datatype=DataType.INT64)
@@ -130,13 +132,24 @@ class MilvusKnowledgeStore:
                 consistency_level="Bounded",
             )
         else:
-            description = client.describe_collection(collection_name=self.collection_name)
+            description = client.describe_collection(
+                collection_name=self.collection_name
+            )
             vector_field = next(
-                (field for field in description.get("fields", []) if field.get("name") == self.VECTOR_FIELD),
+                (
+                    field
+                    for field in description.get("fields", [])
+                    if field.get("name") == self.VECTOR_FIELD
+                ),
                 None,
             )
-            configured_dimension = int((vector_field or {}).get("params", {}).get("dim", 0))
-            if configured_dimension and configured_dimension != self.embedding.dimension:
+            configured_dimension = int(
+                (vector_field or {}).get("params", {}).get("dim", 0)
+            )
+            if (
+                configured_dimension
+                and configured_dimension != self.embedding.dimension
+            ):
                 raise RuntimeError(
                     f"Milvus collection {self.collection_name!r} has dimension "
                     f"{configured_dimension}, expected {self.embedding.dimension}; "
@@ -159,9 +172,13 @@ class MilvusKnowledgeStore:
 
     @staticmethod
     def _milvus_filter(workspace_id: int, project_id: int, asset_ids: list[int]) -> str:
-        expression = f"workspace_id == {int(workspace_id)} and project_id == {int(project_id)}"
+        expression = (
+            f"workspace_id == {int(workspace_id)} and project_id == {int(project_id)}"
+        )
         if asset_ids:
-            expression += f" and asset_id in [{', '.join(str(value) for value in asset_ids)}]"
+            expression += (
+                f" and asset_id in [{', '.join(str(value) for value in asset_ids)}]"
+            )
         return expression
 
     async def index(
@@ -196,7 +213,9 @@ class MilvusKnowledgeStore:
         milvus_rows: list[dict[str, Any]] = []
         async with pool.connection() as connection:
             async with connection.cursor() as cursor:
-                await cursor.execute("DELETE FROM asset_chunks WHERE asset_id = %s", (numeric_asset_id,))
+                await cursor.execute(
+                    "DELETE FROM asset_chunks WHERE asset_id = %s", (numeric_asset_id,)
+                )
                 for chunk, vector in zip(chunks, vectors):
                     await cursor.execute(
                         """
@@ -224,7 +243,9 @@ class MilvusKnowledgeStore:
                     )
                     row = await cursor.fetchone()
                     if row is None:
-                        raise RuntimeError("PostgreSQL did not return the inserted chunk id")
+                        raise RuntimeError(
+                            "PostgreSQL did not return the inserted chunk id"
+                        )
                     milvus_rows.append(
                         {
                             "chunk_id": int(row[0]),
@@ -290,7 +311,9 @@ class MilvusKnowledgeStore:
                 candidate_limit,
             )
 
-        vector_ids = [int(hit["id"]) for hit in vector_hits if hit.get("id") is not None]
+        vector_ids = [
+            int(hit["id"]) for hit in vector_hits if hit.get("id") is not None
+        ]
         vector_rows = await self._fetch_rows_by_ids(
             pool,
             workspace_id,
@@ -325,7 +348,9 @@ class MilvusKnowledgeStore:
         if mode in {"VECTOR", "HYBRID"}:
             channels["vector"] = [
                 (str(chunk_id), rows[chunk_id], score)
-                for chunk_id, (_rank, score) in sorted(vector_rank.items(), key=lambda value: value[1][0])
+                for chunk_id, (_rank, score) in sorted(
+                    vector_rank.items(), key=lambda value: value[1][0]
+                )
                 if chunk_id in rows
             ]
         if mode in {"KEYWORD", "HYBRID"}:
@@ -335,9 +360,13 @@ class MilvusKnowledgeStore:
                 if chunk_id in rows and score > 0
             ]
         if mode == "VECTOR":
-            fused = fuse_ranked_candidates(channels, method="LINEAR", weights={"vector": 1.0})
+            fused = fuse_ranked_candidates(
+                channels, method="LINEAR", weights={"vector": 1.0}
+            )
         elif mode == "KEYWORD":
-            fused = fuse_ranked_candidates(channels, method="LINEAR", weights={"keyword": 1.0})
+            fused = fuse_ranked_candidates(
+                channels, method="LINEAR", weights={"keyword": 1.0}
+            )
         else:
             fused = fuse_ranked_candidates(
                 channels,
@@ -472,9 +501,7 @@ class MilvusKnowledgeStore:
             "GREATEST("
             "ts_rank_cd(c.search_vector, plainto_tsquery('simple', %s)),"
             "CASE WHEN c.content ILIKE ANY(%s) THEN 0.1 ELSE 0 END"
-            ") AS score "
-            + base
-            + " ORDER BY score DESC, c.chunk_index LIMIT %s"
+            ") AS score " + base + " ORDER BY score DESC, c.chunk_index LIMIT %s"
         )
         params = [question, patterns, *params, limit]
         async with pool.connection() as connection:

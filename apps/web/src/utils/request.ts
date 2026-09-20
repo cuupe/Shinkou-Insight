@@ -23,7 +23,8 @@ const csrfClient = Axios.create({
   timeout: 5000,
 });
 let csrfRequest: Promise<unknown> | null = null;
-let authFailureHandler: ((reason: "unauthorized" | "backend-unavailable") => void) | null = null;
+let authFailureHandler:
+  ((reason: "unauthorized" | "backend-unavailable") => void) | null = null;
 let authFailureInProgress = false;
 const SESSION_INVALID_KEY = "shinkou-session-invalid";
 

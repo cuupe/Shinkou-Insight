@@ -169,9 +169,7 @@ public class AuthServiceImpl implements AuthService {
         }
 
         rateLimiter.checkSms(httpRequest, phoneNumber);
-        if (purpose == SmsPurpose.REGISTER
-                || purpose == SmsPurpose.LOGIN
-                || purpose == SmsPurpose.PASSWORD_RESET) {
+        if (purpose == SmsPurpose.REGISTER || purpose == SmsPurpose.PASSWORD_RESET) {
             if (!captchaService.verifyCaptcha(captchaId, captcha)) {
                 throw ApiException.badRequest("CAPTCHA_INVALID", "图片验证码错误或已过期");
             }

@@ -11,7 +11,6 @@ from typing import Any
 
 from tools.custom import CUSTOM_TOOL_SPEC
 
-
 logger = logging.getLogger(__name__)
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 
@@ -76,10 +75,14 @@ def _module_candidates(root: Path, modules: list[str] | None) -> list[Path]:
         for raw in modules:
             name = str(raw).strip()
             if not name or Path(name).name != name:
-                raise ValueError(f"Custom tool module must be a direct file name: {name}")
+                raise ValueError(
+                    f"Custom tool module must be a direct file name: {name}"
+                )
             path = (root / (name if name.endswith(".py") else f"{name}.py")).resolve()
             if path.parent != root or path.suffix != ".py":
-                raise ValueError(f"Custom tool module is outside the configured directory: {name}")
+                raise ValueError(
+                    f"Custom tool module is outside the configured directory: {name}"
+                )
             if not path.is_file():
                 raise FileNotFoundError(f"Custom tool module not found: {name}")
             candidates.append(path)
@@ -102,17 +105,27 @@ def _load_module(module_name: str, path: Path) -> ModuleType:
     return module
 
 
-def _register_module(registry: Any, module: ModuleType, report: CustomToolLoadReport) -> None:
+def _register_module(
+    registry: Any, module: ModuleType, report: CustomToolLoadReport
+) -> None:
     before = {spec.name for spec in registry.specs()}
     hook = getattr(module, "register_tools", None)
     if callable(hook):
         hook(_CustomRegistryView(registry))
 
-    report.tools.extend(name for name in (spec.name for spec in registry.specs()) if name not in before and name not in report.tools)
+    report.tools.extend(
+        name
+        for name in (spec.name for spec in registry.specs())
+        if name not in before and name not in report.tools
+    )
 
     for name, handler in vars(module).items():
         spec = getattr(handler, CUSTOM_TOOL_SPEC, None)
-        if spec is None or not callable(handler) or getattr(handler, "__module__", None) != module.__name__:
+        if (
+            spec is None
+            or not callable(handler)
+            or getattr(handler, "__module__", None) != module.__name__
+        ):
             continue
         if registry.has_tool(spec.name):
             continue

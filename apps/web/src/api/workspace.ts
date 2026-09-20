@@ -1,16 +1,17 @@
 import { anet, unwrap } from "./core";
 import { workspacePath } from "./paths";
-import type { ApiResponse, Workspace, WorkspaceInvitation, WorkspaceMember } from "./types";
+import type {
+  ApiResponse,
+  Workspace,
+  WorkspaceInvitation,
+  WorkspaceMember,
+} from "./types";
 
 export const workspaceApi = {
   list: () =>
     unwrap<Workspace[]>(anet.get<ApiResponse<Workspace[]>>("/workspaces/my")),
 
-  create: (payload: {
-    name: string;
-    code?: string;
-    description?: string;
-  }) =>
+  create: (payload: { name: string; code?: string; description?: string }) =>
     unwrap<Workspace>(
       anet.post<ApiResponse<Workspace>>("/workspaces", payload),
     ),
@@ -26,9 +27,7 @@ export const workspaceApi = {
     ),
 
   remove: (workspaceId: number | string) =>
-    unwrap<void>(
-      anet.delete<ApiResponse<void>>(workspacePath(workspaceId)),
-    ),
+    unwrap<void>(anet.delete<ApiResponse<void>>(workspacePath(workspaceId))),
 
   members: (workspaceId: number | string) =>
     unwrap<WorkspaceMember[]>(
@@ -68,10 +67,15 @@ export const workspaceApi = {
 
   declineInvitation: (invitationId: number | string) =>
     unwrap<void>(
-      anet.post<ApiResponse<void>>(`/workspace-invitations/${invitationId}/decline`),
+      anet.post<ApiResponse<void>>(
+        `/workspace-invitations/${invitationId}/decline`,
+      ),
     ),
 
-  revokeInvitation: (workspaceId: number | string, invitationId: number | string) =>
+  revokeInvitation: (
+    workspaceId: number | string,
+    invitationId: number | string,
+  ) =>
     unwrap<void>(
       anet.delete<ApiResponse<void>>(
         `${workspacePath(workspaceId)}/invitations/${invitationId}`,
@@ -90,7 +94,10 @@ export const workspaceApi = {
       ),
     ),
 
-  updatePreferences: (workspaceId: number | string, payload: Record<string, unknown>) =>
+  updatePreferences: (
+    workspaceId: number | string,
+    payload: Record<string, unknown>,
+  ) =>
     unwrap<Workspace>(
       anet.patch<ApiResponse<Workspace>>(
         `${workspacePath(workspaceId)}/preferences`,

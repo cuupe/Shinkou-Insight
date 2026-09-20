@@ -1,6 +1,8 @@
+from datetime import date
+from io import BytesIO
+
 import httpx
 import pytest
-from io import BytesIO
 
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
@@ -123,3 +125,38 @@ async def test_hydrate_web_evidence_extracts_actual_pdf_page_text():
     assert results[0].content_kind == "fulltext"
     assert results[0].page_number == 1
     assert "real-time rendering" in results[0].content
+
+
+@pytest.mark.asyncio
+async def test_visible_article_date_is_used_when_metadata_is_missing():
+    today = date.today().isoformat()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                "<html><body><main><h1>光伏产业观察</h1>"
+                f"<p>发布时间：{today}</p>"
+                + "".join(
+                    f"<p>光伏产业第{index}段：装机规模持续变化，政策和技术路线影响产能与市场竞争。</p>"
+                    for index in range(8)
+                )
+                + "</main><footer>2026 版权所有</footer></body></html>"
+            ),
+            headers={"content-type": "text/html; charset=utf-8"},
+            request=request,
+        )
+
+    candidate = Evidence(
+        id="W4",
+        chunk_id="web:4",
+        content="光伏产业观察",
+        source_name="光伏产业观察",
+        source_type="web",
+        url="https://industry.example.org/solar",
+        content_kind="search_snippet",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        results = await hydrate_web_evidence(client, [candidate], "当前光伏产业")
+    assert len(results) == 1
+    assert results[0].published_at == today

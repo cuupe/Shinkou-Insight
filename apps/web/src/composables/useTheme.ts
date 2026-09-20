@@ -20,7 +20,9 @@ function initializeTheme() {
   const systemPrefersDark = window.matchMedia?.(
     "(prefers-color-scheme: dark)",
   ).matches;
-  applyTheme(stored === "dark" || (!stored && systemPrefersDark) ? "dark" : "light");
+  applyTheme(
+    stored === "dark" || (!stored && systemPrefersDark) ? "dark" : "light",
+  );
 }
 
 function toggleTheme() {

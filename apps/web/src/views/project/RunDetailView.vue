@@ -9,13 +9,8 @@ import PageHeader from "@/components/common/PageHeader.vue";
 import { formatDateTime } from "@/lib/utils";
 const router = useRouter();
 const route = useRoute();
-const {
-  notify,
-  statusClass,
-  statusLabel,
-  workspaceId,
-  projectId,
-} = useWorkspace();
+const { notify, statusClass, statusLabel, workspaceId, projectId } =
+  useWorkspace();
 const selectedEvidence = ref(-1);
 
 type RunInfo = {
@@ -54,7 +49,11 @@ const plan = ref<ResearchPlanStep[]>([]);
 const planSummary = ref("");
 const planVersion = ref(0);
 const planSaving = ref(false);
-const newStep = ref({ objective: "", action: "SEARCH_INTERNAL" as ResearchPlanStep["action"], query: "" });
+const newStep = ref({
+  objective: "",
+  action: "SEARCH_INTERNAL" as ResearchPlanStep["action"],
+  query: "",
+});
 
 type EvidenceItem = {
   code: string;
@@ -124,8 +123,13 @@ onMounted(async () => {
       planVersion: Number(detail.planVersion || 0),
       paused: Boolean(detail.paused),
     };
-    const rawPlan = (detail.plan || {}) as { summary?: string; steps?: ResearchPlanStep[] };
-    plan.value = Array.isArray(rawPlan.steps) ? rawPlan.steps.map((step) => ({ ...step })) : [];
+    const rawPlan = (detail.plan || {}) as {
+      summary?: string;
+      steps?: ResearchPlanStep[];
+    };
+    plan.value = Array.isArray(rawPlan.steps)
+      ? rawPlan.steps.map((step) => ({ ...step }))
+      : [];
     planSummary.value = String(rawPlan.summary || "");
     planVersion.value = Number(detail.planVersion || 0);
     const detailRecord = detail as unknown as Record<string, unknown>;
@@ -134,12 +138,33 @@ onMounted(async () => {
       : [];
     evidence.value = rawEvidence.map((raw, index) => {
       const item = (raw || {}) as Record<string, unknown>;
-      const sourceName = String(item.source_name ?? item.sourceName ?? item.asset_name ?? item.assetName ?? "项目资料");
-      const pageNumber = (item.page_number ?? item.pageNumber ?? null) as number | string | null;
-      const pageLabel = pageNumber != null && String(pageNumber) !== "" ? `第${pageNumber}页` : "";
+      const sourceName = String(
+        item.source_name ??
+          item.sourceName ??
+          item.asset_name ??
+          item.assetName ??
+          "项目资料",
+      );
+      const pageNumber = (item.page_number ?? item.pageNumber ?? null) as
+        number | string | null;
+      const pageLabel =
+        pageNumber != null && String(pageNumber) !== ""
+          ? `第${pageNumber}页`
+          : "";
       return {
-        code: String(item.id ?? item.chunk_id ?? item.chunkId ?? `E${String(index + 1).padStart(2, "2")}`),
-        title: String(item.section_title ?? item.sectionTitle ?? item.asset_name ?? item.assetName ?? sourceName),
+        code: String(
+          item.id ??
+            item.chunk_id ??
+            item.chunkId ??
+            `E${String(index + 1).padStart(2, "2")}`,
+        ),
+        title: String(
+          item.section_title ??
+            item.sectionTitle ??
+            item.asset_name ??
+            item.assetName ??
+            sourceName,
+        ),
         source: [sourceName, pageLabel].filter(Boolean).join(" · "),
         assetId: String(item.asset_id ?? item.assetId ?? ""),
         excerpt: String(item.content ?? item.excerpt ?? ""),
@@ -156,19 +181,38 @@ async function appendPlanStep() {
   if (!objective || planSaving.value) return;
   planSaving.value = true;
   try {
-    const response = await runsApi.updatePlan(workspaceId.value, projectId.value, String(route.params.runId), {
-      mode: "APPEND",
-      expectedVersion: planVersion.value,
-      steps: [{ id: `U${Date.now()}`, objective, action: newStep.value.action, query: newStep.value.query.trim() || objective }],
-    });
-    const updated = (response.plan || {}) as { summary?: string; steps?: ResearchPlanStep[] };
+    const response = await runsApi.updatePlan(
+      workspaceId.value,
+      projectId.value,
+      String(route.params.runId),
+      {
+        mode: "APPEND",
+        expectedVersion: planVersion.value,
+        steps: [
+          {
+            id: `U${Date.now()}`,
+            objective,
+            action: newStep.value.action,
+            query: newStep.value.query.trim() || objective,
+          },
+        ],
+      },
+    );
+    const updated = (response.plan || {}) as {
+      summary?: string;
+      steps?: ResearchPlanStep[];
+    };
     plan.value = Array.isArray(updated.steps) ? updated.steps : plan.value;
     planSummary.value = String(updated.summary || planSummary.value);
     planVersion.value = Number(response.planVersion || planVersion.value + 1);
     newStep.value = { objective: "", action: "SEARCH_INTERNAL", query: "" };
     notify("计划步骤已加入，任务会在下一个安全检查点执行");
   } catch (error) {
-    notify(error instanceof Error ? error.message : "计划更新失败，可能已被其他人修改");
+    notify(
+      error instanceof Error
+        ? error.message
+        : "计划更新失败，可能已被其他人修改",
+    );
   } finally {
     planSaving.value = false;
   }
@@ -178,10 +222,15 @@ async function togglePlanPause() {
   if (planSaving.value) return;
   planSaving.value = true;
   try {
-    const response = await runsApi.updatePlan(workspaceId.value, projectId.value, String(route.params.runId), {
-      mode: run.value.paused ? "RESUME" : "PAUSE",
-      expectedVersion: planVersion.value,
-    });
+    const response = await runsApi.updatePlan(
+      workspaceId.value,
+      projectId.value,
+      String(route.params.runId),
+      {
+        mode: run.value.paused ? "RESUME" : "PAUSE",
+        expectedVersion: planVersion.value,
+      },
+    );
     run.value.paused = Boolean(response.paused);
     notify(run.value.paused ? "任务已请求暂停" : "任务已恢复执行");
   } catch (error) {
@@ -193,7 +242,9 @@ async function togglePlanPause() {
 
 function exportSummary() {
   const content = `# ${run.value.title}\n\n${summaryText.value}\n`;
-  const url = URL.createObjectURL(new Blob([content], { type: "text/markdown" }));
+  const url = URL.createObjectURL(
+    new Blob([content], { type: "text/markdown" }),
+  );
   const link = document.createElement("a");
   link.href = url;
   link.download = `${run.value.title}.md`;
@@ -213,12 +264,15 @@ function exportSummary() {
     :subtitle="`${run.id} · ${run.project} · ${run.time}`"
   >
     <template #action>
-      <span class="status-badge" :class="statusClass(run.status)"><i />{{ run.statusLabel }}</span>
+      <span class="status-badge" :class="statusClass(run.status)"
+        ><i />{{ run.statusLabel }}</span
+      >
     </template>
   </PageHeader>
   <div class="run-metrics">
     <div v-for="metric in metrics" :key="metric.label">
-      <span>{{ metric.label }}</span><strong>{{ metric.value }}</strong>
+      <span>{{ metric.label }}</span
+      ><strong>{{ metric.value }}</strong>
     </div>
   </div>
   <div class="research-workspace">
@@ -284,18 +338,66 @@ function exportSummary() {
   </div>
   <section class="panel run-plan-panel">
     <div class="panel-heading">
-      <div><span class="eyebrow">VERSIONED PLAN</span><h2>执行计划 <small>v{{ planVersion }}</small></h2><p>{{ planSummary || "计划由 Agent 根据目标自动生成，可在运行中追加。" }}</p></div>
-      <button class="button button-secondary button-sm" type="button" :disabled="planSaving || !['running','pending','paused'].includes(run.status)" @click="togglePlanPause"><Play v-if="run.paused" :size="14" /><Pause v-else :size="14" />{{ run.paused ? "继续执行" : "暂停任务" }}</button>
+      <div>
+        <span class="eyebrow">VERSIONED PLAN</span>
+        <h2>
+          执行计划 <small>v{{ planVersion }}</small>
+        </h2>
+        <p>
+          {{ planSummary || "计划由 Agent 根据目标自动生成，可在运行中追加。" }}
+        </p>
+      </div>
+      <button
+        class="button button-secondary button-sm"
+        type="button"
+        :disabled="
+          planSaving || !['running', 'pending', 'paused'].includes(run.status)
+        "
+        @click="togglePlanPause"
+      >
+        <Play v-if="run.paused" :size="14" /><Pause v-else :size="14" />{{
+          run.paused ? "继续执行" : "暂停任务"
+        }}
+      </button>
     </div>
     <div class="run-plan-list">
-      <div v-for="(step, index) in plan" :key="step.id" class="run-plan-step"><span>{{ index + 1 }}</span><div><strong>{{ step.objective }}</strong><small>{{ step.action }} · {{ step.query || "无需查询" }}</small></div></div>
+      <div v-for="(step, index) in plan" :key="step.id" class="run-plan-step">
+        <span>{{ index + 1 }}</span>
+        <div>
+          <strong>{{ step.objective }}</strong
+          ><small>{{ step.action }} · {{ step.query || "无需查询" }}</small>
+        </div>
+      </div>
       <p v-if="!plan.length" class="empty-state">计划将在任务开始后生成。</p>
     </div>
     <form class="run-plan-form" @submit.prevent="appendPlanStep">
-      <input v-model="newStep.objective" type="text" maxlength="500" placeholder="追加一个研究步骤，例如：核对竞品定价" aria-label="追加计划步骤" />
-      <select v-model="newStep.action" aria-label="计划动作"><option value="SEARCH_INTERNAL">项目资料</option><option value="SEARCH_GRAPH">知识图谱</option><option value="SEARCH_WEB">外部搜索</option><option value="SYNTHESIZE">整理结论</option></select>
-      <input v-model="newStep.query" type="text" maxlength="2000" placeholder="查询语句（可选）" aria-label="计划查询语句" />
-      <button class="button button-primary button-sm" type="submit" :disabled="planSaving || !newStep.objective.trim()"><Plus :size="14" />追加</button>
+      <input
+        v-model="newStep.objective"
+        type="text"
+        maxlength="500"
+        placeholder="追加一个研究步骤，例如：核对竞品定价"
+        aria-label="追加计划步骤"
+      />
+      <select v-model="newStep.action" aria-label="计划动作">
+        <option value="SEARCH_INTERNAL">项目资料</option>
+        <option value="SEARCH_GRAPH">知识图谱</option>
+        <option value="SEARCH_WEB">外部搜索</option>
+        <option value="SYNTHESIZE">整理结论</option>
+      </select>
+      <input
+        v-model="newStep.query"
+        type="text"
+        maxlength="2000"
+        placeholder="查询语句（可选）"
+        aria-label="计划查询语句"
+      />
+      <button
+        class="button button-primary button-sm"
+        type="submit"
+        :disabled="planSaving || !newStep.objective.trim()"
+      >
+        <Plus :size="14" />追加
+      </button>
     </form>
   </section>
 </template>
@@ -348,17 +450,93 @@ function exportSummary() {
   gap: 0.9375rem;
   align-items: start;
 }
-.run-plan-panel { margin-top: 0.9375rem; }
-.run-plan-panel h2 { display:flex; align-items:center; gap:.375rem; margin:0; color:var(--workspace-text); font-size:.875rem; }
-.run-plan-panel h2 small { color:var(--teal-dark); font-size:.7rem; font-weight:500; }
-.run-plan-panel p { margin:.3125rem 0 0; color:var(--workspace-muted); font-size:.75rem; }
-.run-plan-list { display:grid; gap:.5rem; padding:0 1.25rem 1rem; }
-.run-plan-step { display:flex; align-items:center; gap:.625rem; padding:.625rem .75rem; border:.0625rem solid var(--workspace-divider); border-radius:.5rem; background:var(--surface-soft); }
-.run-plan-step > span { display:grid; place-items:center; width:1.5rem; height:1.5rem; flex:0 0 auto; border-radius:50%; color:var(--teal-dark); background:color-mix(in oklab,var(--teal) 14%,var(--surface)); font-size:.7rem; }
-.run-plan-step div { display:grid; min-width:0; gap:.2rem; }.run-plan-step strong { color:var(--workspace-text); font-size:.75rem; }.run-plan-step small { overflow:hidden; color:var(--workspace-muted); font-size:.7rem; text-overflow:ellipsis; white-space:nowrap; }
-.run-plan-form { display:grid; grid-template-columns:1.1fr 8rem 1.1fr auto; gap:.5rem; padding:1rem 1.25rem; border-top:.0625rem solid var(--workspace-divider); background:var(--surface-soft); }
-.run-plan-form input,.run-plan-form select { min-width:0; padding:.5rem .625rem; border:.0625rem solid var(--workspace-border); border-radius:.4375rem; color:var(--workspace-text); background:var(--surface); font:inherit; font-size:.75rem; outline:0; }
-@media (max-width:47.5rem) { .run-plan-form { grid-template-columns:1fr; } }
+.run-plan-panel {
+  margin-top: 0.9375rem;
+}
+.run-plan-panel h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin: 0;
+  color: var(--workspace-text);
+  font-size: 0.875rem;
+}
+.run-plan-panel h2 small {
+  color: var(--teal-dark);
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+.run-plan-panel p {
+  margin: 0.3125rem 0 0;
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+}
+.run-plan-list {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0 1.25rem 1rem;
+}
+.run-plan-step {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.625rem 0.75rem;
+  border: 0.0625rem solid var(--workspace-divider);
+  border-radius: 0.5rem;
+  background: var(--surface-soft);
+}
+.run-plan-step > span {
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  color: var(--teal-dark);
+  background: color-mix(in oklab, var(--teal) 14%, var(--surface));
+  font-size: 0.7rem;
+}
+.run-plan-step div {
+  display: grid;
+  min-width: 0;
+  gap: 0.2rem;
+}
+.run-plan-step strong {
+  color: var(--workspace-text);
+  font-size: 0.75rem;
+}
+.run-plan-step small {
+  overflow: hidden;
+  color: var(--workspace-muted);
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-plan-form {
+  display: grid;
+  grid-template-columns: 1.1fr 8rem 1.1fr auto;
+  gap: 0.5rem;
+  padding: 1rem 1.25rem;
+  border-top: 0.0625rem solid var(--workspace-divider);
+  background: var(--surface-soft);
+}
+.run-plan-form input,
+.run-plan-form select {
+  min-width: 0;
+  padding: 0.5rem 0.625rem;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.4375rem;
+  color: var(--workspace-text);
+  background: var(--surface);
+  font: inherit;
+  font-size: 0.75rem;
+  outline: 0;
+}
+@media (max-width: 47.5rem) {
+  .run-plan-form {
+    grid-template-columns: 1fr;
+  }
+}
 .timeline-panel,
 .event-panel,
 .evidence-panel {

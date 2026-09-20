@@ -22,7 +22,9 @@ def sanitize_untrusted_text(value: Any, *, max_chars: int = 12_000) -> str:
     return escape(text, quote=True)
 
 
-def render_evidence_context(items: list[dict[str, Any]], *, max_chars: int = 18_000) -> str:
+def render_evidence_context(
+    items: list[dict[str, Any]], *, max_chars: int = 18_000
+) -> str:
     """Render evidence with stable IDs and an explicit untrusted boundary."""
 
     sections: list[str] = [
@@ -32,7 +34,10 @@ def render_evidence_context(items: list[dict[str, Any]], *, max_chars: int = 18_
     used = sum(len(item) for item in sections)
     for item in items:
         evidence_id = sanitize_untrusted_text(item.get("id", "unknown"), max_chars=80)
-        source = sanitize_untrusted_text(item.get("source_name") or item.get("sourceName") or "unknown", max_chars=160)
+        source = sanitize_untrusted_text(
+            item.get("source_name") or item.get("sourceName") or "unknown",
+            max_chars=160,
+        )
         content = sanitize_untrusted_text(item.get("content"), max_chars=4_000)
         block = f'<evidence id="{evidence_id}" source="{source}">{content}</evidence>'
         if used + len(block) + 1 > max_chars:

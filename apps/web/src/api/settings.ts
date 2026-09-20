@@ -57,8 +57,18 @@ export interface LocalToolSpec {
 
 export interface LocalFileToolsStatus {
   supportedExtensions: string[];
-  ocr: { enabled: boolean; tesseract: boolean; poppler: boolean; languages?: string | null };
-  media: { ffmpeg: boolean; ffprobe: boolean; whisper: boolean; model?: string | null };
+  ocr: {
+    enabled: boolean;
+    tesseract: boolean;
+    poppler: boolean;
+    languages?: string | null;
+  };
+  media: {
+    ffmpeg: boolean;
+    ffprobe: boolean;
+    whisper: boolean;
+    model?: string | null;
+  };
   office: { libreoffice: boolean };
 }
 
@@ -66,7 +76,12 @@ export interface LocalToolsStatus {
   tools: LocalToolSpec[];
   async: boolean;
   chains: boolean;
-  custom: { directory: string; modules: string[]; tools: string[]; errors: string[] };
+  custom: {
+    directory: string;
+    modules: string[];
+    tools: string[];
+    errors: string[];
+  };
   files: LocalFileToolsStatus;
 }
 
@@ -92,7 +107,11 @@ export const settingsApi = {
           payload,
         ),
       ),
-    update: (workspaceId: number | string, id: number | string, payload: Record<string, unknown>) =>
+    update: (
+      workspaceId: number | string,
+      id: number | string,
+      payload: Record<string, unknown>,
+    ) =>
       unwrap<ProjectModelConfig>(
         anet.patch<ApiResponse<ProjectModelConfig>>(
           `${workspaceModelPath(workspaceId)}/${id}`,
@@ -107,23 +126,52 @@ export const settingsApi = {
       ),
     test: (workspaceId: number | string, id: number | string) =>
       unwrap<{ status: string; model?: string; latencyMs?: number }>(
-        anet.post<ApiResponse<{ status: string; model?: string; latencyMs?: number }>>(
-          `${workspaceModelPath(workspaceId)}/${id}/test`,
-        ),
+        anet.post<
+          ApiResponse<{ status: string; model?: string; latencyMs?: number }>
+        >(`${workspaceModelPath(workspaceId)}/${id}/test`),
       ),
     context: (workspaceId: number | string, id: number | string) =>
-      unwrap<{ status: string; available?: boolean; model?: string; contextWindow?: number; source?: string; detail?: string; latencyMs?: number }>(
-        anet.post<ApiResponse<{ status: string; available?: boolean; model?: string; contextWindow?: number; source?: string; detail?: string; latencyMs?: number }>>(
-          `${workspaceModelPath(workspaceId)}/${id}/context`,
-        ),
+      unwrap<{
+        status: string;
+        available?: boolean;
+        model?: string;
+        contextWindow?: number;
+        source?: string;
+        detail?: string;
+        latencyMs?: number;
+      }>(
+        anet.post<
+          ApiResponse<{
+            status: string;
+            available?: boolean;
+            model?: string;
+            contextWindow?: number;
+            source?: string;
+            detail?: string;
+            latencyMs?: number;
+          }>
+        >(`${workspaceModelPath(workspaceId)}/${id}/context`),
       ),
     testEmbedding: (workspaceId: number | string, id: number | string) =>
-      unwrap<{ status: string; model?: string; dimension?: number; latencyMs?: number }>(
-        anet.post<ApiResponse<{ status: string; model?: string; dimension?: number; latencyMs?: number }>>(
-          `${workspaceModelPath(workspaceId)}/${id}/test-embedding`,
-        ),
+      unwrap<{
+        status: string;
+        model?: string;
+        dimension?: number;
+        latencyMs?: number;
+      }>(
+        anet.post<
+          ApiResponse<{
+            status: string;
+            model?: string;
+            dimension?: number;
+            latencyMs?: number;
+          }>
+        >(`${workspaceModelPath(workspaceId)}/${id}/test-embedding`),
       ),
-    setDefault: (workspaceId: number | string, modelId: number | string | null) =>
+    setDefault: (
+      workspaceId: number | string,
+      modelId: number | string | null,
+    ) =>
       unwrap<ProjectModelConfig[]>(
         anet.put<ApiResponse<ProjectModelConfig[]>>(
           `${workspaceModelPath(workspaceId)}/default`,
@@ -161,7 +209,11 @@ export const settingsApi = {
           payload,
         ),
       ),
-    remove: (workspaceId: number | string, projectId: number, id: number | string) =>
+    remove: (
+      workspaceId: number | string,
+      projectId: number,
+      id: number | string,
+    ) =>
       unwrap<void>(
         anet.delete<ApiResponse<void>>(
           `${settingsPath(workspaceId, projectId)}/tools/${id}`,
@@ -201,10 +253,20 @@ export const settingsApi = {
         ),
       ),
     test: (workspaceId: number | string, projectId: number) =>
-      unwrap<{ status: string; provider?: string; resultCount?: number; latencyMs?: number }>(
-        anet.post<ApiResponse<{ status: string; provider?: string; resultCount?: number; latencyMs?: number }>>(
-          `${settingsPath(workspaceId, projectId)}/web-search/test`,
-        ),
+      unwrap<{
+        status: string;
+        provider?: string;
+        resultCount?: number;
+        latencyMs?: number;
+      }>(
+        anet.post<
+          ApiResponse<{
+            status: string;
+            provider?: string;
+            resultCount?: number;
+            latencyMs?: number;
+          }>
+        >(`${settingsPath(workspaceId, projectId)}/web-search/test`),
       ),
   },
 };

@@ -86,6 +86,7 @@ public class AgentService {
 
         AgentMessage userMessage = message(thread.getId(), messageKey + "-user", "USER", content, "COMPLETED", request.getAttachments());
         AgentMessage assistantMessage = message(thread.getId(), messageKey, "ASSISTANT", "", "STREAMING", List.of());
+        assistantMessage.setModelName(shortText(clean(request.getModelName()), 300));
         mapper.insertMessage(userMessage);
         mapper.insertMessage(assistantMessage);
 
@@ -118,6 +119,9 @@ public class AgentService {
                 item.put("id", message.getClientMessageId());
                 item.put("role", "ASSISTANT".equalsIgnoreCase(message.getRole()) ? "assistant" : "user");
                 item.put("content", message.getContent());
+                if (message.getModelName() != null && !message.getModelName().isBlank()) {
+                    item.put("modelName", message.getModelName());
+                }
                 item.put("status", "FAILED".equalsIgnoreCase(message.getStatus()) ? "failed" : "completed");
                 item.put("createdAt", message.getCreatedAt());
                 try {

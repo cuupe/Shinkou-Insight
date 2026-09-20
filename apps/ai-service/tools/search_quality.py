@@ -21,6 +21,7 @@ progress development developments related news work technical implementation""".
 _ZH_STOP = WEB_SEARCH_STOPWORDS | {
     "当前", "相关", "进展", "动态", "消息", "整理", "总结", "研究", "官方", "发布",
     "今天", "今日", "本周", "本月", "今年", "近期", "过去",
+    "梳理", "报告", "内容", "全面", "详细", "情况", "现状", "概况", "一份", "一个", "给我",
 }
 _ALIASES = (
     ("人工智能", "artificial intelligence", "ai"),
@@ -89,9 +90,33 @@ def topic_score(query: str, text: str) -> float:
     return coverage if max(scores) >= 0.6 and coverage >= 0.5 else 0.0
 
 
+def filter_relevant_evidence(
+    query: str, items: list[Evidence | dict[str, object]]
+) -> list[Evidence]:
+    """Drop retrieved rows whose source content does not answer the query."""
+
+    relevant: list[Evidence] = []
+    for raw in items:
+        try:
+            item = Evidence.model_validate(raw)
+        except Exception:
+            continue
+        searchable = "\n".join(
+            value
+            for value in (item.source_name, item.section_title or "", item.content)
+            if value
+        )
+        if topic_score(query, searchable) > 0:
+            relevant.append(item)
+    return relevant
+
+
 def focused_query(query: str) -> str:
     """Keep subject/time constraints without injecting unrelated years or keywords."""
     text = re.sub(r"^(?:请帮我|请问|帮我|请|联网|搜索|查一下|搜一下|整理|总结)[：:\s]*", "", query.strip())
+    text = re.sub(r"^(?:梳理|归纳)(?:一下)?[：:\s]*", "", text)
+    text = re.sub(r"[，,、；;]\s*(?:整理|总结)(?:一个|一份)?(?:报告|总结)?(?:给我)?", "", text)
+    text = re.sub(r"[，,、；;]\s*(?:内容)?要(?:全面|详细|完整).*?$", "", text)
     text = re.sub(r"(?:是什么|有哪些|有吗|吗|呢)[？?。\s]*$", "", text)
     return re.sub(r"\s+", " ", text).strip() or query.strip()
 

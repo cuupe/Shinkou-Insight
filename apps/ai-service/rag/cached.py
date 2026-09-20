@@ -10,7 +10,9 @@ from rag.retriever import Retriever
 class CachedRetriever:
     """Project/version scoped retrieval cache with complete query fingerprint."""
 
-    def __init__(self, base: Retriever, cache: CacheService, *, ttl_seconds: int) -> None:
+    def __init__(
+        self, base: Retriever, cache: CacheService, *, ttl_seconds: int
+    ) -> None:
         self.base = base
         self.cache = cache
         self.ttl_seconds = ttl_seconds
@@ -38,9 +40,17 @@ class CachedRetriever:
             "embeddingModel": getattr(embedding, "model_name", None),
             "embeddingDimension": getattr(embedding, "dimension", None),
         }
+
         async def load() -> list[dict[str, Any]]:
             result = await self.base.retrieve(**kwargs)
-            return [item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item) for item in result]
+            return [
+                (
+                    item.model_dump(mode="json")
+                    if hasattr(item, "model_dump")
+                    else dict(item)
+                )
+                for item in result
+            ]
 
         value, _ = await self.cache.get_or_set(
             "retrieval",

@@ -35,7 +35,8 @@ const { isPhone, isCode, isCaptcha } = useAuth();
 const step = ref<"account" | "verify" | "reset">("account");
 const account = ref("");
 const code = ref("");
-const captcha = ref(""); const captchaId = ref("");
+const captcha = ref("");
+const captchaId = ref("");
 const captchaError = ref("");
 const password = ref("");
 const confirmPassword = ref("");
@@ -104,7 +105,8 @@ async function sendCode() {
   } catch (error) {
     status.value = {
       type: "error",
-      message: error instanceof Error ? error.message : "验证码发送失败，请稍后重试",
+      message:
+        error instanceof Error ? error.message : "验证码发送失败，请稍后重试",
     };
   }
 }
@@ -148,7 +150,8 @@ async function reset() {
   } catch (error) {
     status.value = {
       type: "error",
-      message: error instanceof Error ? error.message : "密码重置失败，请稍后重试",
+      message:
+        error instanceof Error ? error.message : "密码重置失败，请稍后重试",
     };
   }
 }
@@ -203,7 +206,8 @@ async function reset() {
           ><FieldDescription v-if="expired"
             >验证码已过期，请重新获取。</FieldDescription
           ><FieldDescription v-else
-            >验证码 5 分钟内有效。</FieldDescription></Field
+            >验证码 5 分钟内有效。</FieldDescription
+          ></Field
         ></FieldGroup
       ><FieldGroup v-else
         ><Field

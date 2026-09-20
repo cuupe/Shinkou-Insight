@@ -33,8 +33,6 @@ import {
   InputOTPSlot,
 } from "@/components/ui/input-otp";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import Agreement from "@/components/auth/Agreement.vue";
-import AgreementDialog from "@/components/auth/AgreementDialog.vue";
 import ImageCaptcha from "@/components/auth/ImageCaptcha.vue";
 import RecoveryDialog from "@/components/auth/RecoveryDialog.vue";
 import SubmitButton from "@/components/auth/SubmitButton.vue";
@@ -55,7 +53,6 @@ const rememberedPhone = localStorage.getItem("shinkou-login-phone") || "";
 const loginMode = ref("password");
 const showPassword = ref(false);
 const remember = ref(Boolean(rememberedPhone));
-const agreed = ref(false);
 const isSubmitting = ref(false);
 const status = ref<Status | null>(null);
 const errors = ref<Record<string, string>>({});
@@ -65,8 +62,6 @@ const smsCode = ref("");
 const captcha = ref("");
 const captchaId = ref("");
 const recoveryOpen = ref(false);
-const agreementOpen = ref(false);
-const agreementType = ref<"terms" | "privacy">("terms");
 const smsSending = ref(false);
 const {
   codeId: smsId,
@@ -105,9 +100,10 @@ async function submit() {
         : "请先获取短信验证码";
     else if (!isCode(smsCode.value)) next.smsCode = "请输入 6 位短信验证码";
   }
-  if (!isCaptcha(captcha.value)) next.captcha = "请输入图片验证码";
-  if (!captchaId.value) next.captcha = "图片验证码已过期，请点击图片刷新";
-  if (!agreed.value) next.agreement = "请先同意用户协议和隐私政策";
+  if (loginMode.value === "password") {
+    if (!isCaptcha(captcha.value)) next.captcha = "请输入图片验证码";
+    if (!captchaId.value) next.captcha = "图片验证码已过期，请点击图片刷新";
+  }
   errors.value = next;
   if (Object.keys(next).length) {
     status.value = {
@@ -132,8 +128,6 @@ async function submit() {
         phoneNumber: phone.value,
         verifyCode: smsCode.value,
         verifyCodeId: smsId.value,
-        captcha: captcha.value,
-        captchaId: captchaId.value,
       });
 
       if (!response) throw new ApiError("短信登录失败", "AUTH_LOGIN_FAILED");
@@ -232,8 +226,6 @@ async function sendSms() {
     const response = await api.auth.sms({
       phoneNumber: phone.value.trim(),
       purpose: "LOGIN",
-      captchaId: captchaId.value,
-      captcha: captcha.value,
     });
     if (!response.smsId) {
       throw new ApiError("短信验证码发送失败，请稍后重试。", "SMS_ID_MISSING");
@@ -256,10 +248,6 @@ async function sendSms() {
   } finally {
     smsSending.value = false;
   }
-}
-function openAgreement(type: "terms" | "privacy") {
-  agreementType.value = type;
-  agreementOpen.value = true;
 }
 </script>
 
@@ -293,12 +281,18 @@ function openAgreement(type: "terms" | "privacy") {
             >验证码登录</TabsTrigger
           ></TabsList
         ><TabsContent value="password"
-          ><form class="flex flex-col gap-5" @submit.prevent="submit">
+          ><form
+            class="flex flex-col gap-5"
+            method="post"
+            autocomplete="on"
+            @submit.prevent="submit"
+          >
             <FieldGroup
               ><Field :data-invalid="!!errors.phone"
                 ><FieldLabel for="login-phone-password">手机号</FieldLabel
                 ><Input
                   id="login-phone-password"
+                  name="username"
                   v-model="phone"
                   type="tel"
                   autocomplete="tel"
@@ -322,6 +316,7 @@ function openAgreement(type: "terms" | "privacy") {
                 <div class="relative">
                   <Input
                     id="login-password"
+                    name="password"
                     v-model="password"
                     :type="showPassword ? 'text' : 'password'"
                     autocomplete="current-password"
@@ -348,11 +343,6 @@ function openAgreement(type: "terms" | "privacy") {
               v-model:captcha-id="captchaId"
               :error="errors.captcha"
               @refresh="refreshCaptcha"
-            /><Agreement
-              id="login-agreement"
-              v-model="agreed"
-              :error="errors.agreement"
-              @open="openAgreement"
             /><Field orientation="horizontal" class="items-center gap-2"
               ><Checkbox id="remember-password" v-model="remember" /><FieldLabel
                 for="remember-password"
@@ -411,18 +401,7 @@ function openAgreement(type: "terms" | "privacy") {
                   errors.smsCode
                 }}</FieldError></Field
               ></FieldGroup
-            ><ImageCaptcha
-              id="login-sms-captcha"
-              v-model="captcha"
-              v-model:captcha-id="captchaId"
-              :error="errors.captcha"
-              @refresh="refreshCaptcha"
-            /><Agreement
-              id="sms-agreement"
-              v-model="agreed"
-              :error="errors.agreement"
-              @open="openAgreement"
-            /><SubmitButton :loading="isSubmitting">登录</SubmitButton>
+            ><SubmitButton :loading="isSubmitting">登录</SubmitButton>
           </form></TabsContent
         ></Tabs
       ></CardContent
@@ -435,8 +414,5 @@ function openAgreement(type: "terms" | "privacy") {
         >
       </div></CardFooter
     ></Card
-  ><RecoveryDialog v-model:open="recoveryOpen" :phone="phone" /><AgreementDialog
-    v-model:open="agreementOpen"
-    :type="agreementType"
-  />
+  ><RecoveryDialog v-model:open="recoveryOpen" :phone="phone" />
 </template>

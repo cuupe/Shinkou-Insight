@@ -119,7 +119,6 @@ const { mobileOpen } = useWorkspace();
     padding: 1rem 0.75rem 1.5rem;
   }
 }
-
 </style>
 <style>
 @media (max-width: 68.75rem) {
@@ -786,8 +785,13 @@ const { mobileOpen } = useWorkspace();
   overflow: visible;
 }
 
-.app-shell .page-content:has(> .evaluation-dashboard-grid) > .evaluation-dashboard-grid,
-.app-shell .page-content:has(> .evaluation-dashboard-grid) .evaluation-dashboard-grid > .panel {
+.app-shell
+  .page-content:has(> .evaluation-dashboard-grid)
+  > .evaluation-dashboard-grid,
+.app-shell
+  .page-content:has(> .evaluation-dashboard-grid)
+  .evaluation-dashboard-grid
+  > .panel {
   overflow: visible;
 }
 
@@ -1261,7 +1265,11 @@ const { mobileOpen } = useWorkspace();
 
 .dark .app-shell .asset-table-panel {
   --asset-status-indexed-text: #68e1d0;
-  --asset-status-indexed-bg: color-mix(in oklab, var(--teal) 16%, var(--surface));
+  --asset-status-indexed-bg: color-mix(
+    in oklab,
+    var(--teal) 16%,
+    var(--surface)
+  );
   --asset-status-indexing-text: #f2bd69;
   --asset-status-indexing-bg: #3b3021;
   --asset-status-failed-text: #ffaaa8;

@@ -549,6 +549,33 @@ async def test_chat_plan_and_solve_path_executes_plan_steps():
     plan_steps = [event for event in events if event.event_type == "node.completed" and event.payload.get("node") == "PLAN"]
     assert plan_steps
     assert any(event.payload.get("strategy") == "PLAN_AND_SOLVE" for event in plan_steps)
+    assert any(
+        str(event.payload.get("modelFeedback") or "").strip()
+        for event in plan_steps
+    )
+
+
+@pytest.mark.asyncio
+async def test_plan_and_solve_honors_enabled_web_search_for_current_questions():
+    web_search = RecordingWebSearch()
+    runtime, repository = make_runtime(web_search=web_search)
+    request = ExecuteRunRequest(
+        run_id="chat-plan-web-1",
+        workspace_id=1,
+        project_id=1,
+        goal="梳理当前光伏产业的情况并给出报告",
+        agent_message_id="message-plan-web-1",
+        config=ResearchConfig(strategy="PLAN_AND_SOLVE", allow_web_search=True, reflection_enabled=False),
+    )
+
+    await runtime.execute(request)
+
+    assert web_search.queries == ["当前光伏产业的情况并给出报告"]
+    events = repository.list_events(request.run_id)
+    assert any(
+        event.event_type == "node.started" and event.payload.get("node") == "SEARCH_WEB"
+        for event in events
+    )
     assert any(event.event_type == "evidence.added" for event in events)
 
 
@@ -680,7 +707,7 @@ async def test_chat_reuses_previous_question_for_permission_follow_up():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["empty", "snippet", "irrelevant", "stale", "failed"])
-async def test_web_summary_never_falls_back_to_model_memory_when_evidence_fails(mode):
+async def test_web_summary_degrades_to_a_reviewable_draft_when_evidence_fails(mode):
     class Search:
         async def search(self, query, top_k=5):
             if mode == "empty":
@@ -705,9 +732,14 @@ async def test_web_summary_never_falls_back_to_model_memory_when_evidence_fails(
     await runtime.execute(request)
     run = repository.get(request.run_id)
     assert run.status == "COMPLETED"
-    assert "不能给出可核验的总结" in run.report["answer"]
-    assert model.chat_calls == 0
+    assert "不能给出可核验的总结" not in run.report["answer"]
+    assert model.chat_calls == 1
     assert model.structured_calls == 0
+    assert any(
+        "外部联网检索本轮没有取得" in message["content"]
+        for batch in model.chat_messages
+        for message in batch
+    )
     deltas = [event.payload["delta"] for event in repository.list_events(request.run_id) if event.event_type == "message.delta"]
     assert "".join(deltas) == run.report["answer"]
 

@@ -28,10 +28,7 @@ import { evaluationApi } from "@/api/evaluation";
 import { authApi } from "@/api/auth";
 import { workspaceApi } from "@/api/workspace";
 import { statisticsApi } from "@/api/statistics";
-import {
-  getLastProjectId,
-  rememberLastProject,
-} from "@/utils/lastProject";
+import { getLastProjectId, rememberLastProject } from "@/utils/lastProject";
 import { formatDateTime } from "@/lib/utils";
 import type {
   AuthUser,
@@ -172,7 +169,9 @@ function mapRemoteAsset(asset: KnowledgeAsset) {
     id: String(asset.id),
     name: asset.name,
     type: String(asset.assetType || "FILE"),
-    size: asset.fileSize ? `${Math.round(Number(asset.fileSize) / 1024)} KB` : "—",
+    size: asset.fileSize
+      ? `${Math.round(Number(asset.fileSize) / 1024)} KB`
+      : "—",
     uploader: "—",
     updated: formatDateTime(asset.updatedAt, "—"),
     chunks: Number(asset.chunkCount || 0),
@@ -200,9 +199,10 @@ function runDisplayFields(run: ResearchRun) {
   const durationSeconds = Number(run.durationSeconds);
   const tokenCount = Number(run.tokenCount);
   return {
-    duration: Number.isFinite(durationSeconds) && durationSeconds >= 0
-      ? `${Math.floor(durationSeconds / 60)}m ${durationSeconds % 60}s`
-      : "暂无",
+    duration:
+      Number.isFinite(durationSeconds) && durationSeconds >= 0
+        ? `${Math.floor(durationSeconds / 60)}m ${durationSeconds % 60}s`
+        : "暂无",
     tokens: Number.isFinite(tokenCount) ? tokenCount.toLocaleString() : "暂无",
   };
 }
@@ -211,14 +211,20 @@ function reportDisplayFields(report: Record<string, unknown>) {
   return {
     version: report.versionNo != null ? `v${String(report.versionNo)}` : "暂无",
     lead: String(report.lead || ""),
-    summary: String(report.summary ?? report.markdownContent ?? report.content ?? ""),
+    summary: String(
+      report.summary ?? report.markdownContent ?? report.content ?? "",
+    ),
     recommendation: String(report.recommendation || ""),
     recommendationDetail: String(report.recommendationDetail || ""),
   };
 }
 
 /* 后端 ResearchRun → 页面展示结构 */
-function mapRemoteRun(run: ResearchRun, projectName = "", owningProjectId?: number): RecentRunRow {
+function mapRemoteRun(
+  run: ResearchRun,
+  projectName = "",
+  owningProjectId?: number,
+): RecentRunRow {
   const status = String(run.status || "PENDING").toLowerCase();
   return {
     id: String(run.id ?? "—"),
@@ -242,7 +248,8 @@ function mapRemoteActionItem(item: Record<string, unknown>): ActionItemRow {
     ownerId: item.ownerId == null ? undefined : Number(item.ownerId),
     owner: String(item.owner || "未分配"),
     due: String(item.dueAt || "待安排"),
-    priority: rawPriority === "HIGH" ? "高" : rawPriority === "LOW" ? "低" : "中",
+    priority:
+      rawPriority === "HIGH" ? "高" : rawPriority === "LOW" ? "低" : "中",
     status:
       rawStatus === "DONE"
         ? "done"
@@ -254,7 +261,11 @@ function mapRemoteActionItem(item: Record<string, unknown>): ActionItemRow {
   };
 }
 
-function mapRemoteReport(report: Record<string, unknown>, projectName = "", owningProjectId?: number): ReportRow {
+function mapRemoteReport(
+  report: Record<string, unknown>,
+  projectName = "",
+  owningProjectId?: number,
+): ReportRow {
   const status = String(report.status || "DRAFT").toUpperCase();
   return {
     id: String(report.id ?? "—"),
@@ -268,7 +279,9 @@ function mapRemoteReport(report: Record<string, unknown>, projectName = "", owni
   };
 }
 
-function mapRemoteEvaluationCase(item: Record<string, unknown>): EvaluationCaseRow {
+function mapRemoteEvaluationCase(
+  item: Record<string, unknown>,
+): EvaluationCaseRow {
   return {
     id: String(item.id ?? "—"),
     projectId: item.projectId == null ? undefined : Number(item.projectId),
@@ -306,13 +319,12 @@ export function useWorkspace() {
     String(route.name || "workspace-dashboard"),
   );
   const isProject = computed(() => currentName.value.startsWith("project-"));
-  const selectedProject = computed(
-    () =>
-      projectId.value > 0
-        ? projectList.find((item) => item.id === projectId.value)
-        : projectList.find(
-            (item) => item.id === getLastProjectId(workspaceId.value),
-          ) || projectList[0],
+  const selectedProject = computed(() =>
+    projectId.value > 0
+      ? projectList.find((item) => item.id === projectId.value)
+      : projectList.find(
+          (item) => item.id === getLastProjectId(workspaceId.value),
+        ) || projectList[0],
   );
   const filteredAssets = computed(() =>
     assets.filter((asset) => {
@@ -365,15 +377,21 @@ export function useWorkspace() {
         projectId.value > 0
           ? statisticsApi.project(workspaceId.value, projectId.value)
           : statisticsApi.workspace(workspaceId.value);
-      const [me, remoteWorkspace, remoteWorkspaces, remoteProjects, remoteEvaluations, remoteStatistics] =
-        await Promise.all([
-          authApi.me(),
-          workspaceApi.detail(workspaceId.value),
-          workspaceApi.list(),
-          projectApi.list(workspaceId.value),
-          evaluationApi.list(workspaceId.value),
-          statisticsRequest,
-        ]);
+      const [
+        me,
+        remoteWorkspace,
+        remoteWorkspaces,
+        remoteProjects,
+        remoteEvaluations,
+        remoteStatistics,
+      ] = await Promise.all([
+        authApi.me(),
+        workspaceApi.detail(workspaceId.value),
+        workspaceApi.list(),
+        projectApi.list(workspaceId.value),
+        evaluationApi.list(workspaceId.value),
+        statisticsRequest,
+      ]);
 
       currentUser.value = me;
       statistics.value = remoteStatistics;
@@ -385,7 +403,9 @@ export function useWorkspace() {
       workspace.name = String(remoteWorkspace.name || "");
       workspace.description = String(remoteWorkspace.description || "");
       workspace.slug = String(remoteWorkspace.code || "");
-      workspace.currentRole = String(remoteWorkspace.currentRole || "").toUpperCase();
+      workspace.currentRole = String(
+        remoteWorkspace.currentRole || "",
+      ).toUpperCase();
       workspace.plan = String(remoteWorkspace.plan || "");
       workspace.initials =
         String(remoteWorkspace.initials || "").trim() ||
@@ -402,10 +422,13 @@ export function useWorkspace() {
             ]);
           return {
             project,
-            assets: assetsResult.status === "fulfilled" ? assetsResult.value : [],
+            assets:
+              assetsResult.status === "fulfilled" ? assetsResult.value : [],
             runs: runsResult.status === "fulfilled" ? runsResult.value : [],
-            reports: reportsResult.status === "fulfilled" ? reportsResult.value : [],
-            actions: actionsResult.status === "fulfilled" ? actionsResult.value : [],
+            reports:
+              reportsResult.status === "fulfilled" ? reportsResult.value : [],
+            actions:
+              actionsResult.status === "fulfilled" ? actionsResult.value : [],
           };
         }),
       );
@@ -413,14 +436,21 @@ export function useWorkspace() {
       projectList.splice(
         0,
         projectList.length,
-        ...projectData.map(({ project, assets: projectAssets, runs, reports: projectReports }) => ({
-          ...project,
-          description: project.description || "",
-          assets: projectAssets.length,
-          runs: runs.length,
-          reports: projectReports.length,
-          color: String(project.color || "#15b8a6"),
-        })),
+        ...projectData.map(
+          ({
+            project,
+            assets: projectAssets,
+            runs,
+            reports: projectReports,
+          }) => ({
+            ...project,
+            description: project.description || "",
+            assets: projectAssets.length,
+            runs: runs.length,
+            reports: projectReports.length,
+            color: String(project.color || "#15b8a6"),
+          }),
+        ),
       );
 
       // Project pages must always carry a real project ID. When navigation
@@ -429,8 +459,8 @@ export function useWorkspace() {
       // sentinel -1 from reaching project-scoped requests.
       const lastProjectId = getLastProjectId(workspaceId.value);
       const projectToOpen =
-        projectData.find(({ project }) => project.id === lastProjectId)?.project ||
-        projectData[0]?.project;
+        projectData.find(({ project }) => project.id === lastProjectId)
+          ?.project || projectData[0]?.project;
       if (isProject.value && projectId.value <= 0 && projectToOpen) {
         await router.replace({
           name: currentName.value,
@@ -455,8 +485,11 @@ export function useWorkspace() {
       const dashboardRuns = projectData.flatMap(({ project, runs }) =>
         runs.map((run) => mapRemoteRun(run, project.name, project.id)),
       );
-      const dashboardReports = projectData.flatMap(({ project, reports: projectReports }) =>
-        projectReports.map((report) => mapRemoteReport(report, project.name, project.id)),
+      const dashboardReports = projectData.flatMap(
+        ({ project, reports: projectReports }) =>
+          projectReports.map((report) =>
+            mapRemoteReport(report, project.name, project.id),
+          ),
       );
       const selectedAssets = currentProjectData?.assets || [];
       const selectedActions = currentProjectData?.actions || [];
@@ -473,7 +506,13 @@ export function useWorkspace() {
         0,
         recentRuns.length,
         ...(projectId.value > 0
-          ? selectedRuns.map((run) => mapRemoteRun(run, currentProjectData?.project.name, projectId.value))
+          ? selectedRuns.map((run) =>
+              mapRemoteRun(
+                run,
+                currentProjectData?.project.name,
+                projectId.value,
+              ),
+            )
           : dashboardRuns),
       );
       reports.splice(
@@ -481,7 +520,11 @@ export function useWorkspace() {
         reports.length,
         ...(projectId.value > 0
           ? selectedReports.map((report) =>
-              mapRemoteReport(report, currentProjectData?.project.name, projectId.value),
+              mapRemoteReport(
+                report,
+                currentProjectData?.project.name,
+                projectId.value,
+              ),
             )
           : dashboardReports),
       );
@@ -607,22 +650,30 @@ export function useWorkspace() {
       },
       {
         label: "知识库",
-        value: String(summary?.assetCount ?? sum((project) => Number(project.assets))),
+        value: String(
+          summary?.assetCount ?? sum((project) => Number(project.assets)),
+        ),
         trend: summary ? `${summary.indexedAssetCount} 个已索引` : "数据加载中",
         icon: "layers",
         tone: "violet",
       },
       {
         label: "调研运行",
-        value: String(summary?.runCount ?? sum((project) => Number(project.runs))),
+        value: String(
+          summary?.runCount ?? sum((project) => Number(project.runs)),
+        ),
         trend: summary ? `${summary.runningRunCount} 个运行中` : "数据加载中",
         icon: "activity",
         tone: "amber",
       },
       {
         label: "调研报告",
-        value: String(summary?.reportCount ?? sum((project) => Number(project.reports))),
-        trend: summary ? `${summary.publishedReportCount} 份已发布` : "数据加载中",
+        value: String(
+          summary?.reportCount ?? sum((project) => Number(project.reports)),
+        ),
+        trend: summary
+          ? `${summary.publishedReportCount} 份已发布`
+          : "数据加载中",
         icon: "check",
         tone: "blue",
       },
@@ -635,15 +686,13 @@ export function useWorkspace() {
       currentUser.value?.phoneNumber ||
       "当前用户",
   );
-  const currentWorkspaceRole = computed(
-    () =>
-      String(
-        availableWorkspaces.find(
-          (item) => String(item.id) === workspaceId.value,
-        )?.currentRole ||
-          workspace.currentRole ||
-          "MEMBER",
-      ).toUpperCase(),
+  const currentWorkspaceRole = computed(() =>
+    String(
+      availableWorkspaces.find((item) => String(item.id) === workspaceId.value)
+        ?.currentRole ||
+        workspace.currentRole ||
+        "MEMBER",
+    ).toUpperCase(),
   );
   const isWorkspaceAdmin = computed(() =>
     ["OWNER", "ADMIN"].includes(currentWorkspaceRole.value),
@@ -657,7 +706,10 @@ export function useWorkspace() {
 
   function switchWorkspace(targetId: number | string) {
     const nextWorkspaceId = String(targetId).trim();
-    if (!/^\d+$/.test(nextWorkspaceId) || nextWorkspaceId === workspaceId.value) {
+    if (
+      !/^\d+$/.test(nextWorkspaceId) ||
+      nextWorkspaceId === workspaceId.value
+    ) {
       return;
     }
     void router.push({

@@ -79,9 +79,14 @@ def _page_title(soup: BeautifulSoup, fallback: str) -> str:
     return _clean(fallback)[:300] or "网页原文"
 
 
-def _published_date(soup: BeautifulSoup) -> str | None:
+def _published_date(soup: BeautifulSoup, *, include_text: bool = False) -> str | None:
     values: list[str] = []
-    for node in soup.select("meta[property='article:published_time'],meta[itemprop='datePublished'],meta[name='pubdate'],meta[name='publishdate'],meta[name='date'],time[itemprop='datePublished'],article time[datetime]"):
+    for node in soup.select(
+        "meta[property='article:published_time'],meta[property='article:modified_time'],"
+        "meta[itemprop='datePublished'],meta[itemprop='dateModified'],meta[name='pubdate'],"
+        "meta[name='publishdate'],meta[name='date'],meta[name='last-modified'],"
+        "time[itemprop='datePublished'],time[itemprop='dateModified'],time[datetime]"
+    ):
         values.append(str(node.get("content") or node.get("datetime") or node.get_text()))
     for node in soup.select("script[type='application/ld+json']"):
         try:
@@ -96,6 +101,8 @@ def _published_date(soup: BeautifulSoup) -> str | None:
             for obj in objects if isinstance(objects, list) else []:
                 if isinstance(obj, dict) and obj.get("datePublished"):
                     values.append(str(obj["datePublished"]))
+                if isinstance(obj, dict) and obj.get("dateModified"):
+                    values.append(str(obj["dateModified"]))
     for value in values:
         match = re.match(r"\s*(20\d{2})[-/年](\d{1,2})[-/月](\d{1,2})", value)
         if match:
@@ -103,6 +110,22 @@ def _published_date(soup: BeautifulSoup) -> str | None:
                 return date(*map(int, match.groups())).isoformat()
             except ValueError:
                 pass
+    if include_text:
+        visible_text = _clean(soup.get_text(" ", strip=True))[:8_000]
+        values.extend(
+            "-".join(parts)
+            for parts in re.findall(
+                r"(?<!\d)(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})(?:日)?(?!\d)",
+                visible_text,
+            )
+        )
+        for value in values:
+            match = re.match(r"\s*(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})", value)
+            if match:
+                try:
+                    return date(*map(int, match.groups())).isoformat()
+                except ValueError:
+                    pass
     return None
 
 
@@ -121,6 +144,11 @@ def _html_blocks(data: bytes, url: str, fallback_title: str) -> tuple[str, list[
         identity = " ".join([*node.get("class", []), node.get("id", "")])
         if _BOILERPLATE_CLASS.search(identity):
             node.decompose()
+
+    # Retry after isolating the article root so a visible publication date can
+    # be used without accidentally accepting a footer copyright date.
+    if not published_at:
+        published_at = _published_date(root, include_text=True)
 
     blocks: list[str] = []
     for node in root.select("p,blockquote,pre,li,td"):

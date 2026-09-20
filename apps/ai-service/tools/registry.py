@@ -12,7 +12,6 @@ from typing import Any, Awaitable, Callable, Literal
 
 from pydantic import BaseModel, Field
 
-
 logger = logging.getLogger(__name__)
 
 ToolHandler = Callable[..., Any]
@@ -68,7 +67,9 @@ class ToolTask:
     permission: str
     input_data: dict[str, Any]
     status: str = "QUEUED"
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
     started_at: str | None = None
     finished_at: str | None = None
     duration_ms: int | None = None
@@ -118,7 +119,9 @@ class ToolChainTask:
     run_id: str
     steps: list[ToolChainStep]
     status: str = "QUEUED"
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
     started_at: str | None = None
     finished_at: str | None = None
     duration_ms: int | None = None
@@ -140,7 +143,9 @@ class ToolChainTask:
             "steps": list(self.step_states.values()),
         }
         if include_results and self.status == "SUCCEEDED":
-            value["results"] = {key: _json_safe(result) for key, result in self.step_results.items()}
+            value["results"] = {
+                key: _json_safe(result) for key, result in self.step_results.items()
+            }
         return value
 
 
@@ -185,7 +190,9 @@ class ToolRegistry:
         if max_calls is not None:
             self._run_limits[key] = max(1, min(int(max_calls), self._max_calls_per_run))
         if disabled_tools is not None:
-            self._disabled_tools[key] = {str(name) for name in disabled_tools if str(name).strip()}
+            self._disabled_tools[key] = {
+                str(name) for name in disabled_tools if str(name).strip()
+            }
 
     def clear_run(self, run_id: str | int) -> None:
         """Cancel outstanding tasks for a run without blocking the caller."""
@@ -202,12 +209,16 @@ class ToolRegistry:
                 chain.task.cancel()
         self._prune_tasks()
 
-    def register(self, spec: ToolSpec, handler: ToolHandler, *, source: str = "builtin") -> None:
+    def register(
+        self, spec: ToolSpec, handler: ToolHandler, *, source: str = "builtin"
+    ) -> None:
         if spec.name in self._tools:
             raise ValueError(f"Tool already registered: {spec.name}")
         if not callable(handler):
             raise TypeError(f"Tool handler is not callable: {spec.name}")
-        self._tools[spec.name] = RegisteredTool(spec, handler, asyncio.Semaphore(spec.max_concurrency), source)
+        self._tools[spec.name] = RegisteredTool(
+            spec, handler, asyncio.Semaphore(spec.max_concurrency), source
+        )
 
     def has_tool(self, name: str) -> bool:
         return name in self._tools
@@ -215,7 +226,11 @@ class ToolRegistry:
     def remove_source(self, source: str) -> list[str]:
         """Remove only tools from one provider, used for safe custom reloads."""
 
-        removed = [name for name, registered in self._tools.items() if registered.source == source]
+        removed = [
+            name
+            for name, registered in self._tools.items()
+            if registered.source == source
+        ]
         for name in removed:
             self._tools.pop(name, None)
         return removed
@@ -240,14 +255,22 @@ class ToolRegistry:
         ]
 
     def history(self, run_id: str | None = None) -> list[dict[str, Any]]:
-        records = [item for item in self._history if run_id is None or item.run_id == str(run_id)]
+        records = [
+            item
+            for item in self._history
+            if run_id is None or item.run_id == str(run_id)
+        ]
         return [asdict(item) for item in records]
 
-    def get_task(self, call_id: str, *, include_result: bool = False) -> dict[str, Any] | None:
+    def get_task(
+        self, call_id: str, *, include_result: bool = False
+    ) -> dict[str, Any] | None:
         task = self._tasks.get(str(call_id))
         return task.snapshot(include_result=include_result) if task else None
 
-    def get_chain(self, chain_id: str, *, include_results: bool = False) -> dict[str, Any] | None:
+    def get_chain(
+        self, chain_id: str, *, include_results: bool = False
+    ) -> dict[str, Any] | None:
         chain = self._chains.get(str(chain_id))
         return chain.snapshot(include_results=include_results) if chain else None
 
@@ -266,7 +289,9 @@ class ToolRegistry:
     ) -> Any:
         """Execute a tool and wait for its result."""
 
-        registered = self._authorize(name, run_id=run_id, allow_writes=allow_writes, confirmed=confirmed)
+        registered = self._authorize(
+            name, run_id=run_id, allow_writes=allow_writes, confirmed=confirmed
+        )
         _validate_input(registered.spec, input_data)
         call_key = call_id or _new_id("tool")
         self._reserve_call(run_id)
@@ -294,7 +319,9 @@ class ToolRegistry:
     ) -> dict[str, Any]:
         """Queue a tool and return immediately with a stable task handle."""
 
-        registered = self._authorize(name, run_id=run_id, allow_writes=allow_writes, confirmed=confirmed)
+        registered = self._authorize(
+            name, run_id=run_id, allow_writes=allow_writes, confirmed=confirmed
+        )
         call_key = call_id or _new_id("tool")
         if call_key in self._tasks:
             raise ToolCallError(f"Tool call already exists: {call_key}")
@@ -310,8 +337,12 @@ class ToolRegistry:
             step_id=step_id,
         )
         self._tasks[call_key] = task
-        await self._emit(task.run_id, "tool.queued", self._event_payload(task, status="QUEUED"))
-        task.task = asyncio.create_task(self._run_task(task, registered), name=f"shinkou-tool-{call_key}")
+        await self._emit(
+            task.run_id, "tool.queued", self._event_payload(task, status="QUEUED")
+        )
+        task.task = asyncio.create_task(
+            self._run_task(task, registered), name=f"shinkou-tool-{call_key}"
+        )
         self._prune_tasks()
         return task.snapshot()
 
@@ -320,7 +351,9 @@ class ToolRegistry:
 
         return await self.submit_async(name, **kwargs)
 
-    async def wait_task(self, call_id: str, *, timeout: float | None = None) -> dict[str, Any] | None:
+    async def wait_task(
+        self, call_id: str, *, timeout: float | None = None
+    ) -> dict[str, Any] | None:
         task = self._tasks.get(str(call_id))
         if task is None:
             return None
@@ -329,7 +362,9 @@ class ToolRegistry:
             if timeout is None:
                 await waiter
             else:
-                await asyncio.wait_for(waiter, timeout=max(0.01, min(float(timeout), 600)))
+                await asyncio.wait_for(
+                    waiter, timeout=max(0.01, min(float(timeout), 600))
+                )
         return task.snapshot(include_result=True)
 
     async def cancel_task(self, call_id: str) -> dict[str, Any] | None:
@@ -356,19 +391,31 @@ class ToolRegistry:
 
         normalized = _normalize_steps(steps, max_steps=max_steps)
         for step in normalized:
-            self._authorize(step.tool, run_id=run_id, allow_writes=allow_writes, confirmed=confirmed)
+            self._authorize(
+                step.tool, run_id=run_id, allow_writes=allow_writes, confirmed=confirmed
+            )
         chain_key = chain_id or _new_id("chain")
         if chain_key in self._chains:
             raise ToolCallError(f"Tool chain already exists: {chain_key}")
         chain = ToolChainTask(chain_id=chain_key, run_id=str(run_id), steps=normalized)
         chain.step_states = {
-            step.id: {"id": step.id, "tool": step.tool, "status": "QUEUED", "dependsOn": list(step.depends_on)}
+            step.id: {
+                "id": step.id,
+                "tool": step.tool,
+                "status": "QUEUED",
+                "dependsOn": list(step.depends_on),
+            }
             for step in normalized
         }
         self._chains[chain_key] = chain
         await self._emit(chain.run_id, "chain.queued", self._chain_payload(chain))
         chain.task = asyncio.create_task(
-            self._run_chain(chain, allow_writes=allow_writes, confirmed=confirmed, timeout_seconds=timeout_seconds),
+            self._run_chain(
+                chain,
+                allow_writes=allow_writes,
+                confirmed=confirmed,
+                timeout_seconds=timeout_seconds,
+            ),
             name=f"shinkou-chain-{chain_key}",
         )
         self._prune_tasks()
@@ -387,7 +434,9 @@ class ToolRegistry:
             raise ToolCallError("Tool chain disappeared before completion")
         return result
 
-    async def wait_chain(self, chain_id: str, *, timeout: float | None = None) -> dict[str, Any] | None:
+    async def wait_chain(
+        self, chain_id: str, *, timeout: float | None = None
+    ) -> dict[str, Any] | None:
         chain = self._chains.get(str(chain_id))
         if chain is None:
             return None
@@ -396,14 +445,20 @@ class ToolRegistry:
             if timeout is None:
                 await waiter
             else:
-                await asyncio.wait_for(waiter, timeout=max(0.01, min(float(timeout), 600)))
+                await asyncio.wait_for(
+                    waiter, timeout=max(0.01, min(float(timeout), 600))
+                )
         return chain.snapshot(include_results=True)
 
     async def cancel_chain(self, chain_id: str) -> dict[str, Any] | None:
         chain = self._chains.get(str(chain_id))
         if chain is None:
             return None
-        if chain.status not in TERMINAL_STATUSES and chain.task and not chain.task.done():
+        if (
+            chain.status not in TERMINAL_STATUSES
+            and chain.task
+            and not chain.task.done()
+        ):
             chain.task.cancel()
             await asyncio.gather(chain.task, return_exceptions=True)
         return chain.snapshot(include_results=True)
@@ -422,7 +477,9 @@ class ToolRegistry:
         if run_id is not None and name in self._disabled_tools.get(str(run_id), set()):
             raise ToolCallError(f"Tool disabled for run: {name}")
         spec = registered.spec
-        if spec.permission == "WRITE" and (not allow_writes or (spec.requires_confirmation and not confirmed)):
+        if spec.permission == "WRITE" and (
+            not allow_writes or (spec.requires_confirmation and not confirmed)
+        ):
             raise ToolCallError(f"Tool requires confirmation: {name}")
         if spec.permission not in {"READ", "WRITE"}:
             raise ToolCallError(f"Unsupported tool permission: {name}")
@@ -463,8 +520,12 @@ class ToolRegistry:
             task.duration_ms = _duration_ms(task.started_at, task.finished_at)
             if task.status == "SUCCEEDED":
                 return
-            event_type = "tool.cancelled" if task.status == "CANCELLED" else "tool.failed"
-            await self._emit(task.run_id, event_type, self._event_payload(task, status=task.status))
+            event_type = (
+                "tool.cancelled" if task.status == "CANCELLED" else "tool.failed"
+            )
+            await self._emit(
+                task.run_id, event_type, self._event_payload(task, status=task.status)
+            )
 
     async def _invoke(
         self,
@@ -495,7 +556,10 @@ class ToolRegistry:
         )
         try:
             async with self._task_slots, registered.semaphore:
-                return await asyncio.wait_for(_call_handler(registered.handler, input_data), timeout=spec.timeout_seconds)
+                return await asyncio.wait_for(
+                    _call_handler(registered.handler, input_data),
+                    timeout=spec.timeout_seconds,
+                )
         except asyncio.TimeoutError as exc:
             status = "TIMEOUT"
             error = "tool timed out"
@@ -540,13 +604,22 @@ class ToolRegistry:
                         },
                     )
 
-    async def _run_chain(self, chain: ToolChainTask, *, allow_writes: bool, confirmed: bool, timeout_seconds: float) -> None:
+    async def _run_chain(
+        self,
+        chain: ToolChainTask,
+        *,
+        allow_writes: bool,
+        confirmed: bool,
+        timeout_seconds: float,
+    ) -> None:
         chain.status = "RUNNING"
         chain.started_at = _now()
         await self._emit(chain.run_id, "chain.started", self._chain_payload(chain))
         try:
             await asyncio.wait_for(
-                self._execute_chain_steps(chain, allow_writes=allow_writes, confirmed=confirmed),
+                self._execute_chain_steps(
+                    chain, allow_writes=allow_writes, confirmed=confirmed
+                ),
                 timeout=max(0.1, min(float(timeout_seconds), 1_800)),
             )
             chain.status = "SUCCEEDED"
@@ -562,13 +635,22 @@ class ToolRegistry:
         finally:
             chain.finished_at = _now()
             chain.duration_ms = _duration_ms(chain.started_at, chain.finished_at)
-            event_type = {"SUCCEEDED": "chain.completed", "CANCELLED": "chain.cancelled"}.get(chain.status, "chain.failed")
+            event_type = {
+                "SUCCEEDED": "chain.completed",
+                "CANCELLED": "chain.cancelled",
+            }.get(chain.status, "chain.failed")
             await self._emit(chain.run_id, event_type, self._chain_payload(chain))
 
-    async def _execute_chain_steps(self, chain: ToolChainTask, *, allow_writes: bool, confirmed: bool) -> None:
+    async def _execute_chain_steps(
+        self, chain: ToolChainTask, *, allow_writes: bool, confirmed: bool
+    ) -> None:
         pending = {step.id: step for step in chain.steps}
         while pending:
-            ready = [step for step in pending.values() if all(dependency not in pending for dependency in step.depends_on)]
+            ready = [
+                step
+                for step in pending.values()
+                if all(dependency not in pending for dependency in step.depends_on)
+            ]
             if not ready:
                 raise ToolCallError("Tool chain contains a dependency cycle")
             for step in ready:
@@ -577,14 +659,21 @@ class ToolRegistry:
                 await self._emit(
                     chain.run_id,
                     "chain.step.started",
-                    {"chainId": chain.chain_id, "runId": chain.run_id, "stepId": step.id, "tool": step.tool},
+                    {
+                        "chainId": chain.chain_id,
+                        "runId": chain.run_id,
+                        "stepId": step.id,
+                        "tool": step.tool,
+                    },
                 )
             outcomes = await asyncio.gather(
                 *(
                     self.execute(
                         step.tool,
                         run_id=chain.run_id,
-                        input_data=_resolve_references(step.input_data, chain.step_results),
+                        input_data=_resolve_references(
+                            step.input_data, chain.step_results
+                        ),
                         allow_writes=allow_writes,
                         confirmed=confirmed,
                         call_id=chain.step_states[step.id]["callId"],
@@ -602,9 +691,19 @@ class ToolRegistry:
                 if isinstance(outcome, BaseException):
                     state["status"] = "FAILED"
                     state["error"] = str(outcome)[:500] or "step failed"
-                    await self._emit(chain.run_id, "chain.step.failed", {"chainId": chain.chain_id, "stepId": step.id, "error": state["error"]})
+                    await self._emit(
+                        chain.run_id,
+                        "chain.step.failed",
+                        {
+                            "chainId": chain.chain_id,
+                            "stepId": step.id,
+                            "error": state["error"],
+                        },
+                    )
                     if not step.continue_on_error:
-                        raise ToolCallError(f"Tool chain step failed: {step.id}") from outcome
+                        raise ToolCallError(
+                            f"Tool chain step failed: {step.id}"
+                        ) from outcome
                     continue
                 state["status"] = "SUCCEEDED"
                 state["resultSummary"] = _summarize(outcome)
@@ -612,16 +711,31 @@ class ToolRegistry:
                 await self._emit(
                     chain.run_id,
                     "chain.step.completed",
-                    {"chainId": chain.chain_id, "stepId": step.id, "tool": step.tool, "resultSummary": state["resultSummary"]},
+                    {
+                        "chainId": chain.chain_id,
+                        "stepId": step.id,
+                        "tool": step.tool,
+                        "resultSummary": state["resultSummary"],
+                    },
                 )
 
-    async def _emit(self, run_id: str | int, event_type: str, payload: dict[str, Any], *, enabled: bool = True) -> None:
+    async def _emit(
+        self,
+        run_id: str | int,
+        event_type: str,
+        payload: dict[str, Any],
+        *,
+        enabled: bool = True,
+    ) -> None:
         if not enabled or self._event_sink is None:
             return
         try:
             await self._event_sink(run_id, event_type, payload)
         except Exception:
-            logger.warning("tool event sink failed", extra={"run_id": str(run_id), "event_type": event_type})
+            logger.warning(
+                "tool event sink failed",
+                extra={"run_id": str(run_id), "event_type": event_type},
+            )
 
     @staticmethod
     def _event_payload(task: ToolTask, *, status: str) -> dict[str, Any]:
@@ -632,7 +746,9 @@ class ToolRegistry:
             "status": status,
             **({"chainId": task.chain_id} if task.chain_id else {}),
             **({"stepId": task.step_id} if task.step_id else {}),
-            **({"durationMs": task.duration_ms} if task.duration_ms is not None else {}),
+            **(
+                {"durationMs": task.duration_ms} if task.duration_ms is not None else {}
+            ),
             **({"error": task.error} if task.error else {}),
         }
 
@@ -644,17 +760,32 @@ class ToolRegistry:
             "status": chain.status,
             "steps": list(chain.step_states.values()),
             **({"error": chain.error} if chain.error else {}),
-            **({"durationMs": chain.duration_ms} if chain.duration_ms is not None else {}),
+            **(
+                {"durationMs": chain.duration_ms}
+                if chain.duration_ms is not None
+                else {}
+            ),
         }
 
     def _prune_tasks(self) -> None:
-        if len(self._tasks) <= self._max_retained_tasks and len(self._chains) <= self._max_retained_tasks:
+        if (
+            len(self._tasks) <= self._max_retained_tasks
+            and len(self._chains) <= self._max_retained_tasks
+        ):
             return
-        removable = [key for key, task in self._tasks.items() if task.status in TERMINAL_STATUSES]
+        removable = [
+            key for key, task in self._tasks.items() if task.status in TERMINAL_STATUSES
+        ]
         for key in removable[: max(0, len(self._tasks) - self._max_retained_tasks)]:
             self._tasks.pop(key, None)
-        removable_chains = [key for key, chain in self._chains.items() if chain.status in TERMINAL_STATUSES]
-        for key in removable_chains[: max(0, len(self._chains) - self._max_retained_tasks)]:
+        removable_chains = [
+            key
+            for key, chain in self._chains.items()
+            if chain.status in TERMINAL_STATUSES
+        ]
+        for key in removable_chains[
+            : max(0, len(self._chains) - self._max_retained_tasks)
+        ]:
             self._chains.pop(key, None)
 
 
@@ -669,7 +800,9 @@ async def _call_handler(handler: ToolHandler, input_data: dict[str, Any]) -> Any
     return await result if inspect.isawaitable(result) else result
 
 
-def _normalize_steps(steps: list[ToolChainStep | dict[str, Any]], *, max_steps: int) -> list[ToolChainStep]:
+def _normalize_steps(
+    steps: list[ToolChainStep | dict[str, Any]], *, max_steps: int
+) -> list[ToolChainStep]:
     if not steps:
         raise ToolCallError("Tool chain must contain at least one step")
     if len(steps) > max(1, min(int(max_steps), 64)):
@@ -686,8 +819,13 @@ def _normalize_steps(steps: list[ToolChainStep | dict[str, Any]], *, max_steps: 
                 id=step_id,
                 tool=tool,
                 input_data=dict(raw.get("input_data") or raw.get("inputData") or {}),
-                depends_on=tuple(str(item) for item in (raw.get("depends_on") or raw.get("dependsOn") or [])),
-                continue_on_error=bool(raw.get("continue_on_error") or raw.get("continueOnError") or False),
+                depends_on=tuple(
+                    str(item)
+                    for item in (raw.get("depends_on") or raw.get("dependsOn") or [])
+                ),
+                continue_on_error=bool(
+                    raw.get("continue_on_error") or raw.get("continueOnError") or False
+                ),
             )
         if not step.id or len(step.id) > 64 or not step.tool or len(step.tool) > 200:
             raise ToolCallError("Tool chain step id and tool are required")
@@ -695,7 +833,12 @@ def _normalize_steps(steps: list[ToolChainStep | dict[str, Any]], *, max_steps: 
             raise ToolCallError(f"Duplicate tool chain step: {step.id}")
         seen.add(step.id)
         result.append(step)
-    unknown = {dependency for step in result for dependency in step.depends_on if dependency not in seen}
+    unknown = {
+        dependency
+        for step in result
+        for dependency in step.depends_on
+        if dependency not in seen
+    }
     if unknown:
         raise ToolCallError(f"Tool chain dependency not found: {sorted(unknown)[0]}")
     return result
@@ -728,7 +871,11 @@ def _read_path(outputs: dict[str, Any], path: str) -> Any:
         if isinstance(current, dict) and part in current:
             current = current[part]
             continue
-        if isinstance(current, (list, tuple)) and part.isdigit() and int(part) < len(current):
+        if (
+            isinstance(current, (list, tuple))
+            and part.isdigit()
+            and int(part) < len(current)
+        ):
             current = current[int(part)]
             continue
         raise ToolCallError(f"Tool chain reference not found: {path}")
@@ -753,7 +900,9 @@ def _validate_input(spec: ToolSpec, input_data: dict[str, Any]) -> None:
         raise ToolCallError(f"Invalid input for tool: {spec.name}")
     for name in schema.get("required", []):
         if name not in input_data or input_data[name] is None:
-            raise ToolCallError(f"Missing required input '{name}' for tool: {spec.name}")
+            raise ToolCallError(
+                f"Missing required input '{name}' for tool: {spec.name}"
+            )
     for name, rule in (schema.get("properties") or {}).items():
         if name not in input_data or not isinstance(rule, dict):
             continue
@@ -769,7 +918,11 @@ def _validate_input(spec: ToolSpec, input_data: dict[str, Any]) -> None:
         }.get(expected, True)
         if not valid:
             raise ToolCallError(f"Invalid input '{name}' for tool: {spec.name}")
-        if isinstance(value, str) and rule.get("maxLength") is not None and len(value) > int(rule["maxLength"]):
+        if (
+            isinstance(value, str)
+            and rule.get("maxLength") is not None
+            and len(value) > int(rule["maxLength"])
+        ):
             raise ToolCallError(f"Input '{name}' is too long for tool: {spec.name}")
         if rule.get("enum") is not None and value not in rule["enum"]:
             raise ToolCallError(f"Invalid input '{name}' for tool: {spec.name}")
@@ -779,7 +932,10 @@ def _json_safe(value: Any, *, max_chars: int = 20_000) -> Any:
     if isinstance(value, BaseModel):
         return _json_safe(value.model_dump(), max_chars=max_chars)
     if isinstance(value, dict):
-        return {str(key): _json_safe(item, max_chars=max_chars) for key, item in value.items()}
+        return {
+            str(key): _json_safe(item, max_chars=max_chars)
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple, set)):
         return [_json_safe(item, max_chars=max_chars) for item in value]
     if isinstance(value, str):
@@ -796,7 +952,10 @@ def _redact(value: Any) -> Any:
         return {
             key: (
                 "[REDACTED]"
-                if any(token in key.casefold() for token in ("key", "token", "secret", "password", "credential"))
+                if any(
+                    token in key.casefold()
+                    for token in ("key", "token", "secret", "password", "credential")
+                )
                 else _redact(item)
             )
             for key, item in value.items()
@@ -820,6 +979,14 @@ def _duration_ms(started: str | None, finished: str | None) -> int | None:
     if not started or not finished:
         return None
     try:
-        return max(0, int((datetime.fromisoformat(finished) - datetime.fromisoformat(started)).total_seconds() * 1000))
+        return max(
+            0,
+            int(
+                (
+                    datetime.fromisoformat(finished) - datetime.fromisoformat(started)
+                ).total_seconds()
+                * 1000
+            ),
+        )
     except ValueError:
         return None

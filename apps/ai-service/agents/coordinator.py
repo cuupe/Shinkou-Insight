@@ -13,6 +13,7 @@ from agents.remote import RemoteAgentTransport
 from core.events import EventBus
 from core.repository import InMemoryRunRepository
 from models.schemas import Evidence
+from tools.search_quality import filter_relevant_evidence
 
 
 class RunCancelled(Exception):
@@ -172,6 +173,7 @@ class AgentCoordinator:
                     "evidence.retrieve.web",
                     {
                         "goal": goal,
+                        "search_query": state.get("search_query", goal),
                         "evidence": state.get("evidence", []),
                         "allow_web_search": state.get("allow_web_search", False),
                     },
@@ -179,6 +181,14 @@ class AgentCoordinator:
                 )
                 state.update(external)
             break
+
+        # Do not let a non-empty but irrelevant retrieval result reach finding
+        # synthesis or report writing. The evidence analyst makes the routing
+        # decision; this boundary enforces it for every downstream agent.
+        state["evidence"] = [
+            item.model_dump()
+            for item in filter_relevant_evidence(goal, state.get("evidence", []))
+        ]
 
         findings = await self._dispatch(
             context,

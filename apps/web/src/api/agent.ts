@@ -23,7 +23,11 @@ export const agentApi = {
       ),
     ),
 
-  deleteThread: (workspaceId: number | string, projectId: number, threadId: string) =>
+  deleteThread: (
+    workspaceId: number | string,
+    projectId: number,
+    threadId: string,
+  ) =>
     unwrap<void>(
       anet.delete<ApiResponse<void>>(
         `${projectPath(workspaceId, projectId)}/agent/threads/${encodeURIComponent(threadId)}`,
@@ -57,15 +61,22 @@ export const agentApi = {
     );
   },
 
-  cancelRun: (workspaceId: number | string, projectId: number, runId: number | string) =>
+  cancelRun: (
+    workspaceId: number | string,
+    projectId: number,
+    runId: number | string,
+  ) =>
     unwrap<void>(
       anet.post<ApiResponse<void>>(
         `${projectPath(workspaceId, projectId)}/agent/runs/${runId}/cancel`,
       ),
     ),
 
-  eventsUrl: (workspaceId: number | string, projectId: number, runId: number | string) =>
-    `/api${projectPath(workspaceId, projectId)}/agent/runs/${runId}/events`,
+  eventsUrl: (
+    workspaceId: number | string,
+    projectId: number,
+    runId: number | string,
+  ) => `/api${projectPath(workspaceId, projectId)}/agent/runs/${runId}/events`,
 
   parseEvent: (event: MessageEvent<string>): AgentStreamEvent | null => {
     try {

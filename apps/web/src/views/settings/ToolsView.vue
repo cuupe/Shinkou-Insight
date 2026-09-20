@@ -134,11 +134,14 @@ const autonomousCount = computed(
     tools.value.filter((tool) => tool.enabled && tool.allowAutonomous).length,
 );
 const localEnabledCount = computed(
-  () => localTools.value.filter((tool) => localToolEnabled[tool.name] !== false).length,
+  () =>
+    localTools.value.filter((tool) => localToolEnabled[tool.name] !== false)
+      .length,
 );
 
 function applyAgentPolicy(value: unknown) {
-  const stored = value && typeof value === "object" ? value as Partial<AgentPolicy> : {};
+  const stored =
+    value && typeof value === "object" ? (value as Partial<AgentPolicy>) : {};
   const maxCalls = Number(stored.maxCalls);
   agentPolicy.autonomy =
     stored.autonomy === "自主模式" || stored.autonomy === "仅建议不执行"
@@ -159,9 +162,12 @@ function applyAgentPolicy(value: unknown) {
 }
 
 function applyLocalToolPreferences(value: unknown) {
-  for (const name of Object.keys(localToolPreferences)) delete localToolPreferences[name];
+  for (const name of Object.keys(localToolPreferences))
+    delete localToolPreferences[name];
   if (!value || typeof value !== "object") return;
-  for (const [name, enabled] of Object.entries(value as Record<string, unknown>)) {
+  for (const [name, enabled] of Object.entries(
+    value as Record<string, unknown>,
+  )) {
     if (typeof enabled === "boolean") localToolPreferences[name] = enabled;
   }
 }
@@ -170,7 +176,8 @@ function applyLocalTools(status: LocalToolsStatus) {
   localTools.value = status.tools || [];
   localToolFiles.value = status.files || null;
   for (const name of Object.keys(localToolEnabled)) {
-    if (!localTools.value.some((tool) => tool.name === name)) delete localToolEnabled[name];
+    if (!localTools.value.some((tool) => tool.name === name))
+      delete localToolEnabled[name];
   }
   for (const tool of localTools.value) {
     localToolEnabled[tool.name] = localToolPreferences[tool.name] !== false;
@@ -182,9 +189,15 @@ async function loadLocalTools() {
   localToolsLoading.value = true;
   localToolsError.value = "";
   try {
-    applyLocalTools(await settingsApi.localTools.get(workspaceId.value, settingsProjectId.value));
+    applyLocalTools(
+      await settingsApi.localTools.get(
+        workspaceId.value,
+        settingsProjectId.value,
+      ),
+    );
   } catch (error) {
-    localToolsError.value = error instanceof Error ? error.message : "本地工具系统加载失败";
+    localToolsError.value =
+      error instanceof Error ? error.message : "本地工具系统加载失败";
   } finally {
     localToolsLoading.value = false;
   }
@@ -195,10 +208,16 @@ async function reloadLocalTools() {
   localToolsReloading.value = true;
   localToolsError.value = "";
   try {
-    applyLocalTools(await settingsApi.localTools.reload(workspaceId.value, settingsProjectId.value));
+    applyLocalTools(
+      await settingsApi.localTools.reload(
+        workspaceId.value,
+        settingsProjectId.value,
+      ),
+    );
     notify("本地工具已重载");
   } catch (error) {
-    localToolsError.value = error instanceof Error ? error.message : "本地工具重载失败";
+    localToolsError.value =
+      error instanceof Error ? error.message : "本地工具重载失败";
   } finally {
     localToolsReloading.value = false;
   }
@@ -212,7 +231,10 @@ function toggleLocalTool(name: string, event: Event) {
 
 async function saveLocalTools() {
   const preferences = Object.fromEntries(
-    localTools.value.map((tool) => [tool.name, localToolEnabled[tool.name] !== false]),
+    localTools.value.map((tool) => [
+      tool.name,
+      localToolEnabled[tool.name] !== false,
+    ]),
   );
   try {
     const remote = await workspaceApi.updatePreferences(workspaceId.value, {
@@ -222,7 +244,10 @@ async function saveLocalTools() {
     if (remote.preferences) {
       try {
         Object.assign(workspacePreferences, JSON.parse(remote.preferences));
-        applyLocalToolPreferences((JSON.parse(remote.preferences) as Record<string, unknown>).localTools);
+        applyLocalToolPreferences(
+          (JSON.parse(remote.preferences) as Record<string, unknown>)
+            .localTools,
+        );
       } catch {
         // Keep the values already shown when the server returns malformed data.
       }
@@ -261,7 +286,9 @@ onMounted(async () => {
       projectId.value > 0
         ? projectId.value
         : selectedProject.value?.id ||
-          projects.find((project) => project.id === getLastProjectId(workspaceId.value))?.id ||
+          projects.find(
+            (project) => project.id === getLastProjectId(workspaceId.value),
+          )?.id ||
           projects[0]?.id ||
           -1;
     settingsProjectId.value = resolvedProjectId;
@@ -289,15 +316,27 @@ onMounted(async () => {
         endpoint: tool.endpoint,
         authType: tool.authType,
         credential: "",
-        sharingScope: tool.scope === "PERSONAL" ? "PERSONAL" : String(config.sharingScope || "TEAM") === "PERSONAL" ? "PERSONAL" : "TEAM",
+        sharingScope:
+          tool.scope === "PERSONAL"
+            ? "PERSONAL"
+            : String(config.sharingScope || "TEAM") === "PERSONAL"
+              ? "PERSONAL"
+              : "TEAM",
         scope: String(config.scope || "—"),
         method: String(config.method || "—"),
         timeout: Number(config.timeout || 0),
         retries: Number(config.retries || 0),
         rateLimit: Number(config.rateLimit || 0),
         allowAutonomous: Boolean(config.allowAutonomous),
-        requireApproval: config.requireApproval == null ? false : Boolean(config.requireApproval),
-        operations: { ...emptyOperations(), ...(config.operations as Partial<Record<OperationKey, boolean>> | undefined) },
+        requireApproval:
+          config.requireApproval == null
+            ? false
+            : Boolean(config.requireApproval),
+        operations: {
+          ...emptyOperations(),
+          ...(config.operations as
+            Partial<Record<OperationKey, boolean>> | undefined),
+        },
         note: String(config.note || ""),
       };
     });
@@ -558,7 +597,6 @@ async function removeTool(tool: ToolRecord) {
   tools.value = tools.value.filter((item) => item.id !== tool.id);
   notify(`${tool.name} 已删除`);
 }
-
 </script>
 
 <template>
@@ -578,7 +616,11 @@ async function removeTool(tool: ToolRecord) {
           </p>
         </div>
       </div>
-      <span class="status-badge" :class="tools.length ? 'status-indexed' : 'status-muted'"><i />{{ tools.length ? "已加载配置" : "暂无连接器" }}</span>
+      <span
+        class="status-badge"
+        :class="tools.length ? 'status-indexed' : 'status-muted'"
+        ><i />{{ tools.length ? "已加载配置" : "暂无连接器" }}</span
+      >
     </div>
 
     <div class="settings-section policy-section">
@@ -599,7 +641,9 @@ async function removeTool(tool: ToolRecord) {
             <option value="受控模式">受控模式</option>
             <option value="自主模式">自主模式</option>
             <option value="仅建议不执行">仅建议不执行</option></select
-          ><small>受控模式会在写入操作前请求确认，自主模式仅适用于已授权工具。</small></label
+          ><small
+            >受控模式会在写入操作前请求确认，自主模式仅适用于已授权工具。</small
+          ></label
         ><label class="field-label"
           >单次运行调用上限<input
             v-model.number="agentPolicy.maxCalls"
@@ -641,29 +685,70 @@ async function removeTool(tool: ToolRecord) {
         <div>
           <h2>本地工具系统</h2>
           <p>
-            这里显示 Python AI 服务当前注册的内置工具和自定义工具。可按工作区手动启用或停用；新增自定义工具仍需放入 AI 服务的受信任目录。
+            这里显示 Python AI
+            服务当前注册的内置工具和自定义工具。可按工作区手动启用或停用；新增自定义工具仍需放入
+            AI 服务的受信任目录。
           </p>
         </div>
         <div class="section-actions">
-          <span class="permission-note"><Database :size="13" />{{ localEnabledCount }}/{{ localTools.length }} 个工具启用</span>
-          <button class="button button-secondary button-sm" type="button" :disabled="localToolsLoading" @click="loadLocalTools">
-            <RefreshCw :size="14" :class="{ spinning: localToolsLoading }" />刷新状态
+          <span class="permission-note"
+            ><Database :size="13" />{{ localEnabledCount }}/{{
+              localTools.length
+            }}
+            个工具启用</span
+          >
+          <button
+            class="button button-secondary button-sm"
+            type="button"
+            :disabled="localToolsLoading"
+            @click="loadLocalTools"
+          >
+            <RefreshCw
+              :size="14"
+              :class="{ spinning: localToolsLoading }"
+            />刷新状态
           </button>
-          <button class="button button-secondary button-sm" type="button" :disabled="localToolsReloading" @click="reloadLocalTools">
-            <RefreshCw :size="14" :class="{ spinning: localToolsReloading }" />{{ localToolsReloading ? "重载中…" : "重载自定义工具" }}
+          <button
+            class="button button-secondary button-sm"
+            type="button"
+            :disabled="localToolsReloading"
+            @click="reloadLocalTools"
+          >
+            <RefreshCw
+              :size="14"
+              :class="{ spinning: localToolsReloading }"
+            />{{ localToolsReloading ? "重载中…" : "重载自定义工具" }}
           </button>
         </div>
       </div>
-      <p v-if="localToolsError" class="local-tools-error" role="alert">{{ localToolsError }}</p>
-      <div v-if="!hasProject" class="local-tools-empty">请先创建项目后查看项目可用的 Python 工具。</div>
-      <div v-else-if="localToolsLoading && !localTools.length" class="local-tools-empty">正在读取 Python 工具注册表…</div>
+      <p v-if="localToolsError" class="local-tools-error" role="alert">
+        {{ localToolsError }}
+      </p>
+      <div v-if="!hasProject" class="local-tools-empty">
+        请先创建项目后查看项目可用的 Python 工具。
+      </div>
+      <div
+        v-else-if="localToolsLoading && !localTools.length"
+        class="local-tools-empty"
+      >
+        正在读取 Python 工具注册表…
+      </div>
       <div v-else-if="localTools.length" class="local-tool-grid">
-        <article v-for="tool in localTools" :key="tool.name" class="local-tool-card">
+        <article
+          v-for="tool in localTools"
+          :key="tool.name"
+          class="local-tool-card"
+        >
           <div class="local-tool-card-heading">
             <span class="config-icon"><Settings2 :size="16" /></span>
             <div>
               <strong>{{ tool.name }}</strong>
-              <small>{{ localToolSourceLabel(tool.source) }} · {{ tool.permission === "WRITE" ? "写入工具" : "只读工具" }}</small>
+              <small
+                >{{ localToolSourceLabel(tool.source) }} ·
+                {{
+                  tool.permission === "WRITE" ? "写入工具" : "只读工具"
+                }}</small
+              >
             </div>
             <label class="local-tool-toggle">
               <input
@@ -682,21 +767,55 @@ async function removeTool(tool: ToolRecord) {
           </div>
         </article>
       </div>
-      <div v-else class="local-tools-empty">Python 服务没有返回可用工具，请检查 AI 服务是否已启动。</div>
+      <div v-else class="local-tools-empty">
+        Python 服务没有返回可用工具，请检查 AI 服务是否已启动。
+      </div>
       <div v-if="localToolFiles" class="local-file-tools">
         <div>
           <strong>本地文件分析工具</strong>
           <small>附件解析使用本机工具链，不会把原始文件直接交给模型。</small>
         </div>
         <div class="local-file-status">
-          <span :class="{ ready: localToolFiles.ocr.tesseract && localToolFiles.ocr.poppler }">OCR {{ readyLabel(localToolFiles.ocr.tesseract && localToolFiles.ocr.poppler) }}</span>
-          <span :class="{ ready: localToolFiles.media.ffmpeg && localToolFiles.media.ffprobe }">媒体 {{ readyLabel(localToolFiles.media.ffmpeg && localToolFiles.media.ffprobe) }}</span>
-          <span :class="{ ready: localToolFiles.office.libreoffice }">Office {{ readyLabel(localToolFiles.office.libreoffice) }}</span>
+          <span
+            :class="{
+              ready: localToolFiles.ocr.tesseract && localToolFiles.ocr.poppler,
+            }"
+            >OCR
+            {{
+              readyLabel(
+                localToolFiles.ocr.tesseract && localToolFiles.ocr.poppler,
+              )
+            }}</span
+          >
+          <span
+            :class="{
+              ready:
+                localToolFiles.media.ffmpeg && localToolFiles.media.ffprobe,
+            }"
+            >媒体
+            {{
+              readyLabel(
+                localToolFiles.media.ffmpeg && localToolFiles.media.ffprobe,
+              )
+            }}</span
+          >
+          <span :class="{ ready: localToolFiles.office.libreoffice }"
+            >Office {{ readyLabel(localToolFiles.office.libreoffice) }}</span
+          >
         </div>
       </div>
       <div v-if="localTools.length" class="local-tools-actions">
-        <span><ShieldCheck :size="13" />停用后会在下一次 Agent 运行中生效；不会删除本地 Python 文件。</span>
-        <button class="button button-primary button-sm" type="button" @click="saveLocalTools">保存本地工具设置</button>
+        <span
+          ><ShieldCheck :size="13" />停用后会在下一次 Agent
+          运行中生效；不会删除本地 Python 文件。</span
+        >
+        <button
+          class="button button-primary button-sm"
+          type="button"
+          @click="saveLocalTools"
+        >
+          保存本地工具设置
+        </button>
       </div>
     </div>
 
@@ -729,7 +848,8 @@ async function removeTool(tool: ToolRecord) {
             ><strong>{{ tool.name }}</strong
             ><small
               >{{ tool.description }} · {{ tool.connectorType }} ·
-              {{ tool.sharingScope === "PERSONAL" ? "个人凭证" : "项目共享" }} · {{ tool.scope }}</small
+              {{ tool.sharingScope === "PERSONAL" ? "个人凭证" : "项目共享" }} ·
+              {{ tool.scope }}</small
             ></span
           ><span
             class="tool-policy"
@@ -761,7 +881,11 @@ async function removeTool(tool: ToolRecord) {
         <div v-if="!tools.length" class="empty-state">
           <PlugZap :size="18" />
           <strong>暂无连接器配置</strong>
-          <span>{{ hasProject ? "添加连接器后，这里会显示后端保存的接入和权限配置。" : "创建项目后，才能按项目配置连接器。" }}</span>
+          <span>{{
+            hasProject
+              ? "添加连接器后，这里会显示后端保存的接入和权限配置。"
+              : "创建项目后，才能按项目配置连接器。"
+          }}</span>
         </div>
       </div>
     </div>
@@ -907,8 +1031,10 @@ async function removeTool(tool: ToolRecord) {
               ><label class="field-label"
                 >凭证归属<select v-model="connectorForm.sharingScope">
                   <option value="TEAM">项目共享</option>
-                  <option value="PERSONAL">仅自己使用</option>
-                </select><small>个人凭证只对本人可见；项目执行默认优先使用项目创建者的凭证。</small></label
+                  <option value="PERSONAL">仅自己使用</option></select
+                ><small
+                  >个人凭证只对本人可见；项目执行默认优先使用项目创建者的凭证。</small
+                ></label
               ><label class="policy-toggle"
                 ><input
                   v-model="connectorForm.allowAutonomous"

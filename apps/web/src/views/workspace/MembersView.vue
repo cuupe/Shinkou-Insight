@@ -58,7 +58,10 @@ function memberDisplayFields(member: { department?: string; title?: string }) {
     title: member.title || "暂无",
   };
 }
-function memberActivityFields(member: { lastActiveAt?: string; status?: string }) {
+function memberActivityFields(member: {
+  lastActiveAt?: string;
+  status?: string;
+}) {
   return {
     active: member.lastActiveAt
       ? formatDateTime(
@@ -70,7 +73,8 @@ function memberActivityFields(member: { lastActiveAt?: string; status?: string }
   };
 }
 async function loadMembers() {
-  if (!workspaceId.value || workspaceId.value === "-1" || loadRequestActive) return;
+  if (!workspaceId.value || workspaceId.value === "-1" || loadRequestActive)
+    return;
   loadRequestActive = true;
   loading.value = true;
   loadError.value = "";
@@ -83,18 +87,18 @@ async function loadMembers() {
       phone: member.phoneNumber || "—",
       department: "—",
       title: "—",
-      ...(memberDisplayFields(member) as unknown as Record<string, never>), /*
+      ...(memberDisplayFields(member) as unknown as Record<string, never>),
+      /*
         department: member.department || "暂无",
         title: member.title || "暂无",
       },
       */ inviteNote: "",
       role: member.role || "MEMBER",
-      date:
-        formatDateTime(
-          member.createdAt,
-          "—",
-          currentUser.value?.timezone || "Asia/Shanghai",
-        ),
+      date: formatDateTime(
+        member.createdAt,
+        "—",
+        currentUser.value?.timezone || "Asia/Shanghai",
+      ),
       active: member.status || "—",
       ...(memberActivityFields(member) as unknown as Record<string, never>),
     }));
@@ -105,9 +109,13 @@ async function loadMembers() {
     loadRequestActive = false;
   }
 }
-watch(workspaceId, (value) => {
-  if (value && value !== "-1") void loadMembers();
-}, { immediate: true });
+watch(
+  workspaceId,
+  (value) => {
+    if (value && value !== "-1") void loadMembers();
+  },
+  { immediate: true },
+);
 function isCurrentUser(member: (typeof members.value)[number]) {
   const me = currentUser.value;
   if (!me) return false;
@@ -291,16 +299,30 @@ function memberRoleOptions(member: (typeof members.value)[number]) {
         </Select>
       </div>
     </div>
-    <div v-if="loading && !members.length" class="member-load-state" role="status">
+    <div
+      v-if="loading && !members.length"
+      class="member-load-state"
+      role="status"
+    >
       <Users :size="20" />
       <strong>正在读取成员列表</strong>
       <span>正在同步当前工作区的成员与权限。</span>
     </div>
-    <div v-else-if="loadError" class="member-load-state member-load-error" role="alert">
+    <div
+      v-else-if="loadError"
+      class="member-load-state member-load-error"
+      role="alert"
+    >
       <Users :size="20" />
       <strong>{{ loadError }}</strong>
       <span>请确认当前会话有效，或稍后重新加载。</span>
-      <button class="button button-secondary button-compact" type="button" @click="loadMembers">重新加载</button>
+      <button
+        class="button button-secondary button-compact"
+        type="button"
+        @click="loadMembers"
+      >
+        重新加载
+      </button>
     </div>
     <div v-else class="data-table member-table">
       <div class="table-row table-header">
@@ -353,10 +375,17 @@ function memberRoleOptions(member: (typeof members.value)[number]) {
         ><span class="muted-cell member-active-cell">{{ member.active }}</span>
       </div>
     </div>
-    <div v-if="!loading && !loadError && !filteredMembers.length" class="empty-state panel-empty-state">
+    <div
+      v-if="!loading && !loadError && !filteredMembers.length"
+      class="empty-state panel-empty-state"
+    >
       <Users :size="20" />
       <strong>{{ members.length ? "没有匹配的成员" : "暂无成员数据" }}</strong>
-      <span>{{ members.length ? "试试其他关键词或角色筛选条件。" : "后端返回成员后会显示在这里。" }}</span>
+      <span>{{
+        members.length
+          ? "试试其他关键词或角色筛选条件。"
+          : "后端返回成员后会显示在这里。"
+      }}</span>
     </div>
   </section>
   <Dialog v-model:open="inviteOpen">

@@ -75,14 +75,23 @@ class InMemoryRunRepository:
             run.updated_at = utc_now()
             return run
 
-    async def set_initial_plan(self, run_id: str | int, plan: dict[str, Any]) -> RunRecord:
+    async def set_initial_plan(
+        self, run_id: str | int, plan: dict[str, Any]
+    ) -> RunRecord:
         async with self._lock:
             run = self._runs[str(run_id)]
             if run.plan_version:
                 return run
             run.plan = dict(plan)
             run.plan_version = 1
-            run.plan_history = [{"version": 1, **dict(plan), "source": "planner", "timestamp": utc_now()}]
+            run.plan_history = [
+                {
+                    "version": 1,
+                    **dict(plan),
+                    "source": "planner",
+                    "timestamp": utc_now(),
+                }
+            ]
             run.updated_at = utc_now()
             return run
 
@@ -99,8 +108,13 @@ class InMemoryRunRepository:
             run = self._runs[str(run_id)]
             if run.status in {"COMPLETED", "FAILED", "CANCELLED"}:
                 raise ValueError("terminal research runs cannot be modified")
-            if expected_version is not None and int(expected_version) != run.plan_version:
-                raise ValueError(f"plan version conflict: expected {expected_version}, current {run.plan_version}")
+            if (
+                expected_version is not None
+                and int(expected_version) != run.plan_version
+            ):
+                raise ValueError(
+                    f"plan version conflict: expected {expected_version}, current {run.plan_version}"
+                )
             normalized = mode.upper()
             if normalized == "PAUSE":
                 run.paused = True
@@ -126,7 +140,15 @@ class InMemoryRunRepository:
                     current["summary"] = summary
                 run.plan = current
                 run.plan_version += 1
-                run.plan_history = [*run.plan_history, {"version": run.plan_version, **current, "source": "user", "timestamp": utc_now()}][-20:]
+                run.plan_history = [
+                    *run.plan_history,
+                    {
+                        "version": run.plan_version,
+                        **current,
+                        "source": "user",
+                        "timestamp": utc_now(),
+                    },
+                ][-20:]
             else:
                 raise ValueError("plan mode must be REPLACE, APPEND, PAUSE, or RESUME")
             run.updated_at = utc_now()
@@ -190,11 +212,18 @@ class DurableRunRepository(InMemoryRunRepository):
         try:
             import redis
 
-            client = redis.Redis.from_url(self.redis_url, decode_responses=True, socket_connect_timeout=1.5, socket_timeout=2.5)
+            client = redis.Redis.from_url(
+                self.redis_url,
+                decode_responses=True,
+                socket_connect_timeout=1.5,
+                socket_timeout=2.5,
+            )
             await asyncio.to_thread(client.ping)
             self._redis = client
         except Exception as exc:
-            logger.warning("Durable run snapshots unavailable; using memory only: %s", exc)
+            logger.warning(
+                "Durable run snapshots unavailable; using memory only: %s", exc
+            )
             self._redis = None
 
     def _key(self, run_id: str | int) -> str:
@@ -209,13 +238,22 @@ class DurableRunRepository(InMemoryRunRepository):
     @staticmethod
     def _deserialize(payload: str | dict[str, Any]) -> RunRecord:
         raw = json.loads(payload) if isinstance(payload, str) else payload
-        raw["evidence"] = [Evidence.model_validate(item) for item in raw.get("evidence") or []]
+        raw["evidence"] = [
+            Evidence.model_validate(item) for item in raw.get("evidence") or []
+        ]
         return RunRecord(**raw)
 
     async def _persist(self, run: RunRecord) -> None:
         if self._redis is not None:
             try:
-                await asyncio.to_thread(self._redis.set, self._key(run.run_id), json.dumps(self._serialize(run), ensure_ascii=False, separators=(",", ":")), ex=60 * 60 * 24 * 30)
+                await asyncio.to_thread(
+                    self._redis.set,
+                    self._key(run.run_id),
+                    json.dumps(
+                        self._serialize(run), ensure_ascii=False, separators=(",", ":")
+                    ),
+                    ex=60 * 60 * 24 * 30,
+                )
             except Exception as exc:
                 logger.debug("run snapshot write failed: %s", exc)
 
@@ -253,7 +291,9 @@ class DurableRunRepository(InMemoryRunRepository):
         await self._persist(result)
         return result
 
-    async def set_initial_plan(self, run_id: str | int, plan: dict[str, Any]) -> RunRecord:
+    async def set_initial_plan(
+        self, run_id: str | int, plan: dict[str, Any]
+    ) -> RunRecord:
         result = await super().set_initial_plan(run_id, plan)
         await self._persist(result)
         return result

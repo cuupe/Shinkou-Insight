@@ -19,7 +19,9 @@ from rag.reranker import LexicalReranker
 
 
 def cosine(left: list[float], right: list[float]) -> float:
-    denominator = math.sqrt(sum(value * value for value in left)) * math.sqrt(sum(value * value for value in right))
+    denominator = math.sqrt(sum(value * value for value in left)) * math.sqrt(
+        sum(value * value for value in right)
+    )
     return sum(a * b for a, b in zip(left, right)) / denominator if denominator else 0.0
 
 
@@ -44,11 +46,32 @@ class InMemoryKnowledgeStore:
         self.embedding = embedding
         self.items: list[IndexedChunk] = []
 
-    async def index(self, *, workspace_id: int, project_id: int, asset_id: int | str, asset_name: str, chunks: list[DocumentChunk], embedding: EmbeddingProvider | None = None, parser_version: str = "parser-v2") -> int:
+    async def index(
+        self,
+        *,
+        workspace_id: int,
+        project_id: int,
+        asset_id: int | str,
+        asset_name: str,
+        chunks: list[DocumentChunk],
+        embedding: EmbeddingProvider | None = None,
+        parser_version: str = "parser-v2",
+    ) -> int:
         embedding = embedding or self.embedding
-        self.items = [item for item in self.items if not (item.workspace_id == workspace_id and item.project_id == project_id and str(item.asset_id) == str(asset_id))]
+        self.items = [
+            item
+            for item in self.items
+            if not (
+                item.workspace_id == workspace_id
+                and item.project_id == project_id
+                and str(item.asset_id) == str(asset_id)
+            )
+        ]
         vectors = await embedding.embed_documents([chunk.content for chunk in chunks])
-        self.items.extend(IndexedChunk(workspace_id, project_id, asset_id, asset_name, chunk, vector) for chunk, vector in zip(chunks, vectors))
+        self.items.extend(
+            IndexedChunk(workspace_id, project_id, asset_id, asset_name, chunk, vector)
+            for chunk, vector in zip(chunks, vectors)
+        )
         return len(chunks)
 
     async def retrieve(
@@ -74,7 +97,13 @@ class InMemoryKnowledgeStore:
         filters = filters or {}
         embedding = embedding or self.embedding
         allowed_assets = {str(value) for value in filters.get("assetIds", [])}
-        candidates = [item for item in self.items if item.workspace_id == workspace_id and item.project_id == project_id and (not allowed_assets or str(item.asset_id) in allowed_assets)]
+        candidates = [
+            item
+            for item in self.items
+            if item.workspace_id == workspace_id
+            and item.project_id == project_id
+            and (not allowed_assets or str(item.asset_id) in allowed_assets)
+        ]
         mode = retrieval_mode.upper()
         candidate_limit = max(top_k, min(int(candidate_k or max(top_k * 4, 20)), 200))
         channels: dict[str, list[tuple[str, IndexedChunk, float]]] = {}
@@ -87,10 +116,11 @@ class InMemoryKnowledgeStore:
                 reverse=True,
             )[:candidate_limit]
             channels["vector"] = [
-                (item.chunk.checksum[:16], item, score)
-                for item, score in vector_values
+                (item.chunk.checksum[:16], item, score) for item, score in vector_values
             ]
-            vector_scores = {item.chunk.checksum[:16]: score for item, score in vector_values}
+            vector_scores = {
+                item.chunk.checksum[:16]: score for item, score in vector_values
+            }
 
         keyword_scores: dict[str, float] = {}
         if mode in {"KEYWORD", "HYBRID"}:
@@ -99,16 +129,22 @@ class InMemoryKnowledgeStore:
             # variants are a cheap recall boost and never trigger an LLM call.
             keyword_values: dict[str, float] = {}
             for variant_index, variant in enumerate(variants or [question]):
-                scores = bm25_scores(variant, [item.chunk.content for item in candidates])
+                scores = bm25_scores(
+                    variant, [item.chunk.content for item in candidates]
+                )
                 variant_weight = 1.0 if variant_index == 0 else 0.65
                 for item, score in zip(candidates, scores):
                     key = item.chunk.checksum[:16]
-                    keyword_values[key] = max(keyword_values.get(key, 0.0), score * variant_weight)
+                    keyword_values[key] = max(
+                        keyword_values.get(key, 0.0), score * variant_weight
+                    )
             keyword_values = {
                 key: score for key, score in keyword_values.items() if score > 0
             }
             keyword_values = dict(
-                sorted(keyword_values.items(), key=lambda value: value[1], reverse=True)[:candidate_limit]
+                sorted(
+                    keyword_values.items(), key=lambda value: value[1], reverse=True
+                )[:candidate_limit]
             )
             by_key = {item.chunk.checksum[:16]: item for item in candidates}
             channels["keyword"] = [
@@ -117,9 +153,13 @@ class InMemoryKnowledgeStore:
             keyword_scores = keyword_values
 
         if mode == "VECTOR":
-            fused = fuse_ranked_candidates(channels, method="LINEAR", weights={"vector": 1.0})
+            fused = fuse_ranked_candidates(
+                channels, method="LINEAR", weights={"vector": 1.0}
+            )
         elif mode == "KEYWORD":
-            fused = fuse_ranked_candidates(channels, method="LINEAR", weights={"keyword": 1.0})
+            fused = fuse_ranked_candidates(
+                channels, method="LINEAR", weights={"keyword": 1.0}
+            )
         else:
             fused = fuse_ranked_candidates(
                 channels,
@@ -148,8 +188,12 @@ class InMemoryKnowledgeStore:
                     score=round(candidate.score, 6),
                     asset_id=candidate.item.asset_id,
                     asset_name=candidate.item.asset_name,
-                    vector_score=round(vector_scores[key], 6) if key in vector_scores else None,
-                    keyword_score=round(keyword_scores[key], 6) if key in keyword_scores else None,
+                    vector_score=(
+                        round(vector_scores[key], 6) if key in vector_scores else None
+                    ),
+                    keyword_score=(
+                        round(keyword_scores[key], 6) if key in keyword_scores else None
+                    ),
                     fusion_score=round(candidate.score, 6),
                     rerank_score=round(candidate.score, 6),
                 )
@@ -160,7 +204,16 @@ class InMemoryKnowledgeStore:
 
 
 class KnowledgeIndexer:
-    def __init__(self, parser: Any, chunker: Any, embedding: EmbeddingProvider, store: Any, graph_store: Any | None = None, graph_extractor: Any | None = None, cache: Any | None = None):
+    def __init__(
+        self,
+        parser: Any,
+        chunker: Any,
+        embedding: EmbeddingProvider,
+        store: Any,
+        graph_store: Any | None = None,
+        graph_extractor: Any | None = None,
+        cache: Any | None = None,
+    ):
         self.parser = parser
         self.chunker = chunker
         self.embedding = embedding
@@ -169,16 +222,45 @@ class KnowledgeIndexer:
         self.graph_extractor = graph_extractor
         self.cache = cache
 
-    async def index_bytes(self, *, data: bytes, file_name: str, mime_type: str | None, workspace_id: int, project_id: int, asset_id: int | str, embedding: EmbeddingProvider | None = None, chunking: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def index_bytes(
+        self,
+        *,
+        data: bytes,
+        file_name: str,
+        mime_type: str | None,
+        workspace_id: int,
+        project_id: int,
+        asset_id: int | str,
+        embedding: EmbeddingProvider | None = None,
+        chunking: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         embedding = embedding or self.embedding
-        parsed = await asyncio.to_thread(self.parser.parse_bytes, data, file_name=file_name, mime_type=mime_type)
-        chunker = self.chunker if chunking is None else DocumentChunker.from_config(chunking)
+        parsed = await asyncio.to_thread(
+            self.parser.parse_bytes, data, file_name=file_name, mime_type=mime_type
+        )
+        chunker = (
+            self.chunker if chunking is None else DocumentChunker.from_config(chunking)
+        )
         chunks = await asyncio.to_thread(chunker.split, parsed.documents)
-        count = await self.store.index(workspace_id=workspace_id, project_id=project_id, asset_id=asset_id, asset_name=file_name, chunks=chunks, embedding=embedding, parser_version=parsed.parser_version)
+        count = await self.store.index(
+            workspace_id=workspace_id,
+            project_id=project_id,
+            asset_id=asset_id,
+            asset_name=file_name,
+            chunks=chunks,
+            embedding=embedding,
+            parser_version=parsed.parser_version,
+        )
         graph_entities = 0
         if self.graph_store and self.graph_extractor:
             for chunk in chunks:
-                extracted = self.graph_extractor.extract(text=chunk.content, workspace_id=workspace_id, project_id=project_id, asset_id=asset_id, chunk_id=chunk.checksum[:16])
+                extracted = self.graph_extractor.extract(
+                    text=chunk.content,
+                    workspace_id=workspace_id,
+                    project_id=project_id,
+                    asset_id=asset_id,
+                    chunk_id=chunk.checksum[:16],
+                )
                 if inspect.isawaitable(extracted):
                     nodes, edges = await extracted
                 else:
@@ -186,7 +268,9 @@ class KnowledgeIndexer:
                 await self.graph_store.upsert(nodes, edges)
                 graph_entities += len(nodes)
         if self.cache is not None:
-            await self.cache.bump_version("retrieval", {"workspaceId": workspace_id, "projectId": project_id})
+            await self.cache.bump_version(
+                "retrieval", {"workspaceId": workspace_id, "projectId": project_id}
+            )
         return {
             "chunk_count": count,
             "parser_version": parsed.parser_version,

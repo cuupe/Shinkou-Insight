@@ -5,7 +5,6 @@ from typing import Any, Literal
 
 from tools.registry import ToolSpec
 
-
 CUSTOM_TOOL_SPEC = "__shinkou_tool_spec__"
 
 

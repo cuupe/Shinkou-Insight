@@ -1,6 +1,10 @@
 import { anet, unwrap } from "./core";
 import { projectPath } from "./paths";
-import type { ApiResponse, ProjectReviewPolicy, ProjectReviewRun } from "./types";
+import type {
+  ApiResponse,
+  ProjectReviewPolicy,
+  ProjectReviewRun,
+} from "./types";
 
 export const reviewApi = {
   policy: (workspaceId: number | string, projectId: number) =>
@@ -15,7 +19,10 @@ export const reviewApi = {
     projectId: number,
     payload: Pick<
       ProjectReviewPolicy,
-      "requireCitations" | "verifyNumbers" | "escalateConflicts" | "labelExternal"
+      | "requireCitations"
+      | "verifyNumbers"
+      | "escalateConflicts"
+      | "labelExternal"
     >,
   ) =>
     unwrap<ProjectReviewPolicy>(

@@ -58,7 +58,11 @@ def _configure_bundled_file_tools() -> None:
     existing = [str(path) for path in tool_dirs if path.is_dir()]
     if existing:
         current_path = os.environ.get("PATH", "")
-        os.environ["PATH"] = os.pathsep.join([*existing, current_path]) if current_path else os.pathsep.join(existing)
+        os.environ["PATH"] = (
+            os.pathsep.join([*existing, current_path])
+            if current_path
+            else os.pathsep.join(existing)
+        )
 
     tessdata = bundled_root / "tesseract" / "tessdata"
     if tessdata.is_dir() and not os.environ.get("TESSDATA_PREFIX"):
@@ -119,10 +123,16 @@ class Settings(BaseSettings):
     embedding_model: str = "hash-embedding-v1"
     embedding_dimension: int = Field(default=1536, ge=8, le=3072)
     embedding_base_url: str | None = None
-    embedding_api_key: str | None = Field(default=None, validation_alias="AI_SERVICE_EMBEDDING_API_KEY")
+    embedding_api_key: str | None = Field(
+        default=None, validation_alias="AI_SERVICE_EMBEDDING_API_KEY"
+    )
     llm_mode: str = "http"
-    llm_base_url: str | None = Field(default=None, validation_alias="AI_SERVICE_LLM_BASE_URL")
-    llm_api_key: str | None = Field(default=None, validation_alias="AI_SERVICE_LLM_API_KEY")
+    llm_base_url: str | None = Field(
+        default=None, validation_alias="AI_SERVICE_LLM_BASE_URL"
+    )
+    llm_api_key: str | None = Field(
+        default=None, validation_alias="AI_SERVICE_LLM_API_KEY"
+    )
     llm_model: str = Field(default="", validation_alias="AI_SERVICE_LLM_MODEL")
     llm_timeout_seconds: float = Field(default=60, gt=0, le=600)
     # Knowledge retrieval is an optional enrichment step. It must never hold
@@ -135,11 +145,20 @@ class Settings(BaseSettings):
     max_evidence: int = Field(default=12, ge=1, le=50)
     enable_web_search: bool = False
     web_search_provider: str = "brave"
-    web_search_api_key: str | None = Field(default=None, validation_alias="AI_SERVICE_WEB_SEARCH_API_KEY")
+    web_search_api_key: str | None = Field(
+        default=None, validation_alias="AI_SERVICE_WEB_SEARCH_API_KEY"
+    )
     web_search_base_url: str = "https://api.search.brave.com/res/v1/web/search"
     web_search_language: str = "zh-hans"
     web_search_sources: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["general", "arxiv", "openalex", "crossref", "github", "stackoverflow"]
+        default_factory=lambda: [
+            "general",
+            "arxiv",
+            "openalex",
+            "crossref",
+            "github",
+            "stackoverflow",
+        ]
     )
     mcp_enabled: bool = False
     mcp_url: str | None = None
@@ -183,8 +202,12 @@ class Settings(BaseSettings):
     @classmethod
     def parse_web_search_sources(cls, value: object) -> list[str]:
         if isinstance(value, str):
-            return [item.strip().casefold() for item in value.split(",") if item.strip()]
-        return [str(item).strip().casefold() for item in (value or []) if str(item).strip()]
+            return [
+                item.strip().casefold() for item in value.split(",") if item.strip()
+            ]
+        return [
+            str(item).strip().casefold() for item in (value or []) if str(item).strip()
+        ]
 
     @field_validator("agent_worker_urls", mode="before")
     @classmethod
@@ -204,15 +227,23 @@ class Settings(BaseSettings):
     def validate_runtime_options(self) -> "Settings":
         if self.db_pool_min_size > self.db_pool_max_size:
             raise ValueError("DB_POOL_MIN_SIZE cannot be greater than DB_POOL_MAX_SIZE")
-        if self.llm_structured_output_method not in {"json_schema", "function_calling", "json_mode"}:
-            raise ValueError("LLM_STRUCTURED_OUTPUT_METHOD must be json_schema, function_calling, or json_mode")
+        if self.llm_structured_output_method not in {
+            "json_schema",
+            "function_calling",
+            "json_mode",
+        }:
+            raise ValueError(
+                "LLM_STRUCTURED_OUTPUT_METHOD must be json_schema, function_calling, or json_mode"
+            )
         if self.mcp_api_key is None:
             self.mcp_api_key = self.internal_api_key
         if self.cache_backend.casefold() not in {"auto", "redis", "memory"}:
             raise ValueError("CACHE_BACKEND must be auto, redis, or memory")
         if self.redis_url is None and self.redis_password:
             password = quote(self.redis_password, safe="")
-            self.redis_url = f"redis://:{password}@{self.redis_host}:{self.redis_port}/0"
+            self.redis_url = (
+                f"redis://:{password}@{self.redis_host}:{self.redis_port}/0"
+            )
         return self
 
 

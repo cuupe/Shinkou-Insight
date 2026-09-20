@@ -22,7 +22,6 @@ from rag.hybrid import fuse_ranked_candidates
 from tools.search_quality import canonical_url, rank_web_evidence
 from tools.web import WebSearchError
 
-
 SourceSearch = Callable[[str, int], Awaitable[list[Evidence]]]
 
 
@@ -34,7 +33,9 @@ def _plain(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
-def _evidence(prefix: str, title: str, url: str, description: str, rank: int) -> Evidence | None:
+def _evidence(
+    prefix: str, title: str, url: str, description: str, rank: int
+) -> Evidence | None:
     title, url, description = _plain(title), _plain(url), _plain(description)
     if not title or not url:
         return None
@@ -53,7 +54,9 @@ def _evidence(prefix: str, title: str, url: str, description: str, rank: int) ->
 class MultiSourceWebSearch:
     """Route one query to general, paper, and technical source adapters."""
 
-    DEFAULT_SOURCES = frozenset({"general", "arxiv", "openalex", "crossref", "github", "stackoverflow"})
+    DEFAULT_SOURCES = frozenset(
+        {"general", "arxiv", "openalex", "crossref", "github", "stackoverflow"}
+    )
     SOURCE_WEIGHTS = {
         "general": 0.35,
         "arxiv": 0.18,
@@ -73,7 +76,11 @@ class MultiSourceWebSearch:
     ) -> None:
         self.client = client
         self.general = general
-        requested = {str(item).strip().casefold() for item in (sources or self.DEFAULT_SOURCES) if str(item).strip()}
+        requested = {
+            str(item).strip().casefold()
+            for item in (sources or self.DEFAULT_SOURCES)
+            if str(item).strip()
+        }
         self.sources = requested or set(self.DEFAULT_SOURCES)
         self.timeout_seconds = max(1.0, min(float(timeout_seconds), 30.0))
 
@@ -83,13 +90,23 @@ class MultiSourceWebSearch:
         technical = any(term in normalized for term in TECH_SEARCH_HINTS)
         selected = ["general"] if "general" in self.sources else []
         if paper:
-            selected.extend(item for item in ("arxiv", "openalex", "crossref") if item in self.sources)
+            selected.extend(
+                item
+                for item in ("arxiv", "openalex", "crossref")
+                if item in self.sources
+            )
         if technical:
-            selected.extend(item for item in ("github", "stackoverflow") if item in self.sources)
+            selected.extend(
+                item for item in ("github", "stackoverflow") if item in self.sources
+            )
         # Explicit source names in configuration can opt into all sources for
         # broad research. Generic chat remains one general request by default.
         if "all" in self.sources:
-            selected = [item for item in self.DEFAULT_SOURCES if item != "general" or "general" in self.sources]
+            selected = [
+                item
+                for item in self.DEFAULT_SOURCES
+                if item != "general" or "general" in self.sources
+            ]
         return list(dict.fromkeys(selected))
 
     async def search(self, query: str, top_k: int = 5) -> list[Evidence]:
@@ -102,9 +119,14 @@ class MultiSourceWebSearch:
             "github": self._search_github,
             "stackoverflow": self._search_stackoverflow,
         }
-        selected = [source for source in self._selected_sources(query) if source in handlers]
+        selected = [
+            source for source in self._selected_sources(query) if source in handlers
+        ]
         results = await asyncio.gather(
-            *(self._safe_search(source, handlers[source], query, limit) for source in selected),
+            *(
+                self._safe_search(source, handlers[source], query, limit)
+                for source in selected
+            ),
             return_exceptions=True,
         )
         if results and all(isinstance(result, BaseException) for result in results):
@@ -120,7 +142,9 @@ class MultiSourceWebSearch:
         fused = fuse_ranked_candidates(
             channels,
             method="WEIGHTED_RRF",
-            weights={source: self.SOURCE_WEIGHTS.get(source, 0.1) for source in channels},
+            weights={
+                source: self.SOURCE_WEIGHTS.get(source, 0.1) for source in channels
+            },
             rank_constant=60,
             rank_window_size=max(limit * 3, 10),
         )
@@ -139,8 +163,12 @@ class MultiSourceWebSearch:
                 break
         return rank_web_evidence(query, output, limit)
 
-    async def _safe_search(self, source: str, handler: SourceSearch, query: str, limit: int) -> list[Evidence]:
-        return await asyncio.wait_for(handler(query, limit), timeout=self.timeout_seconds)
+    async def _safe_search(
+        self, source: str, handler: SourceSearch, query: str, limit: int
+    ) -> list[Evidence]:
+        return await asyncio.wait_for(
+            handler(query, limit), timeout=self.timeout_seconds
+        )
 
     async def _get_json(self, url: str, params: dict[str, Any]) -> dict[str, Any]:
         response = await self.client.get(
@@ -156,9 +184,16 @@ class MultiSourceWebSearch:
     async def _search_arxiv(self, query: str, limit: int) -> list[Evidence]:
         response = await self.client.get(
             "https://export.arxiv.org/api/query",
-            params={"search_query": f"all:{query}", "start": 0, "max_results": max(limit, 5)},
+            params={
+                "search_query": f"all:{query}",
+                "start": 0,
+                "max_results": max(limit, 5),
+            },
             timeout=self.timeout_seconds,
-            headers={"Accept": "application/atom+xml", "User-Agent": "Shinkou-Insight/0.1"},
+            headers={
+                "Accept": "application/atom+xml",
+                "User-Agent": "Shinkou-Insight/0.1",
+            },
         )
         response.raise_for_status()
         root = ET.fromstring(response.text)
@@ -171,7 +206,8 @@ class MultiSourceWebSearch:
                 (
                     str(link.get("href"))
                     for link in entry.findall("atom:link", namespace)
-                    if str(link.get("title") or "").casefold() == "pdf" and link.get("href")
+                    if str(link.get("title") or "").casefold() == "pdf"
+                    and link.get("href")
                 ),
                 "",
             )
@@ -179,14 +215,21 @@ class MultiSourceWebSearch:
             summary = entry.findtext("atom:summary", default="", namespaces=namespace)
             item = _evidence("A", title, url, summary, rank)
             if item:
-                item.published_at = entry.findtext("atom:published", default="", namespaces=namespace) or None
+                item.published_at = (
+                    entry.findtext("atom:published", default="", namespaces=namespace)
+                    or None
+                )
                 items.append(item)
         return items[:limit]
 
     async def _search_openalex(self, query: str, limit: int) -> list[Evidence]:
         payload = await self._get_json(
             "https://api.openalex.org/works",
-            {"search": query, "per-page": max(limit, 5), "select": "id,title,doi,publication_year,abstract_inverted_index"},
+            {
+                "search": query,
+                "per-page": max(limit, 5),
+                "select": "id,title,doi,publication_year,abstract_inverted_index",
+            },
         )
         items: list[Evidence] = []
         for rank, work in enumerate(payload.get("results") or [], start=1):
@@ -194,13 +237,25 @@ class MultiSourceWebSearch:
                 continue
             abstract_index = work.get("abstract_inverted_index") or {}
             words = sorted(
-                ((position, word) for word, positions in abstract_index.items() for position in positions),
+                (
+                    (position, word)
+                    for word, positions in abstract_index.items()
+                    for position in positions
+                ),
                 key=lambda item: item[0],
             )
             abstract = " ".join(word for _position, word in words)
             location = work.get("primary_location") or {}
-            url = str(location.get("pdf_url") or work.get("doi") or work.get("id") or "")
-            item = _evidence("O", work.get("title"), url, f"{work.get('publication_year') or ''} {abstract}".strip(), rank)
+            url = str(
+                location.get("pdf_url") or work.get("doi") or work.get("id") or ""
+            )
+            item = _evidence(
+                "O",
+                work.get("title"),
+                url,
+                f"{work.get('publication_year') or ''} {abstract}".strip(),
+                rank,
+            )
             if item:
                 items.append(item)
         return items[:limit]
@@ -208,10 +263,16 @@ class MultiSourceWebSearch:
     async def _search_crossref(self, query: str, limit: int) -> list[Evidence]:
         payload = await self._get_json(
             "https://api.crossref.org/works",
-            {"query": query, "rows": max(limit, 5), "select": "DOI,title,author,published,abstract"},
+            {
+                "query": query,
+                "rows": max(limit, 5),
+                "select": "DOI,title,author,published,abstract",
+            },
         )
         items: list[Evidence] = []
-        for rank, work in enumerate((payload.get("message") or {}).get("items") or [], start=1):
+        for rank, work in enumerate(
+            (payload.get("message") or {}).get("items") or [], start=1
+        ):
             if not isinstance(work, dict):
                 continue
             title = (work.get("title") or [""])[0]
@@ -222,7 +283,9 @@ class MultiSourceWebSearch:
                 (
                     str(link.get("URL"))
                     for link in links
-                    if isinstance(link, dict) and "pdf" in str(link.get("content-type") or "").casefold() and link.get("URL")
+                    if isinstance(link, dict)
+                    and "pdf" in str(link.get("content-type") or "").casefold()
+                    and link.get("URL")
                 ),
                 "",
             )
@@ -240,7 +303,13 @@ class MultiSourceWebSearch:
         for rank, repo in enumerate(payload.get("items") or [], start=1):
             if not isinstance(repo, dict):
                 continue
-            item = _evidence("G", repo.get("full_name"), repo.get("html_url"), repo.get("description"), rank)
+            item = _evidence(
+                "G",
+                repo.get("full_name"),
+                repo.get("html_url"),
+                repo.get("description"),
+                rank,
+            )
             if item:
                 items.append(item)
         return items[:limit]
@@ -248,13 +317,25 @@ class MultiSourceWebSearch:
     async def _search_stackoverflow(self, query: str, limit: int) -> list[Evidence]:
         payload = await self._get_json(
             "https://api.stackexchange.com/2.3/search/advanced",
-            {"q": query, "site": "stackoverflow", "order": "desc", "sort": "relevance", "pagesize": max(limit, 5)},
+            {
+                "q": query,
+                "site": "stackoverflow",
+                "order": "desc",
+                "sort": "relevance",
+                "pagesize": max(limit, 5),
+            },
         )
         items: list[Evidence] = []
         for rank, result in enumerate(payload.get("items") or [], start=1):
             if not isinstance(result, dict):
                 continue
-            item = _evidence("S", result.get("title"), result.get("link"), "Stack Overflow question", rank)
+            item = _evidence(
+                "S",
+                result.get("title"),
+                result.get("link"),
+                "Stack Overflow question",
+                rank,
+            )
             if item:
                 items.append(item)
         return items[:limit]

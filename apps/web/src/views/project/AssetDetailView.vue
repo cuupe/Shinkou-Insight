@@ -55,7 +55,9 @@ function mapRemoteAsset(item: KnowledgeAsset): AssetViewModel {
     id: String(item.id),
     name: item.name,
     type: String(item.assetType || "FILE"),
-    size: item.fileSize ? String(Math.round(Number(item.fileSize) / 1024)) + " KB" : "—",
+    size: item.fileSize
+      ? String(Math.round(Number(item.fileSize) / 1024)) + " KB"
+      : "—",
     uploader: "—",
     updated: formatDateTime(item.updatedAt, "—"),
     chunks: Number(item.chunkCount || 0),
@@ -66,20 +68,22 @@ function mapRemoteAsset(item: KnowledgeAsset): AssetViewModel {
 }
 
 const remoteAsset = ref<AssetViewModel | null>(null);
-const asset = computed<AssetViewModel>(() =>
-  remoteAsset.value ??
-  (assets.find((item) => item.id === String(route.params.assetId)) as AssetViewModel | undefined) ?? {
-    id: "",
-    name: "",
-    type: "",
-    size: "—",
-    uploader: "—",
-    updated: "—",
-    chunks: 0,
-    progress: 0,
-    status: "indexing" as const,
-    reason: "",
-  },
+const asset = computed<AssetViewModel>(
+  () =>
+    remoteAsset.value ??
+    (assets.find((item) => item.id === String(route.params.assetId)) as
+      AssetViewModel | undefined) ?? {
+      id: "",
+      name: "",
+      type: "",
+      size: "—",
+      uploader: "—",
+      updated: "—",
+      chunks: 0,
+      progress: 0,
+      status: "indexing" as const,
+      reason: "",
+    },
 );
 const hasAsset = computed(() => Boolean(asset.value.id));
 const activeSection = ref<"preview" | "chunks">("preview");
@@ -93,8 +97,8 @@ const citationPage = computed(() => {
   return Number.isFinite(page) && page > 0 ? page : null;
 });
 const citationQuote = computed(() => String(route.query.quote || "").trim());
-const citationTargetRequested = computed(
-  () => Boolean(citationChunkId.value || citationPage.value || citationQuote.value),
+const citationTargetRequested = computed(() =>
+  Boolean(citationChunkId.value || citationPage.value || citationQuote.value),
 );
 const citationTargetMatched = ref(false);
 
@@ -102,17 +106,11 @@ onMounted(async () => {
   const assetId = String(route.params.assetId);
   try {
     const [detail, content, chunks] = await Promise.all([
-      assetsApi.detail(workspaceId.value, projectId.value, assetId).catch(() => null),
-      assetsApi.content(
-        workspaceId.value,
-        projectId.value,
-        assetId,
-      ),
-      assetsApi.chunks(
-        workspaceId.value,
-        projectId.value,
-        assetId,
-      ),
+      assetsApi
+        .detail(workspaceId.value, projectId.value, assetId)
+        .catch(() => null),
+      assetsApi.content(workspaceId.value, projectId.value, assetId),
+      assetsApi.chunks(workspaceId.value, projectId.value, assetId),
     ]);
     if (detail) remoteAsset.value = mapRemoteAsset(detail);
     remoteContent.value = content;
@@ -132,8 +130,8 @@ const previewParagraphs = computed(() =>
           : "暂无内容预览，资料完成解析后会展示原文内容。",
       ],
 );
-const previewTitle = computed(() =>
-  asset.value?.name.replace(/\.[^.]+$/, "") || "",
+const previewTitle = computed(
+  () => asset.value?.name.replace(/\.[^.]+$/, "") || "",
 );
 const chunkRows = computed(() =>
   remoteChunks.value.map((chunk, index) => ({
@@ -259,7 +257,6 @@ async function copyChunkId() {
     notify("复制失败，请手动选择 Chunk 标识");
   }
 }
-
 </script>
 
 <template>
@@ -269,232 +266,244 @@ async function copyChunkId() {
 
   <template v-if="hasAsset">
     <PageHeader
-    eyebrow="KNOWLEDGE / LIBRARY DETAIL"
-    :title="asset.name"
-    :subtitle="`${asset.type} · ${asset.size} · 上传者 ${asset.uploader}`"
-  >
-    <template #action>
-      <div class="heading-actions">
-        <button
-          class="button button-secondary"
-          type="button"
-          @click="downloadOriginal"
-        >
-          <Download :size="15" />下载原文件
-        </button>
-        <button
-          class="button button-primary"
-          type="button"
-          :disabled="reindexing"
-          @click="reindex"
-        >
-          <RefreshCw :size="15" :class="{ 'spin-icon': reindexing }" />
-          {{ reindexing ? "提交中" : "重新索引" }}
-        </button>
-      </div>
-    </template>
+      eyebrow="KNOWLEDGE / LIBRARY DETAIL"
+      :title="asset.name"
+      :subtitle="`${asset.type} · ${asset.size} · 上传者 ${asset.uploader}`"
+    >
+      <template #action>
+        <div class="heading-actions">
+          <button
+            class="button button-secondary"
+            type="button"
+            @click="downloadOriginal"
+          >
+            <Download :size="15" />下载原文件
+          </button>
+          <button
+            class="button button-primary"
+            type="button"
+            :disabled="reindexing"
+            @click="reindex"
+          >
+            <RefreshCw :size="15" :class="{ 'spin-icon': reindexing }" />
+            {{ reindexing ? "提交中" : "重新索引" }}
+          </button>
+        </div>
+      </template>
     </PageHeader>
     <div class="asset-status-strip">
-    <div class="status-overview">
-      <span class="status-badge" :class="statusClass(asset.status)">
-        <CheckCircle2 v-if="asset.status === 'indexed'" :size="13" />
-        <AlertTriangle v-else-if="asset.status === 'failed'" :size="13" />
-        <LoaderCircle v-else :size="13" class="spin-icon" />
-        {{ statusLabel(asset.status) }}
-      </span>
-      <p>{{ statusDescription }}</p>
-    </div>
-    <div class="detail-facts">
-      <div>
-        <span>{{ assetDetailCopy.chunksLabel }}</span
-        ><strong>{{ asset.chunks || "—" }}</strong>
+      <div class="status-overview">
+        <span class="status-badge" :class="statusClass(asset.status)">
+          <CheckCircle2 v-if="asset.status === 'indexed'" :size="13" />
+          <AlertTriangle v-else-if="asset.status === 'failed'" :size="13" />
+          <LoaderCircle v-else :size="13" class="spin-icon" />
+          {{ statusLabel(asset.status) }}
+        </span>
+        <p>{{ statusDescription }}</p>
       </div>
-      <div>
-        <span>{{ assetDetailCopy.progressLabel }}</span
-        ><strong>{{ asset.progress }}%</strong>
+      <div class="detail-facts">
+        <div>
+          <span>{{ assetDetailCopy.chunksLabel }}</span
+          ><strong>{{ asset.chunks || "—" }}</strong>
+        </div>
+        <div>
+          <span>{{ assetDetailCopy.progressLabel }}</span
+          ><strong>{{ asset.progress }}%</strong>
+        </div>
+        <div>
+          <span>{{ assetDetailCopy.updatedLabel }}</span
+          ><strong>{{ asset.updated }}</strong>
+        </div>
       </div>
-      <div>
-        <span>{{ assetDetailCopy.updatedLabel }}</span
-        ><strong>{{ asset.updated }}</strong>
-      </div>
-    </div>
     </div>
 
     <div v-if="asset.status === 'failed'" class="asset-error-banner">
-    <AlertTriangle :size="17" />
-    <div>
-      <strong>索引未完成</strong><span>{{ asset.reason }}</span>
-    </div>
-    <button class="button button-secondary" type="button" @click="reindex">
-      重新处理
-    </button>
+      <AlertTriangle :size="17" />
+      <div>
+        <strong>索引未完成</strong><span>{{ asset.reason }}</span>
+      </div>
+      <button class="button button-secondary" type="button" @click="reindex">
+        重新处理
+      </button>
     </div>
 
     <div class="asset-detail-layout">
-    <main class="asset-main-column">
-      <section class="panel document-panel">
-        <div class="panel-heading document-heading">
-          <div>
-            <h2>知识库内容</h2>
-            <p>查看原文片段、切片结构和 Agent 可引用内容。</p>
+      <main class="asset-main-column">
+        <section class="panel document-panel">
+          <div class="panel-heading document-heading">
+            <div>
+              <h2>知识库内容</h2>
+              <p>查看原文片段、切片结构和 Agent 可引用内容。</p>
+            </div>
+            <FileSearch :size="18" class="panel-heading-icon" />
           </div>
-          <FileSearch :size="18" class="panel-heading-icon" />
-        </div>
-        <div class="workspace-tabs" role="tablist" aria-label="知识库详情视图">
-          <button
-            type="button"
-            :class="{ active: activeSection === 'preview' }"
-            @click="activeSection = 'preview'"
+          <div
+            class="workspace-tabs"
+            role="tablist"
+            aria-label="知识库详情视图"
           >
-            内容预览
-          </button>
-          <button
-            type="button"
-            :class="{ active: activeSection === 'chunks' }"
-            @click="activeSection = 'chunks'"
-          >
-            Chunk 列表 <span>{{ asset.chunks || 0 }}</span>
-          </button>
-        </div>
-
-        <div v-if="activeSection === 'preview'" class="document-preview-wrap">
-          <div class="document-toolbar">
-            <span>{{ asset.type }} 文档预览</span
-            ><span>最后更新 {{ asset.updated }}</span>
-          </div>
-          <article class="document-preview">
-            <p class="document-kicker">PROJECT KNOWLEDGE BASE</p>
-            <h3>{{ previewTitle }}</h3>
-            <p v-for="paragraph in previewParagraphs" :key="paragraph">
-              {{ paragraph }}
-            </p>
-            <p class="preview-footnote">
-              内容由项目内容接口返回；分段、页码和原文定位以当前后端返回结果为准。
-            </p>
-          </article>
-        </div>
-
-        <div v-else class="chunk-workspace">
-          <div class="chunk-list">
             <button
-              v-for="chunk in chunkRows"
-              :key="chunk.index"
-              class="chunk-row"
-              :data-chunk-index="chunk.index"
-              :class="{ active: activeChunk === chunk.index }"
               type="button"
-              @click="activeChunk = chunk.index"
+              :class="{ active: activeSection === 'preview' }"
+              @click="activeSection = 'preview'"
             >
-              <span>{{ String(chunk.index + 1).padStart(2, "0") }}</span
-              ><strong>{{ chunk.title }}</strong
-              ><small>{{ chunk.label }}</small>
+              内容预览
+            </button>
+            <button
+              type="button"
+              :class="{ active: activeSection === 'chunks' }"
+              @click="activeSection = 'chunks'"
+            >
+              Chunk 列表 <span>{{ asset.chunks || 0 }}</span>
             </button>
           </div>
-          <div class="chunk-reader">
-            <div v-if="citationTargetRequested" class="citation-target-note">
-              {{
-                citationTargetMatched
-                  ? "已定位到对话引用的原文片段"
-                  : "已打开引用资料，但未找到精确 Chunk，已展示片段列表"
-              }}
+
+          <div v-if="activeSection === 'preview'" class="document-preview-wrap">
+            <div class="document-toolbar">
+              <span>{{ asset.type }} 文档预览</span
+              ><span>最后更新 {{ asset.updated }}</span>
             </div>
-            <div class="chunk-reader-heading">
-              <span>{{ activeChunkRow?.label }}</span
-              ><small>可引用片段</small>
-            </div>
-            <h3>{{ activeChunkRow?.title }}</h3>
-            <p>{{ activeChunkRow?.snippet }}</p>
-            <div class="chunk-reader-meta">
-              <span>来源：{{ asset.name }}</span
-              ><button type="button" :disabled="!activeChunkRow?.chunkId" @click="copyChunkId">
-                复制标识
+            <article class="document-preview">
+              <p class="document-kicker">PROJECT KNOWLEDGE BASE</p>
+              <h3>{{ previewTitle }}</h3>
+              <p v-for="paragraph in previewParagraphs" :key="paragraph">
+                {{ paragraph }}
+              </p>
+              <p class="preview-footnote">
+                内容由项目内容接口返回；分段、页码和原文定位以当前后端返回结果为准。
+              </p>
+            </article>
+          </div>
+
+          <div v-else class="chunk-workspace">
+            <div class="chunk-list">
+              <button
+                v-for="chunk in chunkRows"
+                :key="chunk.index"
+                class="chunk-row"
+                :data-chunk-index="chunk.index"
+                :class="{ active: activeChunk === chunk.index }"
+                type="button"
+                @click="activeChunk = chunk.index"
+              >
+                <span>{{ String(chunk.index + 1).padStart(2, "0") }}</span
+                ><strong>{{ chunk.title }}</strong
+                ><small>{{ chunk.label }}</small>
               </button>
             </div>
-          </div>
-        </div>
-      </section>
-    </main>
-
-    <aside class="asset-meta-column">
-      <section class="panel metadata-panel">
-        <div class="panel-heading">
-          <div>
-            <h2>资料信息</h2>
-            <p>用于后端详情接口的字段预览。</p>
-          </div>
-        </div>
-        <dl>
-          <div>
-            <dt>文件名</dt>
-            <dd :title="asset.name">{{ asset.name }}</dd>
-          </div>
-          <div>
-            <dt>文件类型</dt>
-            <dd>{{ asset.type }}</dd>
-          </div>
-          <div>
-            <dt>文件大小</dt>
-            <dd>{{ asset.size }}</dd>
-          </div>
-          <div>
-            <dt>上传者</dt>
-            <dd>{{ asset.uploader }}</dd>
-          </div>
-          <div>
-            <dt>Chunk 数量</dt>
-            <dd class="mono">{{ asset.chunks }}</dd>
-          </div>
-          <div>
-            <dt>索引状态</dt>
-            <dd>{{ statusLabel(asset.status) }}</dd>
-          </div>
-        </dl>
-      </section>
-
-      <section class="panel index-status-panel">
-        <div class="panel-heading">
-          <div>
-            <h2>处理进度</h2>
-            <p>{{ assetDetailCopy.subtitle }}</p>
-          </div>
-        </div>
-        <div class="index-timeline">
-          <div
-            v-for="step in indexSteps"
-            :key="step.label"
-            class="index-step"
-            :class="`is-${step.state}`"
-          >
-            <span class="index-step-dot" />
-            <div>
-              <strong>{{ step.label }}</strong
-              ><small>{{
-                step.state === "done"
-                  ? "已完成"
-                  : step.state === "active"
-                    ? "进行中"
-                    : step.state === "error"
-                      ? "需要处理"
-                      : "等待中"
-              }}</small>
+            <div class="chunk-reader">
+              <div v-if="citationTargetRequested" class="citation-target-note">
+                {{
+                  citationTargetMatched
+                    ? "已定位到对话引用的原文片段"
+                    : "已打开引用资料，但未找到精确 Chunk，已展示片段列表"
+                }}
+              </div>
+              <div class="chunk-reader-heading">
+                <span>{{ activeChunkRow?.label }}</span
+                ><small>可引用片段</small>
+              </div>
+              <h3>{{ activeChunkRow?.title }}</h3>
+              <p>{{ activeChunkRow?.snippet }}</p>
+              <div class="chunk-reader-meta">
+                <span>来源：{{ asset.name }}</span
+                ><button
+                  type="button"
+                  :disabled="!activeChunkRow?.chunkId"
+                  @click="copyChunkId"
+                >
+                  复制标识
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
+      </main>
 
-      <div class="security-note">
-        <ShieldCheck :size="17" /><span>{{
-          assetDetailCopy.securityNote
-        }}</span>
-      </div>
-    </aside>
+      <aside class="asset-meta-column">
+        <section class="panel metadata-panel">
+          <div class="panel-heading">
+            <div>
+              <h2>资料信息</h2>
+              <p>用于后端详情接口的字段预览。</p>
+            </div>
+          </div>
+          <dl>
+            <div>
+              <dt>文件名</dt>
+              <dd :title="asset.name">{{ asset.name }}</dd>
+            </div>
+            <div>
+              <dt>文件类型</dt>
+              <dd>{{ asset.type }}</dd>
+            </div>
+            <div>
+              <dt>文件大小</dt>
+              <dd>{{ asset.size }}</dd>
+            </div>
+            <div>
+              <dt>上传者</dt>
+              <dd>{{ asset.uploader }}</dd>
+            </div>
+            <div>
+              <dt>Chunk 数量</dt>
+              <dd class="mono">{{ asset.chunks }}</dd>
+            </div>
+            <div>
+              <dt>索引状态</dt>
+              <dd>{{ statusLabel(asset.status) }}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="panel index-status-panel">
+          <div class="panel-heading">
+            <div>
+              <h2>处理进度</h2>
+              <p>{{ assetDetailCopy.subtitle }}</p>
+            </div>
+          </div>
+          <div class="index-timeline">
+            <div
+              v-for="step in indexSteps"
+              :key="step.label"
+              class="index-step"
+              :class="`is-${step.state}`"
+            >
+              <span class="index-step-dot" />
+              <div>
+                <strong>{{ step.label }}</strong
+                ><small>{{
+                  step.state === "done"
+                    ? "已完成"
+                    : step.state === "active"
+                      ? "进行中"
+                      : step.state === "error"
+                        ? "需要处理"
+                        : "等待中"
+                }}</small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div class="security-note">
+          <ShieldCheck :size="17" /><span>{{
+            assetDetailCopy.securityNote
+          }}</span>
+        </div>
+      </aside>
     </div>
   </template>
   <div v-else class="empty-detail-state asset-detail-empty">
     <FileSearch :size="24" />
     <strong>暂无资料详情</strong>
     <span>该资料不存在、尚未加载完成，或当前项目还没有知识库资料。</span>
-    <button class="button button-secondary button-sm" type="button" @click="goBack">
+    <button
+      class="button button-secondary button-sm"
+      type="button"
+      @click="goBack"
+    >
       返回知识库
     </button>
   </div>

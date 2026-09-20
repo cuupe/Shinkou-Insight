@@ -73,9 +73,14 @@ function syncChunkingConfig(project: typeof selectedProject.value) {
     parsed = raw as Record<string, unknown>;
   }
   chunkingConfig.strategy = String(parsed.strategy || "natural");
-  chunkingConfig.chunkSize = Number(parsed.chunkSize || parsed.chunk_size || 1200);
-  chunkingConfig.chunkOverlap = Number(parsed.chunkOverlap || parsed.chunk_overlap || 180);
-  chunkingConfig.preserveSections = parsed.preserveSections !== false && parsed.preserve_sections !== false;
+  chunkingConfig.chunkSize = Number(
+    parsed.chunkSize || parsed.chunk_size || 1200,
+  );
+  chunkingConfig.chunkOverlap = Number(
+    parsed.chunkOverlap || parsed.chunk_overlap || 180,
+  );
+  chunkingConfig.preserveSections =
+    parsed.preserveSections !== false && parsed.preserve_sections !== false;
   chunkingError.value = "";
 }
 
@@ -96,17 +101,29 @@ async function saveChunkingConfig() {
   chunkingSaving.value = true;
   chunkingError.value = "";
   try {
-    const saved = await projectApi.updateChunking(workspaceId.value, projectId.value, {
+    const saved = await projectApi.updateChunking(
+      workspaceId.value,
+      projectId.value,
+      {
+        strategy: chunkingConfig.strategy,
+        chunkSize,
+        chunkOverlap,
+        preserveSections: chunkingConfig.preserveSections,
+      },
+    );
+    Object.assign(chunkingConfig, {
       strategy: chunkingConfig.strategy,
       chunkSize,
       chunkOverlap,
       preserveSections: chunkingConfig.preserveSections,
     });
-    Object.assign(chunkingConfig, { strategy: chunkingConfig.strategy, chunkSize, chunkOverlap, preserveSections: chunkingConfig.preserveSections });
     Object.assign(selectedProject.value, saved);
     notify("切分设置已保存；对已有资料重新索引后生效");
   } catch (error) {
-    chunkingError.value = getApiErrorMessage(error, "切分设置保存失败，请稍后重试");
+    chunkingError.value = getApiErrorMessage(
+      error,
+      "切分设置保存失败，请稍后重试",
+    );
   } finally {
     chunkingSaving.value = false;
   }
@@ -123,7 +140,9 @@ function mapAsset(asset: Awaited<ReturnType<typeof assetsApi.detail>>) {
     id: String(asset.id),
     name: asset.name,
     type: asset.assetType,
-    size: asset.fileSize ? `${Math.round(Number(asset.fileSize) / 1024)} KB` : "—",
+    size: asset.fileSize
+      ? `${Math.round(Number(asset.fileSize) / 1024)} KB`
+      : "—",
     uploader: "—",
     updated: formatDateTime(asset.updatedAt, "—"),
     chunks: asset.chunkCount || 0,
@@ -323,9 +342,7 @@ async function confirmDelete() {
   const removeIds = new Set(ids);
   try {
     await Promise.all(
-      ids.map((id) =>
-        assetsApi.remove(workspaceId.value, projectId.value, id),
-      ),
+      ids.map((id) => assetsApi.remove(workspaceId.value, projectId.value, id)),
     );
   } catch (error) {
     notify(error instanceof Error ? error.message : "资料移除失败");
@@ -442,12 +459,26 @@ onUnmounted(stopIndexPolling);
       </label>
       <label>
         <span>每块长度</span>
-        <input v-model.number="chunkingConfig.chunkSize" type="number" min="400" max="4000" step="50" aria-label="设置每块长度" />
+        <input
+          v-model.number="chunkingConfig.chunkSize"
+          type="number"
+          min="400"
+          max="4000"
+          step="50"
+          aria-label="设置每块长度"
+        />
         <small>400–4000 字符</small>
       </label>
       <label>
         <span>上下文重叠</span>
-        <input v-model.number="chunkingConfig.chunkOverlap" type="number" min="0" max="1200" step="20" aria-label="设置上下文重叠长度" />
+        <input
+          v-model.number="chunkingConfig.chunkOverlap"
+          type="number"
+          min="0"
+          max="1200"
+          step="20"
+          aria-label="设置上下文重叠长度"
+        />
         <small>必须小于每块长度</small>
       </label>
       <label class="chunking-checkbox">
@@ -457,9 +488,18 @@ onUnmounted(stopIndexPolling);
       </label>
     </div>
     <div class="chunking-settings-footer">
-      <p v-if="chunkingError" class="chunking-error" role="alert">{{ chunkingError }}</p>
-      <p v-else>保存后只影响新的索引任务；已有资料请点击“重新索引”应用新规则。</p>
-      <button class="button button-secondary button-compact" type="button" :disabled="chunkingSaving" @click="saveChunkingConfig">
+      <p v-if="chunkingError" class="chunking-error" role="alert">
+        {{ chunkingError }}
+      </p>
+      <p v-else>
+        保存后只影响新的索引任务；已有资料请点击“重新索引”应用新规则。
+      </p>
+      <button
+        class="button button-secondary button-compact"
+        type="button"
+        :disabled="chunkingSaving"
+        @click="saveChunkingConfig"
+      >
         {{ chunkingSaving ? "保存中…" : "保存切分设置" }}
       </button>
     </div>
@@ -838,7 +878,11 @@ onUnmounted(stopIndexPolling);
 .asset-table-panel {
   overflow: visible;
   --asset-status-indexed-text: #0d9586;
-  --asset-status-indexed-bg: color-mix(in oklab, var(--teal) 12%, var(--surface));
+  --asset-status-indexed-bg: color-mix(
+    in oklab,
+    var(--teal) 12%,
+    var(--surface)
+  );
   --asset-status-indexing-text: #bc7d1d;
   --asset-status-indexing-bg: color-mix(in oklab, #efa92e 14%, var(--surface));
   --asset-status-failed-text: #ce5b5b;

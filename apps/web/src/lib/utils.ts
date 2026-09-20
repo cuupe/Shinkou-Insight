@@ -30,12 +30,14 @@ export function dateFormatWithday(zone: string, date: Date) {
     return null;
   }
 
-  return date.toLocaleDateString("zh-CN", {
-    timeZone: resolveTimeZone(zone),
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).replace(/\//g, "-");
+  return date
+    .toLocaleDateString("zh-CN", {
+      timeZone: resolveTimeZone(zone),
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    })
+    .replace(/\//g, "-");
 }
 
 export function dateFormatWithseconds(zone: string, date: Date) {
@@ -85,9 +87,11 @@ export function formatDateTime(
 
   if (typeof value !== "string" && typeof value !== "number") return fallback;
 
-  return String(value)
-    .trim()
-    .replace("T", " ")
-    .replace(/\.\d+(?=(Z|[+-]\d{2}:?\d{2})?$)/, "")
-    .replace(/Z$/, "") || fallback;
+  return (
+    String(value)
+      .trim()
+      .replace("T", " ")
+      .replace(/\.\d+(?=(Z|[+-]\d{2}:?\d{2})?$)/, "")
+      .replace(/Z$/, "") || fallback
+  );
 }

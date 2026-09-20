@@ -16,14 +16,47 @@ import {
 import { useWorkspace } from "@/composables/useWorkspace";
 import PageHeader from "@/components/common/PageHeader.vue";
 import TokenUsageChart from "@/components/common/TokenUsageChart.vue";
-const { selectedProject, router, routeTo, assets, recentRuns, reports, actionItems, statusClass, statistics } =
-  useWorkspace();
+const {
+  selectedProject,
+  router,
+  routeTo,
+  assets,
+  recentRuns,
+  reports,
+  actionItems,
+  statusClass,
+  statistics,
+} = useWorkspace();
 
 const quickActions = [
-  { label: "启动项目 Agent", description: "从目标开始，串联规划、搜集与审查", route: "project-agent-chat", tone: "violet", icon: MessageCircle },
-  { label: "查看规划中枢", description: "目标、竞品、可行性与计划书", route: "project-planning", tone: "teal", icon: ClipboardList },
-  { label: "查看审查中心", description: "引用门禁与反虚构规则", route: "project-review", tone: "amber", icon: FileCheck2 },
-  { label: "上传项目资料", description: "PDF、Markdown、TXT", route: "project-assets", tone: "blue", icon: Database },
+  {
+    label: "启动项目 Agent",
+    description: "从目标开始，串联规划、搜集与审查",
+    route: "project-agent-chat",
+    tone: "violet",
+    icon: MessageCircle,
+  },
+  {
+    label: "查看规划中枢",
+    description: "目标、竞品、可行性与计划书",
+    route: "project-planning",
+    tone: "teal",
+    icon: ClipboardList,
+  },
+  {
+    label: "查看审查中心",
+    description: "引用门禁与反虚构规则",
+    route: "project-review",
+    tone: "amber",
+    icon: FileCheck2,
+  },
+  {
+    label: "上传项目资料",
+    description: "PDF、Markdown、TXT",
+    route: "project-assets",
+    tone: "blue",
+    icon: Database,
+  },
 ];
 
 const indexedCount = computed(
@@ -38,7 +71,8 @@ const tokenUsage = computed(() => statistics.value?.tokenUsage);
 const tokenDaily = computed(() => statistics.value?.tokenDaily || []);
 const tokenUsers = computed(() => statistics.value?.tokenUsers || []);
 const tokenBreakdown = computed(() => {
-  if (statistics.value?.tokenBreakdown?.length) return statistics.value.tokenBreakdown;
+  if (statistics.value?.tokenBreakdown?.length)
+    return statistics.value.tokenBreakdown;
   return tokenUsers.value.map((user) => ({
     projectId: selectedProject.value?.id || 0,
     projectName: selectedProject.value?.name || "当前项目",
@@ -51,13 +85,19 @@ const tokenBreakdown = computed(() => {
     runCount: user.runCount,
   }));
 });
-const tokenChartItems = computed(() => tokenBreakdown.value.map((item) => ({
-  label: `${item.userName || `用户 ${item.userId}`} · ${item.modelName || "模型未标注"}`,
-  detail: `${item.projectName || "当前项目"} · ${item.runCount} 次运行`,
-  tokens: Number(item.totalTokens) || 0,
-})));
-const maxDailyTokens = computed(() => Math.max(1, ...tokenDaily.value.map((item) => Number(item.tokens) || 0)));
-const maxHeatTokens = computed(() => Math.max(1, ...tokenDaily.value.map((item) => Number(item.tokens) || 0)));
+const tokenChartItems = computed(() =>
+  tokenBreakdown.value.map((item) => ({
+    label: `${item.userName || `用户 ${item.userId}`} · ${item.modelName || "模型未标注"}`,
+    detail: `${item.projectName || "当前项目"} · ${item.runCount} 次运行`,
+    tokens: Number(item.totalTokens) || 0,
+  })),
+);
+const maxDailyTokens = computed(() =>
+  Math.max(1, ...tokenDaily.value.map((item) => Number(item.tokens) || 0)),
+);
+const maxHeatTokens = computed(() =>
+  Math.max(1, ...tokenDaily.value.map((item) => Number(item.tokens) || 0)),
+);
 const qualityAverage = computed(() => {
   const values = [
     projectSummary.value?.avgRecall,
@@ -69,34 +109,40 @@ const qualityAverage = computed(() => {
 });
 function statisticStatusLabel(status: string) {
   return (
-    {
-      QUEUED: "排队中",
-      PENDING: "待处理",
-      RUNNING: "运行中",
-      PROCESSING: "处理中",
-      COMPLETED: "已完成",
-      SUCCESS: "成功",
-      FAILED: "失败",
-      CANCELLED: "已取消",
-      CANCELED: "已取消",
-      INDEXING: "索引中",
-      INDEXED: "已索引",
-      DRAFT: "草稿",
-      TODO: "待办",
-      IN_PROGRESS: "进行中",
-      DONE: "已完成",
-    } as Record<string, string>
-  )[status] || status;
+    (
+      {
+        QUEUED: "排队中",
+        PENDING: "待处理",
+        RUNNING: "运行中",
+        PROCESSING: "处理中",
+        COMPLETED: "已完成",
+        SUCCESS: "成功",
+        FAILED: "失败",
+        CANCELLED: "已取消",
+        CANCELED: "已取消",
+        INDEXING: "索引中",
+        INDEXED: "已索引",
+        DRAFT: "草稿",
+        TODO: "待办",
+        IN_PROGRESS: "进行中",
+        DONE: "已完成",
+      } as Record<string, string>
+    )[status] || status
+  );
 }
 const capabilities = computed(() => [
   {
     title: assets.length ? "知识库已就绪" : "知识库暂无资料",
-    description: assets.length ? "支持查看真实索引状态" : "上传资料后这里会显示索引状态",
+    description: assets.length
+      ? "支持查看真实索引状态"
+      : "上传资料后这里会显示索引状态",
     icon: "database",
   },
   {
     title: recentRuns.length ? "已有调研运行" : "暂无调研运行",
-    description: recentRuns.length ? "可查看项目内真实任务进展" : "已有调研运行后这里会显示进展",
+    description: recentRuns.length
+      ? "可查看项目内真实任务进展"
+      : "已有调研运行后这里会显示进展",
     icon: "zap",
   },
 ]);
@@ -128,8 +174,17 @@ function downloadText(name: string, content: string, type: string) {
 }
 
 function exportTokenCsv() {
-  const rows = ["date,tokens,runs", ...tokenDaily.value.map((item) => `${item.date},${item.tokens},${item.runs}`)];
-  downloadText("project-token-usage.csv", `\ufeff${rows.join("\n")}\n`, "text/csv;charset=utf-8");
+  const rows = [
+    "date,tokens,runs",
+    ...tokenDaily.value.map(
+      (item) => `${item.date},${item.tokens},${item.runs}`,
+    ),
+  ];
+  downloadText(
+    "project-token-usage.csv",
+    `\ufeff${rows.join("\n")}\n`,
+    "text/csv;charset=utf-8",
+  );
 }
 
 function exportProjectSnapshot() {
@@ -167,14 +222,28 @@ function exportProjectSnapshot() {
       <span class="quick-icon" :class="`${action.tone}-bg`">
         <component :is="action.icon" :size="18" />
       </span>
-      <span><strong>{{ action.label }}</strong><small>{{ action.description }}</small></span>
+      <span
+        ><strong>{{ action.label }}</strong
+        ><small>{{ action.description }}</small></span
+      >
       <ArrowRight :size="15" />
     </button>
   </div>
   <section class="planning-callout panel">
     <div class="planning-callout-icon"><ClipboardList :size="18" /></div>
-    <div><strong>把一次调研升级为可审查的项目计划</strong><p>系统会沿着目标、证据、市场对比、可行性和人工签署逐步收敛，引用不足的结论不会直接进入发布版本。</p></div>
-    <button class="button button-primary button-sm" type="button" @click="router.push(routeTo('project-agent-chat'))">启动 Agent <ArrowRight :size="14" /></button>
+    <div>
+      <strong>把一次调研升级为可审查的项目计划</strong>
+      <p>
+        系统会沿着目标、证据、市场对比、可行性和人工签署逐步收敛，引用不足的结论不会直接进入发布版本。
+      </p>
+    </div>
+    <button
+      class="button button-primary button-sm"
+      type="button"
+      @click="router.push(routeTo('project-agent-chat'))"
+    >
+      启动 Agent <ArrowRight :size="14" />
+    </button>
   </section>
   <section class="panel project-statistics-panel">
     <div class="panel-heading">
@@ -185,28 +254,79 @@ function exportProjectSnapshot() {
       <span class="statistics-source">实时汇总</span>
     </div>
     <div class="project-stat-grid">
-      <div><strong>{{ projectSummary?.assetCount ?? 0 }}</strong><span>资料 · {{ projectSummary?.chunkCount ?? 0 }} 个分块</span></div>
-      <div><strong>{{ projectSummary?.runCount ?? 0 }}</strong><span>调研运行 · {{ projectSummary?.completedRunCount ?? 0 }} 个完成</span></div>
-      <div><strong>{{ projectSummary?.reportCount ?? 0 }}</strong><span>报告 · {{ projectSummary?.publishedReportCount ?? 0 }} 份已发布</span></div>
-      <div><strong>{{ projectSummary?.openActionItemCount ?? 0 }}</strong><span>待跟进行动 · {{ projectSummary?.overdueActionItemCount ?? 0 }} 个逾期</span></div>
-      <div><strong>{{ qualityAverage }}</strong><span>评估综合均值 · {{ projectSummary?.evaluationCaseCount ?? 0 }} 个用例</span></div>
-      <div><strong>{{ projectSummary?.unreadNotificationCount ?? 0 }}</strong><span>未读通知</span></div>
+      <div>
+        <strong>{{ projectSummary?.assetCount ?? 0 }}</strong
+        ><span>资料 · {{ projectSummary?.chunkCount ?? 0 }} 个分块</span>
+      </div>
+      <div>
+        <strong>{{ projectSummary?.runCount ?? 0 }}</strong
+        ><span
+          >调研运行 · {{ projectSummary?.completedRunCount ?? 0 }} 个完成</span
+        >
+      </div>
+      <div>
+        <strong>{{ projectSummary?.reportCount ?? 0 }}</strong
+        ><span
+          >报告 · {{ projectSummary?.publishedReportCount ?? 0 }} 份已发布</span
+        >
+      </div>
+      <div>
+        <strong>{{ projectSummary?.openActionItemCount ?? 0 }}</strong
+        ><span
+          >待跟进行动 ·
+          {{ projectSummary?.overdueActionItemCount ?? 0 }} 个逾期</span
+        >
+      </div>
+      <div>
+        <strong>{{ qualityAverage }}</strong
+        ><span
+          >评估综合均值 ·
+          {{ projectSummary?.evaluationCaseCount ?? 0 }} 个用例</span
+        >
+      </div>
+      <div>
+        <strong>{{ projectSummary?.unreadNotificationCount ?? 0 }}</strong
+        ><span>未读通知</span>
+      </div>
     </div>
     <div class="statistics-breakdowns">
       <div>
         <span class="breakdown-title">运行状态</span>
-        <span v-for="item in (statistics?.runStatuses || [])" :key="`run-${item.status}`" class="breakdown-item">{{ statisticStatusLabel(item.status) }} {{ item.count }}</span>
-        <span v-if="!statistics?.runStatuses?.length" class="breakdown-empty">暂无运行数据</span>
+        <span
+          v-for="item in statistics?.runStatuses || []"
+          :key="`run-${item.status}`"
+          class="breakdown-item"
+          >{{ statisticStatusLabel(item.status) }} {{ item.count }}</span
+        >
+        <span v-if="!statistics?.runStatuses?.length" class="breakdown-empty"
+          >暂无运行数据</span
+        >
       </div>
       <div>
         <span class="breakdown-title">资料索引</span>
-        <span v-for="item in (statistics?.assetStatuses || [])" :key="`asset-${item.status}`" class="breakdown-item">{{ statisticStatusLabel(item.status) }} {{ item.count }}</span>
-        <span v-if="!statistics?.assetStatuses?.length" class="breakdown-empty">暂无资料数据</span>
+        <span
+          v-for="item in statistics?.assetStatuses || []"
+          :key="`asset-${item.status}`"
+          class="breakdown-item"
+          >{{ statisticStatusLabel(item.status) }} {{ item.count }}</span
+        >
+        <span v-if="!statistics?.assetStatuses?.length" class="breakdown-empty"
+          >暂无资料数据</span
+        >
       </div>
       <div>
         <span class="breakdown-title">行动状态</span>
-        <span v-for="item in (statistics?.actionItemStatuses || [])" :key="`action-${item.status}`" class="breakdown-item">{{ statisticStatusLabel(item.status) }} {{ item.count }}</span>
-        <span v-if="!statistics?.actionItemStatuses?.length" class="breakdown-empty">暂无行动数据</span>
+        <span
+          v-for="item in statistics?.actionItemStatuses || []"
+          :key="`action-${item.status}`"
+          class="breakdown-item"
+          >{{ statisticStatusLabel(item.status) }} {{ item.count }}</span
+        >
+        <span
+          v-if="!statistics?.actionItemStatuses?.length"
+          class="breakdown-empty"
+          >暂无行动数据</span
+        >
       </div>
     </div>
   </section>
@@ -217,21 +337,51 @@ function exportProjectSnapshot() {
         <p>按真实运行记录统计；颜色越深表示当天消耗越高</p>
       </div>
       <div class="usage-actions">
-        <button class="text-button" type="button" @click="exportTokenCsv"><Download :size="14" />导出 CSV</button>
-        <button class="text-button" type="button" @click="exportProjectSnapshot"><Download :size="14" />导出项目快照</button>
+        <button class="text-button" type="button" @click="exportTokenCsv">
+          <Download :size="14" />导出 CSV
+        </button>
+        <button
+          class="text-button"
+          type="button"
+          @click="exportProjectSnapshot"
+        >
+          <Download :size="14" />导出项目快照
+        </button>
       </div>
     </div>
     <div class="token-summary-grid">
-      <div><strong>{{ formatTokens(tokenUsage?.totalTokens) }}</strong><span>总 Tokens</span></div>
-      <div><strong>{{ formatTokens(tokenUsage?.inputTokens) }}</strong><span>输入 Tokens</span></div>
-      <div><strong>{{ formatTokens(tokenUsage?.outputTokens) }}</strong><span>输出 Tokens</span></div>
-      <div><strong>{{ formatTokens(tokenUsage?.compressedContextTokens) }}</strong><span>压缩节省估算</span></div>
-      <div><strong>{{ formatTokens(tokenUsage?.runCount) }}</strong><span>计费运行次数</span></div>
+      <div>
+        <strong>{{ formatTokens(tokenUsage?.totalTokens) }}</strong
+        ><span>总 Tokens</span>
+      </div>
+      <div>
+        <strong>{{ formatTokens(tokenUsage?.inputTokens) }}</strong
+        ><span>输入 Tokens</span>
+      </div>
+      <div>
+        <strong>{{ formatTokens(tokenUsage?.outputTokens) }}</strong
+        ><span>输出 Tokens</span>
+      </div>
+      <div>
+        <strong>{{ formatTokens(tokenUsage?.compressedContextTokens) }}</strong
+        ><span>压缩节省估算</span>
+      </div>
+      <div>
+        <strong>{{ formatTokens(tokenUsage?.runCount) }}</strong
+        ><span>计费运行次数</span>
+      </div>
     </div>
     <div class="token-usage-grid">
       <div class="token-heatmap-card">
-        <div class="usage-subheading"><strong>近 {{ tokenDaily.length || 30 }} 天</strong><span>每日使用量</span></div>
-        <div v-if="tokenDaily.length" class="token-heatmap" aria-label="每日 Token 使用热力图">
+        <div class="usage-subheading">
+          <strong>近 {{ tokenDaily.length || 30 }} 天</strong
+          ><span>每日使用量</span>
+        </div>
+        <div
+          v-if="tokenDaily.length"
+          class="token-heatmap"
+          aria-label="每日 Token 使用热力图"
+        >
           <span
             v-for="point in tokenDaily"
             :key="point.date"
@@ -241,21 +391,57 @@ function exportProjectSnapshot() {
           />
         </div>
         <p v-else class="usage-empty">暂无真实 Token 记录</p>
-        <div class="heatmap-legend"><span>少</span><i class="level-0" /><i class="level-1" /><i class="level-2" /><i class="level-3" /><i class="level-4" /><span>多</span></div>
-        <div v-if="tokenDaily.length" class="daily-bars" aria-label="每日 Token 柱状图">
-          <span v-for="point in tokenDaily" :key="`bar-${point.date}`" :title="`${point.date} · ${formatTokens(point.tokens)} tokens`"><i :style="{ height: `${Math.max(3, ((Number(point.tokens) || 0) / maxDailyTokens) * 100)}%` }" /></span>
+        <div class="heatmap-legend">
+          <span>少</span><i class="level-0" /><i class="level-1" /><i
+            class="level-2"
+          /><i class="level-3" /><i class="level-4" /><span>多</span>
+        </div>
+        <div
+          v-if="tokenDaily.length"
+          class="daily-bars"
+          aria-label="每日 Token 柱状图"
+        >
+          <span
+            v-for="point in tokenDaily"
+            :key="`bar-${point.date}`"
+            :title="`${point.date} · ${formatTokens(point.tokens)} tokens`"
+            ><i
+              :style="{
+                height: `${Math.max(3, ((Number(point.tokens) || 0) / maxDailyTokens) * 100)}%`,
+              }"
+          /></span>
         </div>
       </div>
       <div class="token-users-card">
-        <div class="usage-subheading"><strong>按项目 / 用户 / 模型</strong><span>每条均来自真实运行记录</span></div>
-        <TokenUsageChart v-if="tokenChartItems.length" :items="tokenChartItems" />
+        <div class="usage-subheading">
+          <strong>按项目 / 用户 / 模型</strong
+          ><span>每条均来自真实运行记录</span>
+        </div>
+        <TokenUsageChart
+          v-if="tokenChartItems.length"
+          :items="tokenChartItems"
+        />
         <p v-else class="usage-empty">暂无真实 Token 记录</p>
         <div v-if="tokenBreakdown.length" class="token-breakdown-table">
-          <div class="token-breakdown-row token-breakdown-header"><span>用户</span><span>模型</span><span>运行 / Tokens</span></div>
-          <div v-for="item in tokenBreakdown" :key="`${item.projectId}-${item.userId}-${item.modelName}`" class="token-breakdown-row">
-            <span>{{ item.userName || `用户 ${item.userId}` }}<small>{{ item.projectName }}</small></span>
-            <span class="model-label">{{ item.modelName || "模型未标注" }}</span>
-            <span>{{ item.runCount }} 次 · {{ formatTokens(item.totalTokens) }}</span>
+          <div class="token-breakdown-row token-breakdown-header">
+            <span>用户</span><span>模型</span><span>运行 / Tokens</span>
+          </div>
+          <div
+            v-for="item in tokenBreakdown"
+            :key="`${item.projectId}-${item.userId}-${item.modelName}`"
+            class="token-breakdown-row"
+          >
+            <span
+              >{{ item.userName || `用户 ${item.userId}`
+              }}<small>{{ item.projectName }}</small></span
+            >
+            <span class="model-label">{{
+              item.modelName || "模型未标注"
+            }}</span>
+            <span
+              >{{ item.runCount }} 次 ·
+              {{ formatTokens(item.totalTokens) }}</span
+            >
           </div>
         </div>
       </div>
@@ -285,10 +471,15 @@ function exportProjectSnapshot() {
           <strong class="teal-text">{{ indexedCount }}</strong
           ><span>已索引</span>
         </div>
-        <div><strong>{{ indexCompletion }}</strong><span>索引完成率</span></div>
+        <div>
+          <strong>{{ indexCompletion }}</strong
+          ><span>索引完成率</span>
+        </div>
       </div>
       <div class="health-progress" aria-label="索引完成率">
-        <div><span>索引进度</span><strong>{{ indexCompletion }}</strong></div>
+        <div>
+          <span>索引进度</span><strong>{{ indexCompletion }}</strong>
+        </div>
         <i><b :style="{ width: indexCompletion }" /></i>
       </div>
     </section>
@@ -314,7 +505,11 @@ function exportProjectSnapshot() {
           <h2>最近调研</h2>
           <p>项目内最近的 Agent 任务</p>
         </div>
-        <button class="text-button" type="button" @click="router.push(routeTo('project-runs'))">
+        <button
+          class="text-button"
+          type="button"
+          @click="router.push(routeTo('project-runs'))"
+        >
           查看队列 <ArrowRight :size="14" />
         </button>
       </div>
@@ -326,11 +521,19 @@ function exportProjectSnapshot() {
           type="button"
           @click="router.push(routeTo('project-runs'))"
         >
-          <span class="recent-run-status" :class="statusClass(run.status)"><i /></span>
-          <span class="recent-run-copy"><strong>{{ run.title }}</strong><small>{{ run.time }} · {{ run.duration }}</small></span>
+          <span class="recent-run-status" :class="statusClass(run.status)"
+            ><i
+          /></span>
+          <span class="recent-run-copy"
+            ><strong>{{ run.title }}</strong
+            ><small>{{ run.time }} · {{ run.duration }}</small></span
+          >
           <ArrowRight :size="13" />
         </button>
-        <div v-if="!recentRuns.length" class="empty-detail-state panel-empty-state">
+        <div
+          v-if="!recentRuns.length"
+          class="empty-detail-state panel-empty-state"
+        >
           <Clock3 :size="18" /><strong>暂无调研运行</strong>
           <span>已有调研运行后，这里会显示真实的运行记录。</span>
         </div>
@@ -342,7 +545,11 @@ function exportProjectSnapshot() {
           <h2>下一步行动</h2>
           <p>把调研结论继续推进到可执行事项</p>
         </div>
-        <button class="text-button" type="button" @click="router.push(routeTo('project-action-items'))">
+        <button
+          class="text-button"
+          type="button"
+          @click="router.push(routeTo('project-action-items'))"
+        >
           查看行动项 <ArrowRight :size="14" />
         </button>
       </div>
@@ -354,11 +561,19 @@ function exportProjectSnapshot() {
           type="button"
           @click="router.push(routeTo('project-action-items'))"
         >
-          <span class="follow-up-status" :class="`status-${item.status}`"><i /></span>
-          <span class="follow-up-copy"><strong>{{ item.title }}</strong><small>{{ item.owner }} · {{ item.due }}</small></span>
+          <span class="follow-up-status" :class="`status-${item.status}`"
+            ><i
+          /></span>
+          <span class="follow-up-copy"
+            ><strong>{{ item.title }}</strong
+            ><small>{{ item.owner }} · {{ item.due }}</small></span
+          >
           <span class="follow-up-priority">{{ item.priority }}优先级</span>
         </button>
-        <div v-if="!actionItems.length" class="empty-detail-state panel-empty-state">
+        <div
+          v-if="!actionItems.length"
+          class="empty-detail-state panel-empty-state"
+        >
           <CheckCircle2 :size="18" /><strong>暂无行动项</strong>
           <span>产生行动项后，这里会显示待跟进事项。</span>
         </div>
@@ -503,15 +718,25 @@ function exportProjectSnapshot() {
   background: var(--workspace-divider);
 }
 .heat-cell.level-0,
-.heatmap-legend i.level-0 { background: color-mix(in oklab, var(--teal) 5%, var(--surface)); }
+.heatmap-legend i.level-0 {
+  background: color-mix(in oklab, var(--teal) 5%, var(--surface));
+}
 .heat-cell.level-1,
-.heatmap-legend i.level-1 { background: color-mix(in oklab, var(--teal) 20%, var(--surface)); }
+.heatmap-legend i.level-1 {
+  background: color-mix(in oklab, var(--teal) 20%, var(--surface));
+}
 .heat-cell.level-2,
-.heatmap-legend i.level-2 { background: color-mix(in oklab, var(--teal) 38%, var(--surface)); }
+.heatmap-legend i.level-2 {
+  background: color-mix(in oklab, var(--teal) 38%, var(--surface));
+}
 .heat-cell.level-3,
-.heatmap-legend i.level-3 { background: color-mix(in oklab, var(--teal) 62%, var(--surface)); }
+.heatmap-legend i.level-3 {
+  background: color-mix(in oklab, var(--teal) 62%, var(--surface));
+}
 .heat-cell.level-4,
-.heatmap-legend i.level-4 { background: var(--teal); }
+.heatmap-legend i.level-4 {
+  background: var(--teal);
+}
 .heatmap-legend {
   display: flex;
   align-items: center;

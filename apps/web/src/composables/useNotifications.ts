@@ -3,11 +3,7 @@ import { notificationsApi } from "@/api/notifications";
 import type { NotificationRecord } from "@/api";
 
 export type NotificationKind =
-  | "research"
-  | "knowledge"
-  | "report"
-  | "evaluation"
-  | "workspace";
+  "research" | "knowledge" | "report" | "evaluation" | "workspace";
 
 export type NotificationItem = NotificationRecord & {
   kind: NotificationKind;
@@ -20,7 +16,11 @@ const loadedWorkspaceId = ref("");
 let requestId = 0;
 
 function normalizeKind(kind: string): NotificationKind {
-  if (["research", "knowledge", "report", "evaluation", "workspace"].includes(kind)) {
+  if (
+    ["research", "knowledge", "report", "evaluation", "workspace"].includes(
+      kind,
+    )
+  ) {
     return kind as NotificationKind;
   }
   return "workspace";
@@ -54,12 +54,17 @@ function mapNotification(record: NotificationRecord): NotificationItem {
 
 export function useNotifications(workspaceId: Ref<number | string>) {
   const unreadCount = computed(
-    () => notifications.value.filter((notification) => !notification.read).length,
+    () =>
+      notifications.value.filter((notification) => !notification.read).length,
   );
 
   async function load(force = false) {
     const currentWorkspaceId = String(workspaceId.value || "");
-    if (!currentWorkspaceId || (loadedWorkspaceId.value === currentWorkspaceId && !force)) return;
+    if (
+      !currentWorkspaceId ||
+      (loadedWorkspaceId.value === currentWorkspaceId && !force)
+    )
+      return;
 
     const currentRequestId = ++requestId;
     loading.value = true;
@@ -91,7 +96,9 @@ export function useNotifications(workspaceId: Ref<number | string>) {
   }
 
   async function markAllRead() {
-    const unread = notifications.value.filter((notification) => !notification.read);
+    const unread = notifications.value.filter(
+      (notification) => !notification.read,
+    );
     if (!unread.length) return;
 
     unread.forEach((notification) => {
@@ -106,11 +113,15 @@ export function useNotifications(workspaceId: Ref<number | string>) {
     }
   }
 
-  watch(workspaceId, () => {
-    loadedWorkspaceId.value = "";
-    notifications.value = [];
-    void load();
-  }, { immediate: true });
+  watch(
+    workspaceId,
+    () => {
+      loadedWorkspaceId.value = "";
+      notifications.value = [];
+      void load();
+    },
+    { immediate: true },
+  );
 
   return {
     notifications,

@@ -42,17 +42,33 @@ class LocalFileStorage:
 class MinioFileStorage:
     """S3-compatible MinIO adapter; blocking SDK calls run off the event loop."""
 
-    def __init__(self, endpoint: str, access_key: str, secret_key: str, bucket: str, secure: bool = False):
+    def __init__(
+        self,
+        endpoint: str,
+        access_key: str,
+        secret_key: str,
+        bucket: str,
+        secure: bool = False,
+    ):
         try:
             from minio import Minio
         except ImportError as exc:
             raise RuntimeError("minio is required for MINIO storage") from exc
         self.bucket = bucket
         host = endpoint.removeprefix("http://").removeprefix("https://")
-        self.client = Minio(host, access_key=access_key, secret_key=secret_key, secure=secure)
+        self.client = Minio(
+            host, access_key=access_key, secret_key=secret_key, secure=secure
+        )
 
     async def put(self, key: str, data: bytes) -> None:
-        await asyncio.to_thread(self.client.put_object, self.bucket, key, io.BytesIO(data), len(data), content_type="application/octet-stream")
+        await asyncio.to_thread(
+            self.client.put_object,
+            self.bucket,
+            key,
+            io.BytesIO(data),
+            len(data),
+            content_type="application/octet-stream",
+        )
 
     async def get(self, key: str) -> bytes:
         def read() -> bytes:
@@ -62,6 +78,7 @@ class MinioFileStorage:
             finally:
                 response.close()
                 response.release_conn()
+
         return await asyncio.to_thread(read)
 
     async def delete(self, key: str) -> None:

@@ -1,12 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
-import {
-  Bell,
-  CheckCircle2,
-  KeyRound,
-  LogOut,
-  ShieldCheck,
-} from "@lucide/vue";
+import { Bell, CheckCircle2, KeyRound, LogOut, ShieldCheck } from "@lucide/vue";
 import Layout from "@/components/settings/Layout.vue";
 import {
   Dialog,
@@ -93,11 +87,7 @@ const passwordStrength = computed(() => {
     /\d/.test(passwordForm.next),
     /[^A-Za-z0-9]/.test(passwordForm.next),
   ].filter(Boolean).length;
-  if (
-    passwordForm.next.length >= 12 &&
-    classes >= 3
-  )
-    return "强度良好";
+  if (passwordForm.next.length >= 12 && classes >= 3) return "强度良好";
   if (passwordForm.next.length >= 12) return "复杂度不足";
   return "至少需要 12 位";
 });
@@ -157,7 +147,11 @@ async function changePassword() {
     return;
   }
   if (!passwordCodeId.value) {
-    notify(passwordCodeExpired.value ? "验证码已过期，请重新获取" : "请先获取当前手机号验证码");
+    notify(
+      passwordCodeExpired.value
+        ? "验证码已过期，请重新获取"
+        : "请先获取当前手机号验证码",
+    );
     return;
   }
   if (!isCode(passwordForm.code)) {
@@ -235,16 +229,22 @@ async function changePhone() {
     return;
   }
   if (!phoneCodeId.value || !isCode(phoneForm.code)) {
-    notify(phoneCodeExpired.value ? "验证码已过期，请重新获取" : "请输入 6 位短信验证码");
+    notify(
+      phoneCodeExpired.value
+        ? "验证码已过期，请重新获取"
+        : "请输入 6 位短信验证码",
+    );
     return;
   }
   try {
-    applyUser(await authApi.updatePhone({
-      newPhoneNumber: phoneForm.newPhone.trim(),
-      currentPassword: phoneForm.currentPassword,
-      verifyCodeId: phoneCodeId.value,
-      verifyCode: phoneForm.code,
-    }));
+    applyUser(
+      await authApi.updatePhone({
+        newPhoneNumber: phoneForm.newPhone.trim(),
+        currentPassword: phoneForm.currentPassword,
+        verifyCodeId: phoneCodeId.value,
+        verifyCode: phoneForm.code,
+      }),
+    );
   } catch (error) {
     if (error instanceof ApiError && error.code === "SMS_CODE_INVALID") {
       markPhoneCodeExpired();
@@ -319,7 +319,11 @@ async function handleLogout() {
         /></label>
       </div>
       <div class="profile-actions">
-        <button class="button button-primary" type="button" @click="saveProfile">
+        <button
+          class="button button-primary"
+          type="button"
+          @click="saveProfile"
+        >
           保存个人信息
         </button>
         <button
@@ -452,10 +456,18 @@ async function handleLogout() {
                 :disabled="sendingPasswordCode || passwordCodeCountdown > 0"
                 @click="sendPasswordCode"
               >
-                {{ sendingPasswordCode ? "发送中…" : passwordCodeCountdown > 0 ? `${passwordCodeCountdown}s 后重发` : "获取验证码" }}
+                {{
+                  sendingPasswordCode
+                    ? "发送中…"
+                    : passwordCodeCountdown > 0
+                      ? `${passwordCodeCountdown}s 后重发`
+                      : "获取验证码"
+                }}
               </button>
             </div>
-            <small class="password-hint">验证码将发送到当前手机号，有效期 5 分钟</small>
+            <small class="password-hint"
+              >验证码将发送到当前手机号，有效期 5 分钟</small
+            >
           </label>
         </div>
         <DialogFooter
@@ -515,17 +527,33 @@ async function handleLogout() {
                 :disabled="sendingPhoneCode || phoneCodeCountdown > 0"
                 @click="sendPhoneCode"
               >
-                {{ sendingPhoneCode ? "发送中…" : phoneCodeCountdown > 0 ? `${phoneCodeCountdown}s 后重发` : "获取验证码" }}
+                {{
+                  sendingPhoneCode
+                    ? "发送中…"
+                    : phoneCodeCountdown > 0
+                      ? `${phoneCodeCountdown}s 后重发`
+                      : "获取验证码"
+                }}
               </button>
             </div>
-            <small class="password-hint">验证码将发送到新手机号，有效期 5 分钟</small>
+            <small class="password-hint"
+              >验证码将发送到新手机号，有效期 5 分钟</small
+            >
           </label>
         </div>
         <DialogFooter>
-          <button class="button button-secondary" type="button" @click="phoneOpen = false">
+          <button
+            class="button button-secondary"
+            type="button"
+            @click="phoneOpen = false"
+          >
             取消
           </button>
-          <button class="button button-primary" type="button" @click="changePhone">
+          <button
+            class="button button-primary"
+            type="button"
+            @click="changePhone"
+          >
             确认修改
           </button>
         </DialogFooter>

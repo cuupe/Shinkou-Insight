@@ -48,9 +48,9 @@ watch(expired, (value) => {
   <Field class="image-captcha-field" :data-invalid="!!props.error">
     <div class="image-captcha-label-row">
       <FieldLabel :for="props.id">图片验证码</FieldLabel
-      ><span class="image-captcha-hint"
-        >{{ expired ? "验证码已过期，请刷新" : "点击图片刷新" }}</span
-      >
+      ><span class="image-captcha-hint">{{
+        expired ? "验证码已过期，请刷新" : "点击图片刷新"
+      }}</span>
     </div>
     <div class="image-captcha-row">
       <Input

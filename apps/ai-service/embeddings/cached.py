@@ -10,7 +10,9 @@ from embeddings.providers import EmbeddingProvider
 class CachedEmbeddingProvider:
     """Content-addressed embedding cache safe for repeated retrieval/indexing."""
 
-    def __init__(self, provider: EmbeddingProvider, cache: CacheService, *, ttl_seconds: int) -> None:
+    def __init__(
+        self, provider: EmbeddingProvider, cache: CacheService, *, ttl_seconds: int
+    ) -> None:
         self.provider = provider
         self.cache = cache
         self.ttl_seconds = ttl_seconds
@@ -55,5 +57,10 @@ class CachedEmbeddingProvider:
             for (index, _text, identity), vector in zip(missing, vectors):
                 normalized = [float(item) for item in vector]
                 output[index] = normalized
-                await self.cache.set("embedding:document", identity, normalized, ttl_seconds=self.ttl_seconds)
+                await self.cache.set(
+                    "embedding:document",
+                    identity,
+                    normalized,
+                    ttl_seconds=self.ttl_seconds,
+                )
         return [vector or [] for vector in output]

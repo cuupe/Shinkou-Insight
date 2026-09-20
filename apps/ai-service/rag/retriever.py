@@ -34,7 +34,9 @@ def _terms(text: str) -> set[str]:
     normalized = text.casefold()
     words = set(re.findall(r"[\w.-]+", normalized, flags=re.UNICODE))
     compact = "".join(ch for ch in normalized if not ch.isspace())
-    words.update(compact[index : index + 2] for index in range(max(0, len(compact) - 1)))
+    words.update(
+        compact[index : index + 2] for index in range(max(0, len(compact) - 1))
+    )
     return {term for term in words if len(term) >= 2}
 
 
@@ -67,15 +69,39 @@ class InMemoryRetriever:
         allowed_assets = {str(value) for value in filters.get("assetIds", [])}
         candidates: list[dict] = []
         for chunk in self.chunks:
-            if chunk.get("workspace_id") != workspace_id or chunk.get("project_id") != project_id:
+            if (
+                chunk.get("workspace_id") != workspace_id
+                or chunk.get("project_id") != project_id
+            ):
                 continue
             if allowed_assets and str(chunk.get("asset_id")) not in allowed_assets:
                 continue
             candidates.append(chunk)
         variants = build_query_variants(question)
-        variant_scores = [bm25_scores(variant, [str(chunk.get("content", "")) for chunk in candidates]) for variant in variants or [question]]
-        scores = [max((score * (1.0 if index == 0 else 0.65) for index, score in enumerate(row)), default=0.0) for row in zip(*variant_scores)] if variant_scores else [0.0] * len(candidates)
-        ranked = sorted(zip(scores, candidates), key=lambda item: (-item[0], str(item[1].get("chunk_id", ""))))
+        variant_scores = [
+            bm25_scores(
+                variant, [str(chunk.get("content", "")) for chunk in candidates]
+            )
+            for variant in variants or [question]
+        ]
+        scores = (
+            [
+                max(
+                    (
+                        score * (1.0 if index == 0 else 0.65)
+                        for index, score in enumerate(row)
+                    ),
+                    default=0.0,
+                )
+                for row in zip(*variant_scores)
+            ]
+            if variant_scores
+            else [0.0] * len(candidates)
+        )
+        ranked = sorted(
+            zip(scores, candidates),
+            key=lambda item: (-item[0], str(item[1].get("chunk_id", ""))),
+        )
         matched = [item for item in ranked if item[0] > 0]
         if not matched and ranked and retrieval_mode.upper() != "KEYWORD":
             # The legacy in-memory adapter may have no multilingual embedding
@@ -112,6 +138,7 @@ class PostgresKeywordRetriever:
 
     async def start(self) -> None:
         from psycopg_pool import AsyncConnectionPool
+
         self._pool = AsyncConnectionPool(self.database_url, open=True)
 
     async def close(self) -> None:
@@ -166,4 +193,17 @@ class PostgresKeywordRetriever:
             async with connection.cursor() as cursor:
                 await cursor.execute(sql, params)
                 rows = await cursor.fetchall()
-        return [Evidence(id=f"E{index}", chunk_id=row[0], content=row[5], source_name=row[2], page_number=row[3], section_title=row[4], asset_id=row[1], asset_name=row[2], score=1.0) for index, row in enumerate(rows, start=1)]
+        return [
+            Evidence(
+                id=f"E{index}",
+                chunk_id=row[0],
+                content=row[5],
+                source_name=row[2],
+                page_number=row[3],
+                section_title=row[4],
+                asset_id=row[1],
+                asset_name=row[2],
+                score=1.0,
+            )
+            for index, row in enumerate(rows, start=1)
+        ]

@@ -21,7 +21,13 @@ class DocumentChunk:
 
 
 class DocumentChunker:
-    def __init__(self, chunk_size: int = 1200, chunk_overlap: int = 180, strategy: str = "natural", preserve_sections: bool = True):
+    def __init__(
+        self,
+        chunk_size: int = 1200,
+        chunk_overlap: int = 180,
+        strategy: str = "natural",
+        preserve_sections: bool = True,
+    ):
         if chunk_overlap >= chunk_size:
             raise ValueError("chunk_overlap must be smaller than chunk_size")
         if strategy not in {"natural", "paragraph", "fixed"}:
@@ -46,16 +52,24 @@ class DocumentChunker:
         config = config or {}
         return cls(
             chunk_size=int(config.get("chunk_size", config.get("chunkSize", 1200))),
-            chunk_overlap=int(config.get("chunk_overlap", config.get("chunkOverlap", 180))),
+            chunk_overlap=int(
+                config.get("chunk_overlap", config.get("chunkOverlap", 180))
+            ),
             strategy=str(config.get("strategy", "natural")),
-            preserve_sections=bool(config.get("preserve_sections", config.get("preserveSections", True))),
+            preserve_sections=bool(
+                config.get("preserve_sections", config.get("preserveSections", True))
+            ),
         )
 
     def split(self, documents: list[Document]) -> list[DocumentChunk]:
         chunks: list[DocumentChunk] = []
         index = 0
         for document in documents:
-            section_documents = self._section_documents(document) if self.preserve_sections else [document]
+            section_documents = (
+                self._section_documents(document)
+                if self.preserve_sections
+                else [document]
+            )
             split_documents = self.splitter.split_documents(section_documents)
             for split in split_documents:
                 content = split.page_content.strip()
@@ -66,7 +80,18 @@ class DocumentChunker:
                 start = document.page_content.find(content)
                 start = max(start, 0)
                 end = start + len(content)
-                chunks.append(DocumentChunk(content=content, chunk_index=index, page_number=split.metadata.get("page"), section_title=self._section(split.metadata, content), start_offset=start, end_offset=end, checksum=hashlib.sha256(content.encode("utf-8")).hexdigest(), metadata=dict(split.metadata)))
+                chunks.append(
+                    DocumentChunk(
+                        content=content,
+                        chunk_index=index,
+                        page_number=split.metadata.get("page"),
+                        section_title=self._section(split.metadata, content),
+                        start_offset=start,
+                        end_offset=end,
+                        checksum=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                        metadata=dict(split.metadata),
+                    )
+                )
                 index += 1
         return chunks
 
@@ -79,7 +104,9 @@ class DocumentChunker:
 
         sections: list[Document] = []
         current_lines: list[str] = []
-        current_title = str(document.metadata.get("section_title") or "").strip() or None
+        current_title = (
+            str(document.metadata.get("section_title") or "").strip() or None
+        )
 
         def flush() -> None:
             nonlocal current_lines

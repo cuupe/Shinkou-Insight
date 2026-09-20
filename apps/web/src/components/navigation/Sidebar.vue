@@ -1,10 +1,5 @@
 <script setup lang="ts">
-import {
-  ChevronDown,
-  ChevronRight,
-  Sparkles,
-  X,
-} from "@lucide/vue";
+import { ChevronDown, ChevronRight, Sparkles, X } from "@lucide/vue";
 import { ref } from "vue";
 import { RouterLink } from "vue-router";
 import { useWorkspace } from "@/composables/useWorkspace";
@@ -98,9 +93,19 @@ function closeMenu() {
           </span>
           <span class="workspace-menu-copy">
             <strong>{{ item.name }}</strong>
-            <small>{{ item.currentRole === "OWNER" ? "所有者" : item.currentRole === "ADMIN" ? "管理员" : "成员" }}</small>
+            <small>{{
+              item.currentRole === "OWNER"
+                ? "所有者"
+                : item.currentRole === "ADMIN"
+                  ? "管理员"
+                  : "成员"
+            }}</small>
           </span>
-          <span v-if="String(item.id) === workspaceId" class="workspace-menu-current">当前</span>
+          <span
+            v-if="String(item.id) === workspaceId"
+            class="workspace-menu-current"
+            >当前</span
+          >
         </button>
         <p v-if="!availableWorkspaces.length" class="workspace-menu-empty">
           暂无可用工作区

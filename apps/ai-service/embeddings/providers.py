@@ -29,7 +29,9 @@ class HashEmbeddingProvider:
 
     def _embed(self, text: str) -> list[float]:
         vector = [0.0] * self.dimension
-        tokens = [text[index : index + 2].casefold() for index in range(max(0, len(text) - 1))] or [text.casefold()]
+        tokens = [
+            text[index : index + 2].casefold() for index in range(max(0, len(text) - 1))
+        ] or [text.casefold()]
         for token in tokens:
             digest = hashlib.blake2b(token.encode("utf-8"), digest_size=8).digest()
             index = int.from_bytes(digest[:4], "big") % self.dimension
@@ -59,7 +61,14 @@ class LangChainEmbeddingProvider:
         return await asyncio.to_thread(self.embeddings.embed_query, text)
 
 
-def build_embedding_provider(*, mode: str = "openai", api_key: str | None = None, base_url: str | None = None, model: str = "text-embedding-3-small", dimension: int = 384) -> EmbeddingProvider:
+def build_embedding_provider(
+    *,
+    mode: str = "openai",
+    api_key: str | None = None,
+    base_url: str | None = None,
+    model: str = "text-embedding-3-small",
+    dimension: int = 384,
+) -> EmbeddingProvider:
     normalized_mode = mode.casefold()
     if normalized_mode in {"openai", "compatible", "http"}:
         if not api_key:
@@ -70,12 +79,18 @@ def build_embedding_provider(*, mode: str = "openai", api_key: str | None = None
         try:
             from langchain_openai import OpenAIEmbeddings
         except ImportError as exc:
-            raise RuntimeError("langchain-openai is required for HTTP embeddings") from exc
+            raise RuntimeError(
+                "langchain-openai is required for HTTP embeddings"
+            ) from exc
         kwargs = {"model": model, "api_key": api_key}
         if base_url:
             kwargs["base_url"] = base_url
         embeddings = OpenAIEmbeddings(**kwargs)
-        return LangChainEmbeddingProvider(embeddings, model_name=model, dimension=dimension)
+        return LangChainEmbeddingProvider(
+            embeddings, model_name=model, dimension=dimension
+        )
     if normalized_mode not in {"hash", "local"}:
-        raise ValueError("EMBEDDING_MODE must be openai, compatible, http, hash, or local")
+        raise ValueError(
+            "EMBEDDING_MODE must be openai, compatible, http, hash, or local"
+        )
     return HashEmbeddingProvider(dimension=dimension)

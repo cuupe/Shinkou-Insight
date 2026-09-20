@@ -14,7 +14,12 @@ from documents.chunker import DocumentChunker
 from documents.parser import DocumentParser
 from embeddings.cached import CachedEmbeddingProvider
 from embeddings.providers import EmbeddingProvider, build_embedding_provider
-from graph.store import GraphExtractor, LlmGraphExtractor, MemoryGraphStore, Neo4jGraphStore
+from graph.store import (
+    GraphExtractor,
+    LlmGraphExtractor,
+    MemoryGraphStore,
+    Neo4jGraphStore,
+)
 from models.llm import LangChainModelGateway, ModelGateway, build_model_gateway
 from rag.indexer import InMemoryKnowledgeStore, KnowledgeIndexer
 from rag.milvus_store import MilvusKnowledgeStore
@@ -26,7 +31,13 @@ from tools.loader import CustomToolLoadReport, load_custom_tools
 from tools.mcp_bridge import MCPToolBridge, register_mcp_tools
 from tools.registry import ToolRegistry, ToolSpec
 from tools.multi_source_search import MultiSourceWebSearch
-from tools.web import DEFAULT_DUCKDUCKGO_BASE_URL, BraveWebSearch, DisabledWebSearch, DuckDuckGoWebSearch, WebSearchProvider
+from tools.web import (
+    DEFAULT_DUCKDUCKGO_BASE_URL,
+    BraveWebSearch,
+    DisabledWebSearch,
+    DuckDuckGoWebSearch,
+    WebSearchProvider,
+)
 from tools.cached_web import CachedWebSearch
 from tools.document_generation import DocumentGenerationTool
 
@@ -77,7 +88,9 @@ class ServiceContainer:
             if isinstance(model, LangChainModelGateway):
                 http_client = model.client
             elif http_client is None and settings.llm_mode.lower() != "mock":
-                http_client = httpx.AsyncClient(timeout=httpx.Timeout(settings.llm_timeout_seconds))
+                http_client = httpx.AsyncClient(
+                    timeout=httpx.Timeout(settings.llm_timeout_seconds)
+                )
 
             # Project-level external Embedding configs are opt-in. The base
             # provider must stay local even if an external key exists in the
@@ -88,22 +101,34 @@ class ServiceContainer:
                 model="hash-embedding-v1",
                 dimension=settings.embedding_dimension,
             )
-            embedding = CachedEmbeddingProvider(base_embedding, cache, ttl_seconds=settings.cache_embedding_ttl_seconds)
+            embedding = CachedEmbeddingProvider(
+                base_embedding, cache, ttl_seconds=settings.cache_embedding_ttl_seconds
+            )
 
-            def embedding_factory(config: dict[str, Any] | None = None) -> EmbeddingProvider:
+            def embedding_factory(
+                config: dict[str, Any] | None = None,
+            ) -> EmbeddingProvider:
                 if not config:
                     return embedding
                 provider = build_embedding_provider(
                     mode=str(config.get("mode", settings.embedding_mode)),
                     api_key=str(config.get("apiKey") or config.get("api_key") or ""),
-                    base_url=str(config.get("baseUrl") or config.get("base_url") or "") or None,
+                    base_url=str(config.get("baseUrl") or config.get("base_url") or "")
+                    or None,
                     model=str(config.get("model", settings.embedding_model)),
-                    dimension=int(config.get("dimension", settings.embedding_dimension)),
+                    dimension=int(
+                        config.get("dimension", settings.embedding_dimension)
+                    ),
                 )
-                return CachedEmbeddingProvider(provider, cache, ttl_seconds=settings.cache_embedding_ttl_seconds)
+                return CachedEmbeddingProvider(
+                    provider, cache, ttl_seconds=settings.cache_embedding_ttl_seconds
+                )
+
             storage = cls._build_storage(settings)
             graph_store, neo4j_store = cls._build_graph_store(settings)
-            retriever, index_store, milvus_store = await cls._build_retriever(settings, embedding, cache)
+            retriever, index_store, milvus_store = await cls._build_retriever(
+                settings, embedding, cache
+            )
             parser = DocumentParser(
                 ocr_enabled=settings.file_ocr_enabled,
                 ocr_languages=settings.file_ocr_languages,
@@ -117,7 +142,8 @@ class ServiceContainer:
             )
             graph_extractor = (
                 LlmGraphExtractor(model)
-                if settings.graph_extraction_mode.lower() == "llm" and settings.llm_mode.lower() != "mock"
+                if settings.graph_extraction_mode.lower() == "llm"
+                and settings.llm_mode.lower() != "mock"
                 else GraphExtractor()
             )
             indexer = KnowledgeIndexer(
@@ -151,7 +177,10 @@ class ServiceContainer:
                     name="search_knowledge",
                     description="Search project-scoped knowledge base evidence.",
                     permission="READ",
-                    timeout_seconds=min(settings.request_timeout_seconds, settings.knowledge_timeout_seconds),
+                    timeout_seconds=min(
+                        settings.request_timeout_seconds,
+                        settings.knowledge_timeout_seconds,
+                    ),
                     input_schema={
                         "type": "object",
                         "required": ["workspace_id", "project_id", "question"],
@@ -160,15 +189,45 @@ class ServiceContainer:
                             "project_id": {"type": "integer"},
                             "question": {"type": "string", "maxLength": 20_000},
                             "top_k": {"type": "integer", "minimum": 1, "maximum": 20},
-                            "retrieval_mode": {"type": "string", "enum": ["VECTOR", "KEYWORD", "HYBRID"]},
+                            "retrieval_mode": {
+                                "type": "string",
+                                "enum": ["VECTOR", "KEYWORD", "HYBRID"],
+                            },
                             "use_reranker": {"type": "boolean"},
-                            "fusion_method": {"type": "string", "enum": ["RRF", "WEIGHTED_RRF", "LINEAR"]},
-                            "candidate_k": {"type": "integer", "minimum": 1, "maximum": 200},
-                            "rank_constant": {"type": "integer", "minimum": 1, "maximum": 200},
-                            "vector_weight": {"type": "number", "minimum": 0, "maximum": 1},
-                            "keyword_weight": {"type": "number", "minimum": 0, "maximum": 1},
-                            "diversity_lambda": {"type": "number", "minimum": 0, "maximum": 1},
-                            "rerank_top_k": {"type": "integer", "minimum": 1, "maximum": 200},
+                            "fusion_method": {
+                                "type": "string",
+                                "enum": ["RRF", "WEIGHTED_RRF", "LINEAR"],
+                            },
+                            "candidate_k": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 200,
+                            },
+                            "rank_constant": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 200,
+                            },
+                            "vector_weight": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1,
+                            },
+                            "keyword_weight": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1,
+                            },
+                            "diversity_lambda": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1,
+                            },
+                            "rerank_top_k": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 200,
+                            },
                         },
                     },
                 ),
@@ -184,7 +243,11 @@ class ServiceContainer:
                     input_schema={
                         "type": "object",
                         "required": ["workspace_id", "project_id", "query"],
-                        "properties": {"workspace_id": {"type": "integer"}, "project_id": {"type": "integer"}, "query": {"type": "string", "maxLength": 20_000}},
+                        "properties": {
+                            "workspace_id": {"type": "integer"},
+                            "project_id": {"type": "integer"},
+                            "query": {"type": "string", "maxLength": 20_000},
+                        },
                     },
                 ),
                 graph_tool.search_graph,
@@ -196,7 +259,13 @@ class ServiceContainer:
                         description="Search the configured external web provider.",
                         permission="READ",
                         timeout_seconds=min(settings.request_timeout_seconds, 30),
-                        input_schema={"type": "object", "required": ["query"], "properties": {"query": {"type": "string", "maxLength": 2_000}}},
+                        input_schema={
+                            "type": "object",
+                            "required": ["query"],
+                            "properties": {
+                                "query": {"type": "string", "maxLength": 2_000}
+                            },
+                        },
                     ),
                     web_search.search,
                 )
@@ -213,16 +282,35 @@ class ServiceContainer:
                         "type": "object",
                         "required": ["title", "markdown", "formats", "output_dir"],
                         "properties": {
-                            "title": {"type": "string", "minLength": 1, "maxLength": 200},
-                            "markdown": {"type": "string", "minLength": 1, "maxLength": 300_000},
+                            "title": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200,
+                            },
+                            "markdown": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 300_000,
+                            },
                             "formats": {
                                 "type": "array",
                                 "minItems": 1,
                                 "maxItems": 4,
-                                "items": {"type": "string", "enum": ["markdown", "docx", "pdf", "pptx"]},
+                                "items": {
+                                    "type": "string",
+                                    "enum": ["markdown", "docx", "pdf", "pptx"],
+                                },
                             },
-                            "output_dir": {"type": "string", "minLength": 1, "maxLength": 1_000},
-                            "sources": {"type": "array", "maxItems": 30, "items": {"type": "object"}},
+                            "output_dir": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1_000,
+                            },
+                            "sources": {
+                                "type": "array",
+                                "maxItems": 30,
+                                "items": {"type": "object"},
+                            },
                         },
                     },
                 ),
@@ -263,7 +351,11 @@ class ServiceContainer:
                 file_analysis_max_chars=settings.file_analysis_max_chars,
                 cache=cache,
                 web_cache_ttl_seconds=settings.cache_web_ttl_seconds,
-                agent_worker_urls=settings.agent_worker_urls if settings.agent_transport.lower() == "http" else None,
+                agent_worker_urls=(
+                    settings.agent_worker_urls
+                    if settings.agent_transport.lower() == "http"
+                    else None
+                ),
                 agent_worker_role=settings.agent_worker_role,
             )
             return cls(
@@ -301,11 +393,15 @@ class ServiceContainer:
             raise
 
     @staticmethod
-    def _build_model(settings: Settings, http_client: httpx.AsyncClient | None) -> ModelGateway:
+    def _build_model(
+        settings: Settings, http_client: httpx.AsyncClient | None
+    ) -> ModelGateway:
         mode = settings.llm_mode.lower()
         if mode == "mock":
             if settings.app_env.lower() not in {"test", "ci"}:
-                raise RuntimeError("LLM_MODE=mock is test-only; configure an OpenAI-compatible provider")
+                raise RuntimeError(
+                    "LLM_MODE=mock is test-only; configure an OpenAI-compatible provider"
+                )
         return build_model_gateway(
             mode=mode,
             base_url=settings.llm_base_url,
@@ -320,9 +416,22 @@ class ServiceContainer:
     @staticmethod
     def _build_storage(settings: Settings) -> Any:
         if settings.storage_mode.lower() == "minio":
-            if not all([settings.minio_endpoint, settings.minio_access_key, settings.minio_secret_key]):
-                raise RuntimeError("MINIO_ENDPOINT, MINIO_ACCESS_KEY and MINIO_SECRET_KEY are required for STORAGE_MODE=minio")
-            return MinioFileStorage(settings.minio_endpoint, settings.minio_access_key, settings.minio_secret_key, settings.minio_bucket)
+            if not all(
+                [
+                    settings.minio_endpoint,
+                    settings.minio_access_key,
+                    settings.minio_secret_key,
+                ]
+            ):
+                raise RuntimeError(
+                    "MINIO_ENDPOINT, MINIO_ACCESS_KEY and MINIO_SECRET_KEY are required for STORAGE_MODE=minio"
+                )
+            return MinioFileStorage(
+                settings.minio_endpoint,
+                settings.minio_access_key,
+                settings.minio_secret_key,
+                settings.minio_bucket,
+            )
         if settings.storage_mode.lower() == "local":
             return LocalFileStorage(settings.storage_root)
         raise RuntimeError("STORAGE_MODE must be minio or local")
@@ -334,16 +443,24 @@ class ServiceContainer:
         if settings.graph_mode.lower() != "neo4j":
             raise RuntimeError("GRAPH_MODE must be memory or neo4j")
         if not settings.neo4j_uri or not settings.neo4j_password:
-            raise RuntimeError("NEO4J_URI and NEO4J_PASSWORD are required for GRAPH_MODE=neo4j")
-        store = Neo4jGraphStore(settings.neo4j_uri, settings.neo4j_username, settings.neo4j_password)
+            raise RuntimeError(
+                "NEO4J_URI and NEO4J_PASSWORD are required for GRAPH_MODE=neo4j"
+            )
+        store = Neo4jGraphStore(
+            settings.neo4j_uri, settings.neo4j_username, settings.neo4j_password
+        )
         return store, store
 
     @staticmethod
-    async def _build_retriever(settings: Settings, embedding: EmbeddingProvider, cache: CacheService) -> tuple[Any, Any, MilvusKnowledgeStore | None]:
+    async def _build_retriever(
+        settings: Settings, embedding: EmbeddingProvider, cache: CacheService
+    ) -> tuple[Any, Any, MilvusKnowledgeStore | None]:
         mode = settings.retriever_mode.lower()
         if mode == "milvus":
             if not settings.database_url:
-                raise RuntimeError("DATABASE_URL is required when RETRIEVER_MODE=milvus")
+                raise RuntimeError(
+                    "DATABASE_URL is required when RETRIEVER_MODE=milvus"
+                )
             store = MilvusKnowledgeStore(
                 settings.database_url,
                 settings.milvus_uri,
@@ -355,24 +472,42 @@ class ServiceContainer:
                 max_size=settings.db_pool_max_size,
             )
             await store.start()
-            return CachedRetriever(store, cache, ttl_seconds=settings.cache_retrieval_ttl_seconds), store, store
+            return (
+                CachedRetriever(
+                    store, cache, ttl_seconds=settings.cache_retrieval_ttl_seconds
+                ),
+                store,
+                store,
+            )
         if mode == "memory":
             store = InMemoryKnowledgeStore(embedding)
-            return CachedRetriever(store, cache, ttl_seconds=settings.cache_retrieval_ttl_seconds), store, None
+            return (
+                CachedRetriever(
+                    store, cache, ttl_seconds=settings.cache_retrieval_ttl_seconds
+                ),
+                store,
+                None,
+            )
         raise RuntimeError("RETRIEVER_MODE must be milvus or memory")
 
     @staticmethod
-    def _build_web_search(settings: Settings, http_client: httpx.AsyncClient | None) -> WebSearchProvider:
+    def _build_web_search(
+        settings: Settings, http_client: httpx.AsyncClient | None
+    ) -> WebSearchProvider:
         if not settings.enable_web_search:
             return DisabledWebSearch()
         provider = settings.web_search_provider.lower()
         if provider not in {"brave", "duckduckgo", "multi", "hybrid"}:
-            raise RuntimeError("WEB_SEARCH_PROVIDER must be brave, duckduckgo, multi, or hybrid")
+            raise RuntimeError(
+                "WEB_SEARCH_PROVIDER must be brave, duckduckgo, multi, or hybrid"
+            )
         # The system-level key is optional. Project runs can inject a personal or
         # creator-owned key through RuntimeWebSearchConfig at execution time.
         if provider == "brave" and not settings.web_search_api_key:
             return DisabledWebSearch()
-        client = http_client or httpx.AsyncClient(timeout=httpx.Timeout(settings.request_timeout_seconds))
+        client = http_client or httpx.AsyncClient(
+            timeout=httpx.Timeout(settings.request_timeout_seconds)
+        )
         if provider in {"multi", "hybrid"}:
             if settings.web_search_api_key:
                 general: WebSearchProvider = BraveWebSearch(

@@ -362,7 +362,10 @@ html {
 }
 
 .icon-button {
-  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease,
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
     transform 120ms ease;
 }
 
@@ -617,7 +620,11 @@ html {
   --surface-soft: var(--secondary);
   --workspace-text: var(--popover-foreground);
   --workspace-muted: var(--muted-foreground);
-  --workspace-subtle: color-mix(in oklab, var(--muted-foreground) 82%, transparent);
+  --workspace-subtle: color-mix(
+    in oklab,
+    var(--muted-foreground) 82%,
+    transparent
+  );
   --workspace-border: var(--border);
   --workspace-divider: color-mix(in oklab, var(--border) 72%, transparent);
   --workspace-chart-grid: color-mix(in oklab, var(--border) 72%, transparent);
@@ -675,11 +682,16 @@ html {
 
 [data-slot="dialog-content"] [data-slot="dialog-footer"] {
   border-color: var(--workspace-border) !important;
-  background: color-mix(in oklab, var(--surface-raised) 88%, var(--surface)) !important;
+  background: color-mix(
+    in oklab,
+    var(--surface-raised) 88%,
+    var(--surface)
+  ) !important;
   color: var(--workspace-text);
 }
 
-[data-slot="dialog-content"] input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+[data-slot="dialog-content"]
+  input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
 [data-slot="dialog-content"] textarea,
 [data-slot="dialog-content"] select {
   border-color: var(--workspace-border) !important;

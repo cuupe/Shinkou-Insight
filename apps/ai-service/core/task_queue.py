@@ -60,17 +60,26 @@ class ResearchTaskQueue:
         try:
             import redis.asyncio as redis
 
-            self._redis = redis.from_url(self.redis_url, decode_responses=True, socket_connect_timeout=1.5, socket_timeout=5)
+            self._redis = redis.from_url(
+                self.redis_url,
+                decode_responses=True,
+                socket_connect_timeout=1.5,
+                socket_timeout=5,
+            )
             await self._redis.ping()
             try:
-                await self._redis.xgroup_create(self.stream, self.group, id="0", mkstream=True)
+                await self._redis.xgroup_create(
+                    self.stream, self.group, id="0", mkstream=True
+                )
             except Exception as exc:
                 if "BUSYGROUP" not in str(exc).upper():
                     raise
             self.backend = "redis-stream"
         except Exception as exc:
             self._last_error = str(exc)[:500]
-            logger.warning("Redis task queue unavailable; using in-process fallback: %s", exc)
+            logger.warning(
+                "Redis task queue unavailable; using in-process fallback: %s", exc
+            )
             if self._redis is not None:
                 await self._redis.aclose()
             self._redis = None
@@ -83,7 +92,13 @@ class ResearchTaskQueue:
         if self._redis is not None:
             task_id = await self._redis.xadd(
                 self.stream,
-                {"payload": json.dumps(payload, ensure_ascii=False, separators=(",", ":")), "attempt": "0", "enqueuedAt": str(time.time())},
+                {
+                    "payload": json.dumps(
+                        payload, ensure_ascii=False, separators=(",", ":")
+                    ),
+                    "attempt": "0",
+                    "enqueuedAt": str(time.time()),
+                },
                 maxlen=10_000,
                 approximate=True,
             )
@@ -117,10 +132,14 @@ class ResearchTaskQueue:
                 request, message_id, attempt = item
                 self._processing += 1
                 acknowledge = True
-                heartbeat = asyncio.create_task(
-                    self._heartbeat(consumer, message_id),
-                    name=f"research-task-heartbeat-{worker_index + 1}",
-                ) if self._redis is not None and message_id else None
+                heartbeat = (
+                    asyncio.create_task(
+                        self._heartbeat(consumer, message_id),
+                        name=f"research-task-heartbeat-{worker_index + 1}",
+                    )
+                    if self._redis is not None and message_id
+                    else None
+                )
                 try:
                     if self._handler is None:
                         raise RuntimeError("task queue handler is not configured")
@@ -138,7 +157,9 @@ class ResearchTaskQueue:
                         except Exception:
                             acknowledge = False
                             raise
-                    logger.warning("research task failed (attempt %s): %s", attempt + 1, exc)
+                    logger.warning(
+                        "research task failed (attempt %s): %s", attempt + 1, exc
+                    )
                 else:
                     self._completed += 1
                 finally:
@@ -188,35 +209,60 @@ class ResearchTaskQueue:
     async def _next(self, consumer: str) -> tuple[ExecuteRunRequest, str, int] | None:
         if self._redis is None:
             try:
-                request, attempt = await asyncio.wait_for(self._memory.get(), timeout=0.5)
+                request, attempt = await asyncio.wait_for(
+                    self._memory.get(), timeout=0.5
+                )
             except asyncio.TimeoutError:
                 return None
             return request, "", attempt
         # First reclaim work left pending by a crashed worker, then read new
         # entries. XAUTOCLAIM is supported by Redis 6.2+.
         try:
-            claimed = await self._redis.xautoclaim(self.stream, self.group, consumer, min_idle_time=30_000, start_id="0-0", count=1)
+            claimed = await self._redis.xautoclaim(
+                self.stream,
+                self.group,
+                consumer,
+                min_idle_time=30_000,
+                start_id="0-0",
+                count=1,
+            )
             messages = claimed[1] if len(claimed) > 1 else []
             if messages:
                 return self._decode_message(messages[0])
         except Exception:
             pass
-        rows = await self._redis.xreadgroup(self.group, consumer, streams={self.stream: ">"}, count=1, block=500)
+        rows = await self._redis.xreadgroup(
+            self.group, consumer, streams={self.stream: ">"}, count=1, block=500
+        )
         self._last_error = None
         if not rows:
             return None
         return self._decode_message(rows[0][1][0])
 
-    def _decode_message(self, message: tuple[str, dict[str, str]]) -> tuple[ExecuteRunRequest, str, int]:
+    def _decode_message(
+        self, message: tuple[str, dict[str, str]]
+    ) -> tuple[ExecuteRunRequest, str, int]:
         message_id, fields = message
         payload = json.loads(fields.get("payload") or "{}")
-        return ExecuteRunRequest.model_validate(payload), str(message_id), int(fields.get("attempt") or 0)
+        return (
+            ExecuteRunRequest.model_validate(payload),
+            str(message_id),
+            int(fields.get("attempt") or 0),
+        )
 
     async def _retry(self, request: ExecuteRunRequest, attempt: int) -> None:
         if self._redis is not None:
             await self._redis.xadd(
                 self.stream,
-                {"payload": json.dumps(request.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")), "attempt": str(attempt), "enqueuedAt": str(time.time())},
+                {
+                    "payload": json.dumps(
+                        request.model_dump(mode="json"),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    "attempt": str(attempt),
+                    "enqueuedAt": str(time.time()),
+                },
                 maxlen=10_000,
                 approximate=True,
             )
@@ -237,7 +283,11 @@ class ResearchTaskQueue:
             try:
                 length = await self._redis.xlen(self.stream)
                 pending_info = await self._redis.xpending(self.stream, self.group)
-                pending = int(pending_info.get("pending", 0)) if isinstance(pending_info, dict) else None
+                pending = (
+                    int(pending_info.get("pending", 0))
+                    if isinstance(pending_info, dict)
+                    else None
+                )
             except Exception as exc:
                 self._last_error = str(exc)[:500]
         else:

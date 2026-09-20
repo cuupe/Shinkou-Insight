@@ -13,7 +13,12 @@ router = APIRouter(tags=["tools"])
 
 def _tool_http_error(error: ToolCallError) -> HTTPException:
     message = str(error)
-    status = 409 if "limit exceeded" in message.casefold() or "already exists" in message.casefold() else 400
+    status = (
+        409
+        if "limit exceeded" in message.casefold()
+        or "already exists" in message.casefold()
+        else 400
+    )
     return HTTPException(status_code=status, detail=message)
 
 
@@ -42,11 +47,17 @@ async def list_tools(http_request: Request) -> dict[str, Any]:
     }
 
 
-@router.post("/internal/tools/custom/reload", dependencies=[Depends(verify_internal_api_key)])
+@router.post(
+    "/internal/tools/custom/reload", dependencies=[Depends(verify_internal_api_key)]
+)
 async def reload_custom_tools(http_request: Request) -> dict[str, Any]:
     report = http_request.app.state.container.reload_custom_tools()
     http_request.app.state.custom_tools_report = report
-    return {"status": "ok", "custom": report.as_dict(), "tools": http_request.app.state.container.runtime.tools.describe()}
+    return {
+        "status": "ok",
+        "custom": report.as_dict(),
+        "tools": http_request.app.state.container.runtime.tools.describe(),
+    }
 
 
 @router.post(
@@ -54,7 +65,9 @@ async def reload_custom_tools(http_request: Request) -> dict[str, Any]:
     status_code=202,
     dependencies=[Depends(verify_internal_api_key)],
 )
-async def submit_tool_call(request: AsyncToolCallRequest, http_request: Request) -> dict[str, Any]:
+async def submit_tool_call(
+    request: AsyncToolCallRequest, http_request: Request
+) -> dict[str, Any]:
     registry = http_request.app.state.container.runtime.tools
     try:
         task = await registry.submit_async(
@@ -71,7 +84,9 @@ async def submit_tool_call(request: AsyncToolCallRequest, http_request: Request)
     return task
 
 
-@router.get("/internal/tools/calls/{call_id}", dependencies=[Depends(verify_internal_api_key)])
+@router.get(
+    "/internal/tools/calls/{call_id}", dependencies=[Depends(verify_internal_api_key)]
+)
 async def get_tool_call(call_id: str, http_request: Request) -> dict[str, Any]:
     registry = http_request.app.state.container.runtime.tools
     result = registry.get_task(call_id, include_result=True)
@@ -80,7 +95,10 @@ async def get_tool_call(call_id: str, http_request: Request) -> dict[str, Any]:
     return result
 
 
-@router.post("/internal/tools/calls/{call_id}/cancel", dependencies=[Depends(verify_internal_api_key)])
+@router.post(
+    "/internal/tools/calls/{call_id}/cancel",
+    dependencies=[Depends(verify_internal_api_key)],
+)
 async def cancel_tool_call(call_id: str, http_request: Request) -> dict[str, Any]:
     registry = http_request.app.state.container.runtime.tools
     result = await registry.cancel_task(call_id)
@@ -94,7 +112,9 @@ async def cancel_tool_call(call_id: str, http_request: Request) -> dict[str, Any
     status_code=202,
     dependencies=[Depends(verify_internal_api_key)],
 )
-async def submit_tool_chain(request: ToolChainRequest, http_request: Request) -> dict[str, Any]:
+async def submit_tool_chain(
+    request: ToolChainRequest, http_request: Request
+) -> dict[str, Any]:
     registry = http_request.app.state.container.runtime.tools
     steps = [
         ToolChainStep(
@@ -121,7 +141,9 @@ async def submit_tool_chain(request: ToolChainRequest, http_request: Request) ->
     return chain
 
 
-@router.get("/internal/tools/chains/{chain_id}", dependencies=[Depends(verify_internal_api_key)])
+@router.get(
+    "/internal/tools/chains/{chain_id}", dependencies=[Depends(verify_internal_api_key)]
+)
 async def get_tool_chain(chain_id: str, http_request: Request) -> dict[str, Any]:
     registry = http_request.app.state.container.runtime.tools
     result = registry.get_chain(chain_id, include_results=True)
@@ -130,7 +152,10 @@ async def get_tool_chain(chain_id: str, http_request: Request) -> dict[str, Any]
     return result
 
 
-@router.post("/internal/tools/chains/{chain_id}/cancel", dependencies=[Depends(verify_internal_api_key)])
+@router.post(
+    "/internal/tools/chains/{chain_id}/cancel",
+    dependencies=[Depends(verify_internal_api_key)],
+)
 async def cancel_tool_chain(chain_id: str, http_request: Request) -> dict[str, Any]:
     registry = http_request.app.state.container.runtime.tools
     result = await registry.cancel_chain(chain_id)

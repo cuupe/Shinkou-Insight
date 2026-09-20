@@ -25,7 +25,14 @@ class MCPToolBridge:
     remote write capabilities by accident.
     """
 
-    def __init__(self, url: str, *, api_key: str | None = None, allowed_tools: set[str] | None = None, timeout_seconds: float = 15) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        api_key: str | None = None,
+        allowed_tools: set[str] | None = None,
+        timeout_seconds: float = 15,
+    ) -> None:
         self.url = url
         self.api_key = api_key
         self.allowed_tools = allowed_tools or set()
@@ -45,9 +52,13 @@ class MCPToolBridge:
             raise MCPBridgeError("mcp is required when MCP_URL is configured") from exc
         headers = {"X-Internal-Api-Key": self.api_key} if self.api_key else None
         self._stream_context = streamablehttp_client(self.url, headers=headers)
-        read_stream, write_stream, _ = await asyncio.wait_for(self._stream_context.__aenter__(), timeout=self.timeout_seconds)
+        read_stream, write_stream, _ = await asyncio.wait_for(
+            self._stream_context.__aenter__(), timeout=self.timeout_seconds
+        )
         self._session_context = ClientSession(read_stream, write_stream)
-        self._session = await asyncio.wait_for(self._session_context.__aenter__(), timeout=self.timeout_seconds)
+        self._session = await asyncio.wait_for(
+            self._session_context.__aenter__(), timeout=self.timeout_seconds
+        )
         await asyncio.wait_for(self._session.initialize(), timeout=self.timeout_seconds)
 
     async def close(self) -> None:
@@ -62,12 +73,16 @@ class MCPToolBridge:
     async def list_tools(self) -> list[MCPToolDefinition]:
         async with self._lock:
             await self.connect()
-            result = await asyncio.wait_for(self._session.list_tools(), timeout=self.timeout_seconds)
+            result = await asyncio.wait_for(
+                self._session.list_tools(), timeout=self.timeout_seconds
+            )
             return [
                 MCPToolDefinition(
                     name=tool.name,
                     description=tool.description or "",
-                    input_schema=getattr(tool, "inputSchema", None) or getattr(tool, "input_schema", None) or {},
+                    input_schema=getattr(tool, "inputSchema", None)
+                    or getattr(tool, "input_schema", None)
+                    or {},
                 )
                 for tool in result.tools
                 if not self.allowed_tools or tool.name in self.allowed_tools
@@ -78,11 +93,18 @@ class MCPToolBridge:
             raise MCPBridgeError(f"MCP tool is not allow-listed: {name}")
         async with self._lock:
             await self.connect()
-            result = await asyncio.wait_for(self._session.call_tool(name, arguments=arguments), timeout=self.timeout_seconds)
-            structured = getattr(result, "structuredContent", None) or getattr(result, "structured_content", None)
+            result = await asyncio.wait_for(
+                self._session.call_tool(name, arguments=arguments),
+                timeout=self.timeout_seconds,
+            )
+            structured = getattr(result, "structuredContent", None) or getattr(
+                result, "structured_content", None
+            )
             if structured is not None:
                 return structured
-            texts = [getattr(block, "text", "") for block in getattr(result, "content", [])]
+            texts = [
+                getattr(block, "text", "") for block in getattr(result, "content", [])
+            ]
             payload = "\n".join(text for text in texts if text)
             try:
                 return json.loads(payload)
@@ -90,7 +112,9 @@ class MCPToolBridge:
                 return payload
 
 
-async def register_mcp_tools(registry: Any, bridge: MCPToolBridge) -> list[MCPToolDefinition]:
+async def register_mcp_tools(
+    registry: Any, bridge: MCPToolBridge
+) -> list[MCPToolDefinition]:
     """Discover remote tools and register them as read-only local tools."""
 
     definitions = await bridge.list_tools()
@@ -102,6 +126,7 @@ async def register_mcp_tools(registry: Any, bridge: MCPToolBridge) -> list[MCPTo
             return await bridge.call(_name, arguments)
 
         from tools.registry import ToolSpec
+
         registry.register(
             ToolSpec(
                 name=f"mcp.{definition.name}",

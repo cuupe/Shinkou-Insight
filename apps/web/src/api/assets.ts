@@ -10,7 +10,11 @@ export const assetsApi = {
       ),
     ),
 
-  detail: (workspaceId: number | string, projectId: number, assetId: number | string) =>
+  detail: (
+    workspaceId: number | string,
+    projectId: number,
+    assetId: number | string,
+  ) =>
     unwrap<KnowledgeAsset>(
       anet.get<ApiResponse<KnowledgeAsset>>(
         `${projectPath(workspaceId, projectId)}/assets/${assetId}`,
@@ -37,28 +41,44 @@ export const assetsApi = {
     );
   },
 
-  reindex: (workspaceId: number | string, projectId: number, assetId: number | string) =>
+  reindex: (
+    workspaceId: number | string,
+    projectId: number,
+    assetId: number | string,
+  ) =>
     unwrap<KnowledgeAsset>(
       anet.post<ApiResponse<KnowledgeAsset>>(
         `${projectPath(workspaceId, projectId)}/assets/${assetId}/reindex`,
       ),
     ),
 
-  remove: (workspaceId: number | string, projectId: number, assetId: number | string) =>
+  remove: (
+    workspaceId: number | string,
+    projectId: number,
+    assetId: number | string,
+  ) =>
     unwrap<void>(
       anet.delete<ApiResponse<void>>(
         `${projectPath(workspaceId, projectId)}/assets/${assetId}`,
       ),
     ),
 
-  chunks: (workspaceId: number | string, projectId: number, assetId: number | string) =>
+  chunks: (
+    workspaceId: number | string,
+    projectId: number,
+    assetId: number | string,
+  ) =>
     unwrap<Record<string, unknown>[]>(
       anet.get<ApiResponse<Record<string, unknown>[]>>(
         `${projectPath(workspaceId, projectId)}/assets/${assetId}/chunks`,
       ),
     ),
 
-  content: (workspaceId: number | string, projectId: number, assetId: number | string) =>
+  content: (
+    workspaceId: number | string,
+    projectId: number,
+    assetId: number | string,
+  ) =>
     unwrap<string>(
       anet.get<ApiResponse<string>>(
         `${projectPath(workspaceId, projectId)}/assets/${assetId}/content`,

@@ -20,7 +20,9 @@ def _messages(
         **variables,
     ).messages
     if messages and output_language:
-        messages[0]["content"] += f"\nRespond in the requested language: {output_language}."
+        messages[0][
+            "content"
+        ] += f"\nRespond in the requested language: {output_language}."
     return messages
 
 
@@ -28,16 +30,42 @@ def planner_prompt(goal: str, output_language: str = "zh-CN") -> list[dict[str, 
     return _messages("planner", output_language=output_language, goal=goal)
 
 
-def evidence_evaluation_prompt(goal: str, evidence_count: int, output_language: str = "zh-CN") -> list[dict[str, str]]:
-    return _messages("evidence_evaluation", output_language=output_language, goal=goal, evidence_count=evidence_count)
+def evidence_evaluation_prompt(
+    goal: str,
+    evidence_count: int,
+    output_language: str = "zh-CN",
+    evidence: list[dict[str, Any]] | None = None,
+) -> list[dict[str, str]]:
+    return _messages(
+        "evidence_evaluation",
+        output_language=output_language,
+        goal=goal,
+        evidence_count=evidence_count,
+        evidence=evidence or [],
+    )
 
 
-def finding_prompt(goal: str, evidence: list[dict[str, Any]], output_language: str = "zh-CN") -> list[dict[str, str]]:
-    return _messages("finding", output_language=output_language, goal=goal, evidence=evidence)
+def finding_prompt(
+    goal: str, evidence: list[dict[str, Any]], output_language: str = "zh-CN"
+) -> list[dict[str, str]]:
+    return _messages(
+        "finding", output_language=output_language, goal=goal, evidence=evidence
+    )
 
 
-def report_prompt(goal: str, findings: list[dict[str, Any]], evidence: list[dict[str, Any]], output_language: str = "zh-CN") -> list[dict[str, str]]:
-    return _messages("report", output_language=output_language, goal=goal, findings=json.dumps(findings, ensure_ascii=False), evidence=evidence)
+def report_prompt(
+    goal: str,
+    findings: list[dict[str, Any]],
+    evidence: list[dict[str, Any]],
+    output_language: str = "zh-CN",
+) -> list[dict[str, str]]:
+    return _messages(
+        "report",
+        output_language=output_language,
+        goal=goal,
+        findings=json.dumps(findings, ensure_ascii=False),
+        evidence=evidence,
+    )
 
 
 def review_prompt(

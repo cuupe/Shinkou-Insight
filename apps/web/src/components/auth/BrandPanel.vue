@@ -39,7 +39,9 @@ import {
         <div
           class="mb-6 flex items-center gap-2 text-xs font-medium tracking-[0.16em] text-background/55"
         >
-          <span class="size-1.5 rounded-full bg-brand shadow-[0_0_0_4px_color-mix(in_oklab,var(--brand)_12%,transparent)]" />
+          <span
+            class="size-1.5 rounded-full bg-brand shadow-[0_0_0_4px_color-mix(in_oklab,var(--brand)_12%,transparent)]"
+          />
           团队知识工作台
         </div>
         <h1

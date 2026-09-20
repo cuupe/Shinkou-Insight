@@ -95,7 +95,9 @@ const {
 } = useAgentWorkspace();
 const projectAssetCount = ref(0);
 const canSubmitMessage = computed(
-  () => Boolean(draft.value.trim() || pendingAttachments.value.length) && !isRunning.value,
+  () =>
+    Boolean(draft.value.trim() || pendingAttachments.value.length) &&
+    !isRunning.value,
 );
 const contextLoading = ref(false);
 const conversationScroll = ref<HTMLElement | null>(null);
@@ -121,6 +123,7 @@ type ChatGenerationForm = {
   reasoningEffort: "low" | "medium" | "high";
 };
 const generationOpen = ref(false);
+const thinkingDialogOpen = ref(false);
 const configOpen = ref(false);
 const reflectionEnabled = ref(true);
 const webSearchExplicitChoice = ref(false);
@@ -158,10 +161,12 @@ const requestUsesWebSearch = computed(
   () =>
     webSearchReady.value &&
     (allowWeb.value ||
-      (!webSearchExplicitChoice.value && needsFreshExternalSources(draft.value))),
+      (!webSearchExplicitChoice.value &&
+        needsFreshExternalSources(draft.value))),
 );
 
 const agentConfig = computed(() => ({
+  modelName: activeModel.value?.name || "项目默认模型",
   allowWebSearch: requestUsesWebSearch.value,
   reflectionEnabled: reflectionEnabled.value,
   strategy: generation.strategy,
@@ -321,6 +326,56 @@ const processEvents = computed(() =>
   eventHistory.value.length ? eventHistory.value : events.value,
 );
 
+// Only expose auditable execution summaries in the conversation. The model's
+// private chain of thought is never streamed or rendered by the client.
+const latestAssistantMessageId = computed(
+  () =>
+    [...messages.value]
+      .reverse()
+      .find((message) => message.role === "assistant")?.id || "",
+);
+const thinkingSteps = computed(() =>
+  processEvents.value.filter(
+    (event) => {
+      const feedback = event.meta?.modelFeedback;
+      return (
+        event.kind !== "chat" &&
+        typeof feedback === "string" &&
+        Boolean(feedback.trim())
+      );
+    },
+  ),
+);
+const thinkingExpanded = ref(false);
+
+function thinkingStepText(event: AgentEvent) {
+  const modelFeedback = event.meta?.modelFeedback;
+  if (typeof modelFeedback === "string" && modelFeedback.trim()) {
+    return modelFeedback.trim();
+  }
+  return event.detail?.trim() || event.title;
+}
+
+function toggleThinkingSummary() {
+  thinkingExpanded.value = !thinkingExpanded.value;
+}
+
+watch(
+  isRunning,
+  (running, wasRunning) => {
+    if (running) thinkingExpanded.value = true;
+    else if (wasRunning) thinkingExpanded.value = false;
+  },
+  { immediate: true },
+);
+
+watch(
+  () => activeThread.value.id,
+  () => {
+    thinkingExpanded.value = isRunning.value;
+  },
+);
+
 function formatTokenCount(value: number | undefined) {
   return value == null ? "暂无" : value.toLocaleString("zh-CN");
 }
@@ -344,6 +399,13 @@ const activeModel = computed(
     modelOptions.value.find(
       (model) => String(model.id) === String(selectedModelId.value),
     ) || modelOptions.value[0],
+);
+
+const thinkingSummary = computed(() =>
+  generation.thinkingEnabled
+    ? ({ low: "低", medium: "中", high: "高" }[generation.reasoningEffort] ??
+      "高")
+    : "关闭",
 );
 
 const configSummary = computed(() =>
@@ -409,7 +471,10 @@ async function loadWebSearchConfig() {
       workspaceId.value,
       projectId.value,
     );
-    if (!webSearchReady.value) allowWeb.value = false;
+    // Keep web search enabled by default whenever the project has a ready
+    // connector. A user toggle still sets webSearchExplicitChoice and wins
+    // for the current run.
+    allowWeb.value = webSearchReady.value;
   } catch {
     webSearchConfig.value = null;
     allowWeb.value = false;
@@ -454,7 +519,8 @@ const messageMarkdown = new MarkdownIt({
   linkify: true,
 });
 
-const citationMarkerPattern = /(?:\[([^\]\r\n]{1,100})\]|【([^】\r\n]{1,100})】)/g;
+const citationMarkerPattern =
+  /(?:\[([^\]\r\n]{1,100})\]|【([^】\r\n]{1,100})】)/g;
 
 function citationForUrl(message: AgentMessage, url: string) {
   const normalizedUrl = url.trim().replace(/^<|>$/g, "");
@@ -562,7 +628,10 @@ function citationForMarker(message: AgentMessage, marker: string) {
   const citationsForMessage = message.citations || [];
   const normalizedMarker = marker
     .trim()
-    .replace(/^(?:来源|引用|证据|source|citation|evidence)\s*(?:[:：]\s*)?/i, "")
+    .replace(
+      /^(?:来源|引用|证据|source|citation|evidence)\s*(?:[:：]\s*)?/i,
+      "",
+    )
     .trim()
     .toLowerCase();
   const direct = citationsForMessage.find(
@@ -713,10 +782,13 @@ function renderMessageMarkdown(message: AgentMessage) {
 
 function normalizeAgentMarkdown(value: string) {
   const fencedBlocks: string[] = [];
-  const protectedValue = value.replace(/(```[\s\S]*?```|~~~[\s\S]*?~~~)/g, (block) => {
-    const index = fencedBlocks.push(block) - 1;
-    return `\u0000SHINKOU_CODE_${index}\u0000`;
-  });
+  const protectedValue = value.replace(
+    /(```[\s\S]*?```|~~~[\s\S]*?~~~)/g,
+    (block) => {
+      const index = fencedBlocks.push(block) - 1;
+      return `\u0000SHINKOU_CODE_${index}\u0000`;
+    },
+  );
   const normalized = protectedValue
     // Some providers return JSON-style line breaks instead of real newlines.
     .replace(/\\r?\\n/g, "\n")
@@ -731,17 +803,18 @@ function normalizeAgentMarkdown(value: string) {
     .replace(/^(\s*)\*(?=[^\s*])/gm, "$1* ")
     .replace(/^(\s*)(\d+[.)])(?=\S)/gm, "$1$2 ")
     .replace(/^([一二三四五六七八九十]+、)(?=\S)/gm, "## $1 ");
-  return normalized.replace(/\u0000SHINKOU_CODE_(\d+)\u0000/g, (_match, index) => {
-    return fencedBlocks[Number(index)] || "";
-  });
+  return normalized.replace(
+    /\u0000SHINKOU_CODE_(\d+)\u0000/g,
+    (_match, index) => {
+      return fencedBlocks[Number(index)] || "";
+    },
+  );
 }
 
 function openMessageCitation(event: MouseEvent, message: AgentMessage) {
   const target = event.target;
   if (!(target instanceof Element)) return;
-  const button = target.closest<HTMLButtonElement>(
-    "button[data-citation-id]",
-  );
+  const button = target.closest<HTMLButtonElement>("button[data-citation-id]");
   if (!button?.dataset.citationId) return;
 
   const citationId = decodeURIComponent(button.dataset.citationId);
@@ -761,7 +834,9 @@ function eventStatusLabel(event: AgentEvent) {
 
 function eventTimeLabel(event: AgentEvent) {
   const timestamp = event.completedAt || event.startedAt;
-  return timestamp ? formatDateTime(timestamp, "等待中") : event.duration || "等待中";
+  return timestamp
+    ? formatDateTime(timestamp, "等待中")
+    : event.duration || "等待中";
 }
 
 const attachmentIcons = {
@@ -798,7 +873,9 @@ function detectAttachmentKind(file: File): AgentAttachmentKind {
   const extension = file.name.split(".").pop()?.toLowerCase() || "";
   if (
     file.type.startsWith("image/") ||
-    ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "svg"].includes(extension)
+    ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "svg"].includes(
+      extension,
+    )
   )
     return "image";
   if (
@@ -867,8 +944,12 @@ function openCitation(
         assetId: String(citation.assetId),
       },
       query: {
-        ...(citation.chunkId != null ? { chunkId: String(citation.chunkId) } : {}),
-        ...(citation.pageNumber != null ? { page: String(citation.pageNumber) } : {}),
+        ...(citation.chunkId != null
+          ? { chunkId: String(citation.chunkId) }
+          : {}),
+        ...(citation.pageNumber != null
+          ? { page: String(citation.pageNumber) }
+          : {}),
         ...(citation.quote ? { quote: citation.quote.slice(0, 300) } : {}),
       },
     });
@@ -886,7 +967,11 @@ function isWebCitation(
 }
 
 function canSaveCitation(citation: MessageCitation) {
-  return isWebCitation(citation) && citation.contentKind === "fulltext" && Boolean(citation.url);
+  return (
+    isWebCitation(citation) &&
+    citation.contentKind === "fulltext" &&
+    Boolean(citation.url)
+  );
 }
 
 function citationKnowledgeKey(
@@ -1030,7 +1115,7 @@ function exportConversation() {
   const body = messages.value
     .map(
       (message) =>
-        `## ${message.role === "assistant" ? "Shinkou Agent" : "用户"}\n\n${message.content}`,
+        `## ${message.role === "assistant" ? message.modelName || "Shinkou Agent" : "用户"}\n\n${message.content}`,
     )
     .join("\n\n");
   const sources = sourceCitations.value.length
@@ -1154,7 +1239,11 @@ watch(selectedModelId, applyModelGenerationDefaults);
             :size="16"
           />
         </button>
-        <div v-if="configOpen" id="agent-config-items" class="agent-config-items">
+        <div
+          v-if="configOpen"
+          id="agent-config-items"
+          class="agent-config-items"
+        >
           <div class="agent-config-item agent-config-model">
             <span class="config-item-icon"><Cpu :size="15" /></span>
             <label class="config-copy">
@@ -1323,24 +1412,6 @@ watch(selectedModelId, applyModelGenerationDefaults);
               step="0.1"
           /></label>
           <label class="generation-field"
-            ><span>深度思考</span
-            ><select v-model="generation.thinkingEnabled">
-              <option :value="true">开启</option>
-              <option :value="false">关闭</option>
-            </select></label
-          >
-          <label class="generation-field"
-            ><span>思考强度</span
-            ><select
-              v-model="generation.reasoningEffort"
-              :disabled="!generation.thinkingEnabled"
-            >
-              <option value="low">低</option>
-              <option value="medium">中</option>
-              <option value="high">高</option>
-            </select></label
-          >
-          <label class="generation-field"
             ><span>回答方式</span
             ><select v-model="generation.strategy">
               <option value="AUTO">自动选择（推荐）</option>
@@ -1435,48 +1506,24 @@ watch(selectedModelId, applyModelGenerationDefaults);
               </div>
             </div>
             <div class="conversation-meta">
-              <button
-                class="conversation-export"
-                type="button"
-                title="导出当前对话"
-                @click="exportConversation"
-              >
-                <Download :size="13" />导出
-              </button>
-              <span v-if="activeThread.runId"
+              <span v-if="activeThread.runId" class="conversation-run-id"
                 >运行 {{ activeThread.runId }}</span
               >
-              <span><Clock3 :size="13" />{{ formatDateTime(activeThread.updatedAt, "刚刚") }}</span>
+              <span class="conversation-time"
+                ><Clock3 :size="13" />{{
+                  formatDateTime(activeThread.updatedAt, "刚刚")
+                }}</span
+              >
             </div>
-          </header>
-
-          <div
-            v-if="isRunning"
-            class="live-activity"
-            role="status"
-            aria-live="polite"
-          >
-            <span class="live-activity-icon">
-              <component
-                :is="eventIcon(currentEvent?.kind || 'plan')"
-                :size="15"
-              />
-            </span>
-            <div class="live-activity-copy">
-              <div class="live-activity-topline">
-                <span
-                  >处理 {{ runElapsedLabel }} · 当前阶段
-                  {{ formatElapsed(activityElapsed) }}</span
-                >
-                <em>实时活动</em>
-              </div>
-              <strong>{{ currentEvent?.title || "正在连接 Agent" }}</strong>
-              <p>{{ activityDetail(currentEvent) }}</p>
-            </div>
-            <span class="live-activity-next"
-              >下一步：{{ nextActivityLabel(currentEvent) }}</span
+            <button
+              class="conversation-export"
+              type="button"
+              title="导出当前对话"
+              @click="exportConversation"
             >
-          </div>
+              <Download :size="13" />导出
+            </button>
+          </header>
 
           <div ref="conversationScroll" class="conversation-scroll">
             <div v-if="!messages.length" class="conversation-empty">
@@ -1503,7 +1550,9 @@ watch(selectedModelId, applyModelGenerationDefaults);
               <div class="message-body">
                 <div class="message-meta">
                   <strong>{{
-                    message.role === "assistant" ? "Shinkou Agent" : "你"
+                    message.role === "assistant"
+                      ? message.modelName || "Shinkou Agent"
+                      : "你"
                   }}</strong>
                   <span>{{ formatDateTime(message.createdAt, "刚刚") }}</span>
                   <span
@@ -1511,6 +1560,63 @@ watch(selectedModelId, applyModelGenerationDefaults);
                     class="streaming-label"
                     ><i />生成中</span
                   >
+                  <button
+                    v-if="
+                      message.role === 'assistant' &&
+                      message.id === latestAssistantMessageId &&
+                      (isRunning || thinkingSteps.length)
+                    "
+                    class="message-thinking-trigger"
+                    type="button"
+                    :aria-expanded="thinkingExpanded"
+                    @click="toggleThinkingSummary"
+                  >
+                    <Sparkles :size="12" />
+                    <span>{{ isRunning ? "正在思考" : "思考摘要" }}</span>
+                    <ChevronDown
+                      :size="13"
+                      :class="{ open: thinkingExpanded }"
+                    />
+                  </button>
+                </div>
+                <div
+                  v-if="
+                    message.role === 'assistant' &&
+                    message.id === latestAssistantMessageId &&
+                    thinkingExpanded &&
+                    (isRunning || thinkingSteps.length)
+                  "
+                  class="message-thinking-details"
+                  aria-label="思考摘要"
+                >
+                  <div class="message-thinking-list">
+                    <div
+                      v-for="(event, index) in thinkingSteps"
+                      :key="event.id + '-' + index + '-summary'"
+                      class="message-thinking-step"
+                      :class="event.status"
+                    >
+                      <span class="message-thinking-index">{{
+                        String(index + 1).padStart(2, "0")
+                      }}</span>
+                      <span class="message-thinking-icon">
+                        <component :is="eventIcon(event.kind)" :size="12" />
+                      </span>
+                      <span class="message-thinking-copy">
+                        <strong>{{ thinkingStepText(event) }}</strong>
+                        <small>{{ event.title }}</small>
+                      </span>
+                      <span class="message-thinking-status">{{
+                        eventStatusLabel(event)
+                      }}</span>
+                    </div>
+                    <p v-if="!thinkingSteps.length" class="message-thinking-empty">
+                      正在准备执行步骤…
+                    </p>
+                    <p class="message-thinking-note">
+                      这里只展示搜索、工具和结果整理等执行摘要，不展示模型隐藏思维内容。
+                    </p>
+                  </div>
                 </div>
                 <div
                   class="message-bubble"
@@ -1704,9 +1810,9 @@ watch(selectedModelId, applyModelGenerationDefaults);
                               ? "已加入"
                               : !canSaveCitation(citation)
                                 ? "未获取原文"
-                              : isSavingCitation(citation)
-                                ? "加入中"
-                                : "加入知识库"
+                                : isSavingCitation(citation)
+                                  ? "加入中"
+                                  : "加入知识库"
                           }}
                         </button>
                       </div>
@@ -1753,36 +1859,51 @@ watch(selectedModelId, applyModelGenerationDefaults);
                   <button
                     type="button"
                     class="composer-tool-button"
+                    aria-label="添加附件"
                     @click="openAttachmentPicker"
                   >
-                    <Paperclip :size="14" />添加附件
+                    <Plus :size="18" />
                   </button>
                   <span
-                    ><Sparkles
-                      :size="13"
-                    />来源只会记录，不会自动写入知识库</span
+                    ><Sparkles :size="13" />AI生成可能会犯错，请谨慎甄别</span
                   >
                 </div>
-                <button
-                  v-if="isRunning"
-                  class="button button-secondary button-sm"
-                  type="button"
-                  :disabled="cancelling"
-                  @click="stopRun"
-                >
-                  <Square :size="13" />{{
-                    cancelling ? "正在暂停" : "暂停运行"
-                  }}
-                </button>
-                <button
-                  v-else
-                  class="button button-primary button-sm"
-                  type="submit"
-                  :disabled="!canSubmitMessage"
-                >
-                  {{ canSubmitMessage ? "发送" : "输入内容" }}
-                  <Send :size="14" />
-                </button>
+                <div class="composer-actions">
+                  <button
+                    class="composer-model-trigger"
+                    type="button"
+                    aria-haspopup="dialog"
+                    aria-label="调整模型和思考设置"
+                    @click="thinkingDialogOpen = true"
+                  >
+                    <Sparkles :size="15" />
+                    <span class="composer-model-copy">
+                      <strong>{{ activeModel?.name || "项目默认模型" }}</strong>
+                      <small>{{ thinkingSummary }}</small>
+                    </span>
+                    <ChevronDown :size="14" />
+                  </button>
+                  <button
+                    v-if="isRunning"
+                    class="button button-secondary button-sm"
+                    type="button"
+                    :disabled="cancelling"
+                    @click="stopRun"
+                  >
+                    <Square :size="13" />{{
+                      cancelling ? "正在暂停" : "暂停运行"
+                    }}
+                  </button>
+                  <button
+                    v-else
+                    class="button button-primary button-sm composer-send-button"
+                    type="submit"
+                    :disabled="!canSubmitMessage"
+                    :aria-label="canSubmitMessage ? '发送' : '请输入内容后发送'"
+                  >
+                    <Send :size="16" />
+                  </button>
+                </div>
               </div>
             </form>
             <p v-if="composerError" class="composer-error" role="alert">
@@ -1964,7 +2085,11 @@ watch(selectedModelId, applyModelGenerationDefaults);
             </div>
           </div>
 
-          <section class="process-review-section" aria-label="过程回顾">
+          <section
+            v-if="false"
+            class="process-review-section"
+            aria-label="过程回顾"
+          >
             <button
               class="process-review-toggle"
               type="button"
@@ -2017,6 +2142,49 @@ watch(selectedModelId, applyModelGenerationDefaults);
       </div>
     </div>
   </div>
+
+  <Dialog v-model:open="thinkingDialogOpen">
+    <DialogContent class="thinking-settings-dialog">
+      <DialogHeader>
+        <DialogTitle>本次对话设置</DialogTitle>
+        <DialogDescription>
+          当前模型：{{
+            activeModel?.name || "项目默认模型"
+          }}。设置只对本次对话生效。
+        </DialogDescription>
+      </DialogHeader>
+      <div class="thinking-settings-grid">
+        <label class="thinking-settings-field">
+          <span>深度思考</span>
+          <select v-model="generation.thinkingEnabled" aria-label="深度思考">
+            <option :value="true">开启</option>
+            <option :value="false">关闭</option>
+          </select>
+        </label>
+        <label class="thinking-settings-field">
+          <span>思考强度</span>
+          <select
+            v-model="generation.reasoningEffort"
+            :disabled="!generation.thinkingEnabled"
+            aria-label="思考强度"
+          >
+            <option value="low">低</option>
+            <option value="medium">中</option>
+            <option value="high">高</option>
+          </select>
+        </label>
+      </div>
+      <DialogFooter>
+        <button
+          class="button button-primary"
+          type="button"
+          @click="thinkingDialogOpen = false"
+        >
+          完成
+        </button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 
   <Dialog v-model:open="deleteOpen">
     <DialogContent class="sm:max-w-md">
@@ -2294,6 +2462,45 @@ watch(selectedModelId, applyModelGenerationDefaults);
 
 .generation-note {
   margin: 0;
+}
+
+.thinking-settings-dialog {
+  max-width: 28rem !important;
+}
+
+.thinking-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.thinking-settings-field {
+  display: grid;
+  gap: 0.375rem;
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+}
+
+.thinking-settings-field select {
+  width: 100%;
+  min-width: 0;
+  padding: 0.5625rem 0.625rem;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.4375rem;
+  background: var(--surface-soft);
+  color: var(--workspace-text);
+  font: inherit;
+  outline: none;
+}
+
+.thinking-settings-field select:focus {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 0.1875rem color-mix(in oklab, var(--teal) 14%, transparent);
+}
+
+.thinking-settings-field select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .agent-config-item {
@@ -2676,7 +2883,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 1rem;
   min-height: 3.75rem;
   padding: 0.75rem 1rem;
   border-bottom: 0.0625rem solid var(--workspace-divider);
@@ -2692,13 +2899,15 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .inspector-footer,
 .run-state,
 .progress-top,
-.event-item > div:first-of-type,
 .citation-card-top {
   display: flex;
   align-items: center;
 }
 
 .conversation-title {
+  width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
   min-width: 0;
   gap: 0.625rem;
 }
@@ -2719,6 +2928,9 @@ watch(selectedModelId, applyModelGenerationDefaults);
 }
 
 .conversation-title strong {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   color: var(--workspace-text);
   font-size: 0.75rem;
@@ -2752,16 +2964,57 @@ watch(selectedModelId, applyModelGenerationDefaults);
 }
 
 .conversation-meta {
+  max-width: min(46%, 34rem);
+  flex: 0 1 auto;
+  overflow: hidden;
+  min-width: 0;
+  justify-content: flex-end;
   gap: 0.6875rem;
   color: var(--workspace-subtle);
   font-size: 0.75rem;
   white-space: nowrap;
 }
 
-.conversation-meta span:last-child {
+.conversation-run-id {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conversation-time {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
+}
+
+.conversation-export {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3125rem;
+  min-height: 1.875rem;
+  padding: 0.25rem 0.5rem;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--workspace-muted);
+  font: inherit;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    color 0.16s ease,
+    background 0.16s ease;
+}
+
+.conversation-export:hover,
+.conversation-export:focus-visible {
+  border-color: var(--agent-accent-border);
+  background: var(--agent-accent-surface-soft);
+  color: var(--teal-dark);
 }
 
 .conversation-scroll {
@@ -2815,6 +3068,144 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .message-meta strong {
   color: var(--workspace-muted);
   font-weight: 650;
+}
+
+.message-thinking-trigger {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.25rem;
+  border: 0;
+  border-radius: 0.3125rem;
+  background: transparent;
+  color: var(--teal-dark);
+  font: inherit;
+  font-size: 0.6875rem;
+  cursor: pointer;
+}
+
+.message-thinking-trigger:hover,
+.message-thinking-trigger:focus-visible {
+  background: var(--agent-accent-surface-soft);
+  color: var(--workspace-text);
+}
+
+.message-thinking-trigger > span {
+  overflow: hidden;
+  max-width: 10rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-thinking-trigger > svg {
+  flex: 0 0 auto;
+}
+
+.message-thinking-trigger > svg:last-child {
+  transition: transform 0.16s ease;
+}
+
+.message-thinking-trigger > svg:last-child.open {
+  transform: rotate(180deg);
+}
+
+.message-thinking-details {
+  width: min(100%, 48rem);
+  margin: 0.125rem 0 0.25rem;
+  padding-left: 0.25rem;
+}
+
+.message-thinking-list {
+  display: grid;
+  gap: 0.125rem;
+  padding: 0.125rem 0 0.25rem 0.75rem;
+  border-left: 0.0625rem solid var(--agent-accent-border);
+}
+
+.message-thinking-step {
+  display: grid;
+  grid-template-columns: 1.375rem 1.25rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  padding: 0.375rem 0;
+  border-top: 0.0625rem solid var(--workspace-divider);
+}
+
+.message-thinking-index,
+.message-thinking-status {
+  color: var(--workspace-subtle);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.message-thinking-icon {
+  display: grid;
+  width: 1.125rem;
+  height: 1.125rem;
+  place-items: center;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 50%;
+  color: var(--workspace-subtle);
+}
+
+.message-thinking-step.running .message-thinking-icon {
+  border-color: var(--agent-accent-border);
+  color: var(--teal-dark);
+  box-shadow: 0 0 0 0.1875rem color-mix(in oklab, var(--teal) 12%, transparent);
+}
+
+.message-thinking-step.completed .message-thinking-icon {
+  border-color: var(--agent-accent-border);
+  background: var(--agent-accent-surface-soft);
+  color: var(--teal-dark);
+}
+
+.message-thinking-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.message-thinking-copy strong {
+  overflow: hidden;
+  color: var(--workspace-text);
+  font-size: 0.75rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-thinking-copy small {
+  overflow: hidden;
+  color: var(--workspace-muted);
+  font-size: 0.6875rem;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-thinking-step.running .message-thinking-status {
+  color: var(--teal-dark);
+}
+
+.message-thinking-step.failed .message-thinking-status {
+  color: #ef9d9d;
+}
+
+.message-thinking-note,
+.message-thinking-empty {
+  margin: 0.375rem 0 0;
+  color: var(--workspace-subtle);
+  font-size: 0.6875rem;
+  line-height: 1.45;
+}
+
+.message-thinking-note {
+  padding-top: 0.375rem;
+  border-top: 0.0625rem solid var(--workspace-divider);
 }
 
 .streaming-label {
@@ -3155,6 +3546,87 @@ watch(selectedModelId, applyModelGenerationDefaults);
   margin-top: 0.375rem;
 }
 
+.composer-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.composer-model-trigger {
+  display: inline-flex;
+  min-width: 0;
+  max-width: min(24rem, 48vw);
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.125rem;
+  border: 0;
+  background: transparent;
+  color: var(--workspace-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.composer-model-trigger > svg:first-child {
+  flex: 0 0 auto;
+  color: var(--teal-dark);
+}
+
+.composer-model-trigger > svg:last-child {
+  flex: 0 0 auto;
+  color: var(--workspace-subtle);
+  transition: transform 0.16s ease;
+}
+
+.composer-model-trigger:hover,
+.composer-model-trigger:focus-visible {
+  color: var(--workspace-text);
+}
+
+.composer-model-trigger:hover > svg:last-child,
+.composer-model-trigger:focus-visible > svg:last-child {
+  color: var(--teal-dark);
+  transform: translateY(0.0625rem);
+}
+
+.composer-model-copy {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.3125rem;
+  overflow: hidden;
+}
+
+.composer-model-copy strong,
+.composer-model-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-model-copy strong {
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.composer-model-copy small {
+  flex: 0 0 auto;
+  color: var(--workspace-subtle);
+  font-size: 0.75rem;
+}
+
+.composer-send-button {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
+}
+
 .composer-bottom > span {
   display: inline-flex;
   align-items: center;
@@ -3304,8 +3776,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
   font-variant-numeric: tabular-nums;
 }
 
-.current-stage-live i,
-.live-activity-topline::before {
+.current-stage-live i {
   display: inline-block;
   width: 0.375rem;
   height: 0.375rem;
@@ -3321,86 +3792,6 @@ watch(selectedModelId, applyModelGenerationDefaults);
   margin-top: 0.375rem;
   color: var(--workspace-subtle);
   font-size: 0.75rem;
-}
-
-.live-activity {
-  display: flex;
-  align-items: center;
-  gap: 0.625rem;
-  margin: 0.625rem 1.125rem 0;
-  padding: 0.6875rem 0.75rem;
-  border: 0.0625rem solid var(--agent-accent-border);
-  border-radius: 0.625rem;
-  background: linear-gradient(
-    90deg,
-    var(--agent-live-gradient-start),
-    var(--agent-live-gradient-end)
-  );
-  box-shadow: 0 0.375rem 1.125rem
-    color-mix(in oklab, var(--teal) 7%, transparent);
-}
-
-.live-activity-icon {
-  display: grid;
-  width: 1.75rem;
-  height: 1.75rem;
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: 0.5rem;
-  background: var(--agent-accent-surface-strong);
-  color: var(--teal-dark);
-}
-
-.live-activity-copy {
-  min-width: 0;
-  flex: 1;
-}
-
-.live-activity-topline {
-  display: flex;
-  align-items: center;
-  gap: 0.4375rem;
-  color: var(--teal-dark);
-  font-size: 0.75rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.live-activity-topline em {
-  padding: 0.125rem 0.3125rem;
-  border-radius: 999px;
-  background: var(--agent-accent-surface-strong);
-  color: var(--teal-dark);
-  font-size: 0.75rem;
-  font-style: normal;
-}
-
-.live-activity-copy strong {
-  display: block;
-  margin-top: 0.1875rem;
-  overflow: hidden;
-  color: var(--workspace-text);
-  font-size: 0.8125rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.live-activity-copy p {
-  margin: 0.1875rem 0 0;
-  overflow: hidden;
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-  line-height: 1.45;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.live-activity-next {
-  max-width: 10rem;
-  flex: 0 0 auto;
-  color: var(--workspace-subtle);
-  font-size: 0.75rem;
-  line-height: 1.45;
-  text-align: right;
 }
 
 @keyframes activity-pulse {
@@ -3533,11 +3924,16 @@ watch(selectedModelId, applyModelGenerationDefaults);
 }
 
 .event-copy > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
   justify-content: space-between;
   gap: 0.375rem;
 }
 
 .event-copy strong {
+  min-width: 0;
+  flex: 1;
   overflow: hidden;
   color: var(--workspace-text);
   font-size: 0.75rem;
@@ -4090,13 +4486,14 @@ watch(selectedModelId, applyModelGenerationDefaults);
 }
 
 .composer-tool-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3125rem;
-  padding: 0.3125rem 0.4375rem;
-  border: 0.0625rem solid var(--workspace-border);
-  border-radius: 0.375rem;
-  background: var(--surface);
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
   color: var(--workspace-muted);
   font: inherit;
   font-size: 0.75rem;
@@ -4104,7 +4501,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 }
 
 .composer-tool-button:hover {
-  border-color: var(--teal);
+  background: color-mix(in oklab, var(--teal) 9%, transparent);
   color: var(--teal-dark);
 }
 
@@ -4272,20 +4669,26 @@ watch(selectedModelId, applyModelGenerationDefaults);
   }
 
   .conversation-header {
+    display: flex;
     align-items: flex-start;
     flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .conversation-title {
+    width: 100%;
   }
 
   .conversation-meta {
+    width: 100%;
+    max-width: none;
     padding-left: 2.75rem;
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
-  .live-activity {
-    align-items: flex-start;
-  }
-
-  .live-activity-next {
-    display: none;
+  .conversation-export {
+    margin-left: 2.75rem;
   }
 
   .conversation-scroll {
@@ -4328,6 +4731,18 @@ watch(selectedModelId, applyModelGenerationDefaults);
     align-items: flex-start;
     flex-direction: column;
     gap: 0.3125rem;
+  }
+
+  .composer-actions {
+    max-width: 100%;
+  }
+
+  .composer-model-trigger {
+    max-width: min(18rem, 58vw);
+  }
+
+  .thinking-settings-grid {
+    grid-template-columns: 1fr;
   }
 }
 .workspace-shortcuts {
@@ -4476,7 +4891,9 @@ watch(selectedModelId, applyModelGenerationDefaults);
   opacity: 0;
   pointer-events: none;
   transform: translate(-50%, 0.25rem);
-  transition: opacity 140ms ease, transform 140ms ease;
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
   white-space: pre-line;
 }
 

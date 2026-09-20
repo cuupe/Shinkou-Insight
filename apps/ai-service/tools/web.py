@@ -36,12 +36,24 @@ DEFAULT_DUCKDUCKGO_BASE_URL = "https://html.duckduckgo.com/html/"
 DEFAULT_BING_BASE_URL = "https://www.bing.com/search"
 WEB_SEARCH_TIMEOUT_SECONDS = 12.0
 
-def _relevant_candidates(query: str, candidates: list[tuple[str, str, str]], top_k: int) -> list[tuple[str, str, str]]:
+
+def _relevant_candidates(
+    query: str, candidates: list[tuple[str, str, str]], top_k: int
+) -> list[tuple[str, str, str]]:
     """Drop search-engine noise before it reaches the model or citation panel."""
 
-    rows = [Evidence(id=str(index), chunk_id=str(index), source_name=title,
-                     content=description or title, url=url, source_type="web", content_kind="search_snippet")
-            for index, (title, url, description) in enumerate(candidates)]
+    rows = [
+        Evidence(
+            id=str(index),
+            chunk_id=str(index),
+            source_name=title,
+            content=description or title,
+            url=url,
+            source_type="web",
+            content_kind="search_snippet",
+        )
+        for index, (title, url, description) in enumerate(candidates)
+    ]
     return [candidates[int(item.id)] for item in rank_web_evidence(query, rows, top_k)]
 
 
@@ -80,7 +92,11 @@ async def validate_web_source(
     except httpx.TimeoutException:
         return {"valid": False, "reason": "来源页面响应超时", "url": normalized_url}
     except httpx.RequestError as exc:
-        return {"valid": False, "reason": f"来源页面无法访问：{exc}", "url": normalized_url}
+        return {
+            "valid": False,
+            "reason": f"来源页面无法访问：{exc}",
+            "url": normalized_url,
+        }
 
     content_type = response.headers.get("content-type", "").casefold()
     if response.status_code < 200 or response.status_code >= 300:
@@ -104,9 +120,19 @@ async def validate_web_source(
     page_text = _plain_text(soup.get_text(" ", strip=True))
     lowered = page_text.casefold()
     if len(page_text) < 80:
-        return {"valid": False, "reason": "来源页面没有可验证的正文内容", "url": str(response.url), "statusCode": response.status_code}
+        return {
+            "valid": False,
+            "reason": "来源页面没有可验证的正文内容",
+            "url": str(response.url),
+            "statusCode": response.status_code,
+        }
     if any(marker in lowered for marker in _BLOCKED_SOURCE_MARKERS):
-        return {"valid": False, "reason": "来源页面是验证或拦截页面", "url": str(response.url), "statusCode": response.status_code}
+        return {
+            "valid": False,
+            "reason": "来源页面是验证或拦截页面",
+            "url": str(response.url),
+            "statusCode": response.status_code,
+        }
 
     page_terms = _source_terms(page_text)
     title_matches = len(_source_terms(title) & page_terms)
@@ -133,9 +159,18 @@ class DisabledWebSearch:
 class BraveWebSearch:
     """Brave Search API adapter that returns URL-backed evidence."""
 
-    def __init__(self, *, client: httpx.AsyncClient, api_key: str, base_url: str, search_language: str = "zh-hans"):
+    def __init__(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        api_key: str,
+        base_url: str,
+        search_language: str = "zh-hans",
+    ):
         if not api_key:
-            raise ValueError("runtime web search API key is required when web search is enabled")
+            raise ValueError(
+                "runtime web search API key is required when web search is enabled"
+            )
         self.client = client
         self.api_key = api_key
         self.base_url = base_url
@@ -145,7 +180,10 @@ class BraveWebSearch:
         try:
             response = await self.client.get(
                 self.base_url,
-                headers={"Accept": "application/json", "X-Subscription-Token": self.api_key},
+                headers={
+                    "Accept": "application/json",
+                    "X-Subscription-Token": self.api_key,
+                },
                 params={
                     "q": query,
                     "count": max(1, min(max(top_k * 3, 10), 20)),
@@ -171,7 +209,7 @@ class BraveWebSearch:
         except ValueError as exc:
             raise WebSearchError("web search returned invalid JSON") from exc
 
-        results = ((payload.get("web") or {}).get("results") or [])
+        results = (payload.get("web") or {}).get("results") or []
         candidates: list[tuple[str, str, str]] = []
         for item in results:
             title = _plain_text(item.get("title"))
@@ -202,7 +240,13 @@ class BraveWebSearch:
 class BingWebSearch:
     """Public Bing HTML adapter used as a fallback for blocked public providers."""
 
-    def __init__(self, *, client: httpx.AsyncClient, base_url: str = DEFAULT_BING_BASE_URL, search_language: str = "zh-hans"):
+    def __init__(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        base_url: str = DEFAULT_BING_BASE_URL,
+        search_language: str = "zh-hans",
+    ):
         self.client = client
         self.base_url = base_url
         self.search_language = search_language
@@ -229,7 +273,9 @@ class BingWebSearch:
         if response.status_code == 429:
             raise WebSearchError("fallback web search rate limit exceeded")
         if response.is_error:
-            raise WebSearchError(f"fallback web search failed with HTTP {response.status_code}")
+            raise WebSearchError(
+                f"fallback web search failed with HTTP {response.status_code}"
+            )
 
         soup = BeautifulSoup(response.text, "html.parser")
         candidates: list[tuple[str, str, str]] = []
@@ -239,8 +285,14 @@ class BingWebSearch:
             snippet = item.select_one(".b_caption p")
             title = _plain_text(link.get_text(" ", strip=True) if link else "")
             url = str(link.get("href") or "").strip() if link else ""
-            description = _plain_text(snippet.get_text(" ", strip=True) if snippet else "")
-            if not title or not url.startswith(("http://", "https://")) or url in seen_urls:
+            description = _plain_text(
+                snippet.get_text(" ", strip=True) if snippet else ""
+            )
+            if (
+                not title
+                or not url.startswith(("http://", "https://"))
+                or url in seen_urls
+            ):
                 continue
             seen_urls.add(url)
             candidates.append((title, url, description))
@@ -268,7 +320,13 @@ class BingWebSearch:
 class DuckDuckGoWebSearch:
     """Public HTML search adapter used when a project has no provider key."""
 
-    def __init__(self, *, client: httpx.AsyncClient, base_url: str = DEFAULT_DUCKDUCKGO_BASE_URL, search_language: str = "zh-hans"):
+    def __init__(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        base_url: str = DEFAULT_DUCKDUCKGO_BASE_URL,
+        search_language: str = "zh-hans",
+    ):
         self.client = client
         self.base_url = base_url
         self.search_language = search_language
@@ -288,16 +346,30 @@ class DuckDuckGoWebSearch:
                 timeout=WEB_SEARCH_TIMEOUT_SECONDS,
             )
         except httpx.TimeoutException as exc:
-            return await self._fallback_to_bing(query, top_k, WebSearchError("web search request timed out"))
+            return await self._fallback_to_bing(
+                query, top_k, WebSearchError("web search request timed out")
+            )
         except httpx.RequestError as exc:
-            return await self._fallback_to_bing(query, top_k, WebSearchError(f"web search request failed: {exc}"))
+            return await self._fallback_to_bing(
+                query, top_k, WebSearchError(f"web search request failed: {exc}")
+            )
 
         if response.status_code == 429:
-            return await self._fallback_to_bing(query, top_k, WebSearchError("web search rate limit exceeded"))
+            return await self._fallback_to_bing(
+                query, top_k, WebSearchError("web search rate limit exceeded")
+            )
         if response.status_code in {401, 403}:
-            return await self._fallback_to_bing(query, top_k, WebSearchError("public web search was blocked by the provider"))
+            return await self._fallback_to_bing(
+                query,
+                top_k,
+                WebSearchError("public web search was blocked by the provider"),
+            )
         if response.is_error:
-            return await self._fallback_to_bing(query, top_k, WebSearchError(f"web search failed with HTTP {response.status_code}"))
+            return await self._fallback_to_bing(
+                query,
+                top_k,
+                WebSearchError(f"web search failed with HTTP {response.status_code}"),
+            )
 
         soup = BeautifulSoup(response.text, "html.parser")
         candidate_limit = max(10, min(top_k * 3, 20))
@@ -308,7 +380,9 @@ class DuckDuckGoWebSearch:
             snippet = item.select_one(".result__snippet")
             title = _plain_text(link.get_text(" ", strip=True) if link else "")
             url = _duckduckgo_result_url(link.get("href") if link else "")
-            description = _plain_text(snippet.get_text(" ", strip=True) if snippet else "")
+            description = _plain_text(
+                snippet.get_text(" ", strip=True) if snippet else ""
+            )
             if not title or not url or not description or url in seen_urls:
                 continue
             seen_urls.add(url)
@@ -332,18 +406,28 @@ class DuckDuckGoWebSearch:
             )
         if evidence:
             return evidence
-        return await self._fallback_to_bing(query, top_k, WebSearchError("public web search returned no parseable results"))
+        return await self._fallback_to_bing(
+            query,
+            top_k,
+            WebSearchError("public web search returned no parseable results"),
+        )
 
-    async def _fallback_to_bing(self, query: str, top_k: int, original_error: WebSearchError) -> list[Evidence]:
+    async def _fallback_to_bing(
+        self, query: str, top_k: int, original_error: WebSearchError
+    ) -> list[Evidence]:
         try:
-            return await BingWebSearch(client=self.client, search_language=self.search_language).search(query, top_k)
+            return await BingWebSearch(
+                client=self.client, search_language=self.search_language
+            ).search(query, top_k)
         except Exception:
             raise original_error
 
 
 def _duckduckgo_region(language: str) -> str:
     normalized = str(language or "").lower().replace("_", "-")
-    return {"zh-hans": "cn-zh", "zh-cn": "cn-zh", "en-us": "us-en"}.get(normalized, normalized or "wt-wt")
+    return {"zh-hans": "cn-zh", "zh-cn": "cn-zh", "en-us": "us-en"}.get(
+        normalized, normalized or "wt-wt"
+    )
 
 
 def _duckduckgo_result_url(value: object) -> str:

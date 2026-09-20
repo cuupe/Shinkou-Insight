@@ -39,9 +39,7 @@ const preferences = reactive({
   retention: "90 天",
 });
 const replacementWorkspaces = computed(() =>
-  availableWorkspaces.filter(
-    (item) => String(item.id) !== workspaceId.value,
-  ),
+  availableWorkspaces.filter((item) => String(item.id) !== workspaceId.value),
 );
 
 function applyPreferences(value: unknown) {
@@ -226,21 +224,26 @@ async function savePreferences() {
             :disabled="!isWorkspaceAdmin" /></label
         ><label class="field-label"
           >工作区标识
-           <div class="input-with-action">
-             <input :value="workspaceSlug" readonly aria-readonly="true" /><button
-               type="button"
-               aria-label="复制工作区标识"
+          <div class="input-with-action">
+            <input
+              :value="workspaceSlug"
+              readonly
+              aria-readonly="true"
+            /><button
+              type="button"
+              aria-label="复制工作区标识"
               @click="copySlug"
             >
               <Copy :size="14" />
             </button>
-           </div>
-           <small class="field-hint">创建后不可修改，仅支持复制。</small></label
+          </div>
+          <small class="field-hint">创建后不可修改，仅支持复制。</small></label
         ><label class="field-label field-wide"
           >工作区描述<textarea
             v-model="workspaceDescription"
             rows="3"
-            :disabled="!isWorkspaceAdmin" />
+            :disabled="!isWorkspaceAdmin"
+          />
         </label>
       </div>
       <button
@@ -286,7 +289,10 @@ async function savePreferences() {
           ><span
             ><strong>运行记录保留</strong
             ><small>超过保留期的运行记录会进入归档状态</small></span
-          ><select v-model="preferences.retention" :disabled="!isWorkspaceAdmin">
+          ><select
+            v-model="preferences.retention"
+            :disabled="!isWorkspaceAdmin"
+          >
             <option>30 天</option>
             <option>90 天</option>
             <option>1 年</option>

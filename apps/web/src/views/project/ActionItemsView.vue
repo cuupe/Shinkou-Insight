@@ -166,7 +166,9 @@ async function saveActionItem() {
         editingItemId.value,
         {
           title: actionForm.title.trim(),
-          ownerId: owners.value.find((owner) => owner.userName === actionForm.owner)?.userId,
+          ownerId: owners.value.find(
+            (owner) => owner.userName === actionForm.owner,
+          )?.userId,
           dueAt: actionForm.due || null,
           status: actionForm.status,
           priority: actionForm.priority,
@@ -185,7 +187,9 @@ async function saveActionItem() {
         projectId.value,
         {
           title: actionForm.title.trim(),
-          ownerId: owners.value.find((owner) => owner.userName === actionForm.owner)?.userId,
+          ownerId: owners.value.find(
+            (owner) => owner.userName === actionForm.owner,
+          )?.userId,
           dueAt: actionForm.due || null,
           status: actionForm.status,
           priority: actionForm.priority,
@@ -420,15 +424,15 @@ function priorityClass(priority: string) {
         <div class="form-grid">
           <label
             >负责人<select v-model="actionForm.owner">
-              <option v-for="owner in owners" :key="owner.userId || owner.id" :value="owner.userName">
+              <option
+                v-for="owner in owners"
+                :key="owner.userId || owner.id"
+                :value="owner.userName"
+              >
                 {{ owner.userName }}
               </option>
             </select></label
-          ><label
-            >截止时间<input
-              v-model="actionForm.due"
-              type="date"
-          /></label>
+          ><label>截止时间<input v-model="actionForm.due" type="date" /></label>
         </div>
         <div class="form-grid">
           <label

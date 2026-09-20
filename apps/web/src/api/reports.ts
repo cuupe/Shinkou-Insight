@@ -10,7 +10,11 @@ export const reportsApi = {
       ),
     ),
 
-  detail: (workspaceId: number | string, projectId: number, reportId: number | string) =>
+  detail: (
+    workspaceId: number | string,
+    projectId: number,
+    reportId: number | string,
+  ) =>
     unwrap<Report>(
       anet.get<ApiResponse<Report>>(
         `${projectPath(workspaceId, projectId)}/reports/${reportId}`,

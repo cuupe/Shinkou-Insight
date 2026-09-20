@@ -56,18 +56,35 @@ def create_mcp_server(context: MCPContext):
         finally:
             await context.stop()
 
-    mcp = FastMCP("shinkou-insight", instructions="Tenant-scoped read-only knowledge and graph tools for Shinkou Insight.", lifespan=lifespan, host=os.getenv("MCP_HOST", "0.0.0.0"), port=int(os.getenv("MCP_PORT", "8001")), json_response=True, stateless_http=True)
+    mcp = FastMCP(
+        "shinkou-insight",
+        instructions="Tenant-scoped read-only knowledge and graph tools for Shinkou Insight.",
+        lifespan=lifespan,
+        host=os.getenv("MCP_HOST", "0.0.0.0"),
+        port=int(os.getenv("MCP_PORT", "8001")),
+        json_response=True,
+        stateless_http=True,
+    )
 
     def authorize(ctx: Context) -> None:
         if not context.api_key or ctx.request_context.request is None:
             return
         headers = getattr(ctx.request_context.request, "headers", {})
-        supplied = headers.get("x-internal-api-key") or headers.get("authorization", "").removeprefix("Bearer ")
+        supplied = headers.get("x-internal-api-key") or headers.get(
+            "authorization", ""
+        ).removeprefix("Bearer ")
         if not supplied or not secrets.compare_digest(supplied, context.api_key):
             raise PermissionError("Invalid MCP API key")
 
     @mcp.tool()
-    async def search_knowledge(ctx: Context, workspace_id: int, project_id: int, query: str, top_k: int = 8, retrieval_mode: str = "HYBRID") -> dict[str, Any]:
+    async def search_knowledge(
+        ctx: Context,
+        workspace_id: int,
+        project_id: int,
+        query: str,
+        top_k: int = 8,
+        retrieval_mode: str = "HYBRID",
+    ) -> dict[str, Any]:
         """Search project knowledge using vector, keyword, or hybrid retrieval."""
 
         authorize(ctx)
@@ -82,10 +99,16 @@ def create_mcp_server(context: MCPContext):
             top_k=top_k,
             retrieval_mode=retrieval_mode,
         )
-        return {"contractVersion": "1.0", "query": query, "items": [item.model_dump(mode="json") for item in items]}
+        return {
+            "contractVersion": "1.0",
+            "query": query,
+            "items": [item.model_dump(mode="json") for item in items],
+        }
 
     @mcp.tool()
-    async def search_graph(ctx: Context, workspace_id: int, project_id: int, query: str, limit: int = 10) -> dict[str, Any]:
+    async def search_graph(
+        ctx: Context, workspace_id: int, project_id: int, query: str, limit: int = 10
+    ) -> dict[str, Any]:
         """Search entities and relationships in the project knowledge graph."""
 
         authorize(ctx)
@@ -99,31 +122,60 @@ def create_mcp_server(context: MCPContext):
         )
         return {
             "contractVersion": "1.0",
-            "nodes": [{"key": node.key, "name": node.name, "nodeType": node.node_type, **node.properties} for node in nodes],
-            "relationships": [{"source": edge.source, "target": edge.target, "relation": edge.relation, **edge.properties} for edge in edges],
+            "nodes": [
+                {
+                    "key": node.key,
+                    "name": node.name,
+                    "nodeType": node.node_type,
+                    **node.properties,
+                }
+                for node in nodes
+            ],
+            "relationships": [
+                {
+                    "source": edge.source,
+                    "target": edge.target,
+                    "relation": edge.relation,
+                    **edge.properties,
+                }
+                for edge in edges
+            ],
         }
 
     @mcp.resource("shinkou://capabilities")
     def capabilities() -> str:
-        return "read-only knowledge search and tenant-scoped graph search; no write tools"
+        return (
+            "read-only knowledge search and tenant-scoped graph search; no write tools"
+        )
 
     return mcp
 
 
 def build_default_context() -> MCPContext:
     settings = get_settings()
-    embedding = build_embedding_provider(mode=settings.embedding_mode, api_key=settings.embedding_api_key, base_url=settings.embedding_base_url, model=settings.embedding_model, dimension=settings.embedding_dimension)
+    embedding = build_embedding_provider(
+        mode=settings.embedding_mode,
+        api_key=settings.embedding_api_key,
+        base_url=settings.embedding_base_url,
+        model=settings.embedding_model,
+        dimension=settings.embedding_dimension,
+    )
     graph_store: Any = MemoryGraphStore()
     shutdowns: list[Any] = []
     if settings.graph_mode.lower() == "neo4j":
         if not settings.neo4j_uri or not settings.neo4j_password:
-            raise RuntimeError("NEO4J_URI and NEO4J_PASSWORD are required for GRAPH_MODE=neo4j")
-        graph_store = Neo4jGraphStore(settings.neo4j_uri, settings.neo4j_username, settings.neo4j_password)
+            raise RuntimeError(
+                "NEO4J_URI and NEO4J_PASSWORD are required for GRAPH_MODE=neo4j"
+            )
+        graph_store = Neo4jGraphStore(
+            settings.neo4j_uri, settings.neo4j_username, settings.neo4j_password
+        )
         shutdowns.append(graph_store.close)
     if settings.retriever_mode.lower() == "milvus":
         if not settings.database_url:
             raise RuntimeError("DATABASE_URL is required when RETRIEVER_MODE=milvus")
         from rag.milvus_store import MilvusKnowledgeStore
+
         store = MilvusKnowledgeStore(
             settings.database_url,
             settings.milvus_uri,
@@ -140,10 +192,21 @@ def build_default_context() -> MCPContext:
             for close in shutdowns:
                 await close()
 
-        return MCPContext(retriever=store, graph_store=graph_store, api_key=settings.mcp_api_key or settings.internal_api_key, startup=store.start, shutdown=shutdown)
+        return MCPContext(
+            retriever=store,
+            graph_store=graph_store,
+            api_key=settings.mcp_api_key or settings.internal_api_key,
+            startup=store.start,
+            shutdown=shutdown,
+        )
     if settings.retriever_mode.lower() != "memory":
         raise RuntimeError("RETRIEVER_MODE must be milvus or memory")
-    return MCPContext(retriever=InMemoryKnowledgeStore(embedding), graph_store=graph_store, api_key=settings.mcp_api_key or settings.internal_api_key, shutdown=(shutdowns[0] if shutdowns else None))
+    return MCPContext(
+        retriever=InMemoryKnowledgeStore(embedding),
+        graph_store=graph_store,
+        api_key=settings.mcp_api_key or settings.internal_api_key,
+        shutdown=(shutdowns[0] if shutdowns else None),
+    )
 
 
 def main() -> None:

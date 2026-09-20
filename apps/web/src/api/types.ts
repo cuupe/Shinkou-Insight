@@ -27,8 +27,6 @@ export interface LoginBySmsPayload {
   phoneNumber: string;
   verifyCode: string;
   verifyCodeId: string;
-  captcha: string;
-  captchaId: string;
 }
 
 export interface RegisterPayload {
@@ -63,11 +61,7 @@ export interface SmsResponse {
 }
 
 export type SmsPurpose =
-  | "REGISTER"
-  | "LOGIN"
-  | "PASSWORD_CHANGE"
-  | "PHONE_CHANGE"
-  | "PASSWORD_RESET";
+  "REGISTER" | "LOGIN" | "PASSWORD_CHANGE" | "PHONE_CHANGE" | "PASSWORD_RESET";
 
 export interface CsrfTokenResponse {
   token: string;
@@ -270,7 +264,14 @@ export interface KnowledgeAnswerResponse {
 export type AgentMessageRole = "user" | "assistant";
 
 export type AgentEventKind =
-    "chat" | "plan" | "search" | "tool" | "file" | "evidence" | "synthesis" | "reflection";
+  | "chat"
+  | "plan"
+  | "search"
+  | "tool"
+  | "file"
+  | "evidence"
+  | "synthesis"
+  | "reflection";
 
 export type AgentEventStatus = "pending" | "running" | "completed" | "failed";
 
@@ -335,6 +336,7 @@ export interface AgentMessage {
   id: string;
   role: AgentMessageRole;
   content: string;
+  modelName?: string;
   createdAt: string;
   status?: "streaming" | "completed" | "failed";
   citations?: AgentCitation[];
@@ -396,6 +398,7 @@ export interface AgentSendMessagePayload {
 }
 
 export interface AgentRunConfig {
+  modelName?: string;
   allowWebSearch?: boolean;
   reflectionEnabled?: boolean;
   strategy?: "AUTO" | "REACT" | "PLAN_AND_SOLVE" | "REFLECTION";
@@ -438,17 +441,54 @@ export interface AgentRunMetrics {
 }
 
 export type AgentStreamEvent = { eventId?: string } & (
-  | { type: "run.started"; runId: string; startedAt?: string; data?: AgentRunMetrics }
+  | {
+      type: "run.started";
+      runId: string;
+      startedAt?: string;
+      data?: AgentRunMetrics;
+    }
   | { type: "event.updated"; runId: string; event: AgentEvent }
   | { type: "message.delta"; runId: string; messageId: string; delta: string }
-  | { type: "message.replace"; runId: string; messageId: string; content: string }
+  | {
+      type: "message.replace";
+      runId: string;
+      messageId: string;
+      content: string;
+    }
   | { type: "citation.added"; runId: string; citation: AgentCitation }
   | { type: "media.added"; runId: string; messageId: string; media: AgentMedia }
-  | { type: "artifact.added"; runId: string; messageId: string; artifact: AgentAttachment }
+  | {
+      type: "artifact.added";
+      runId: string;
+      messageId: string;
+      artifact: AgentAttachment;
+    }
   | { type: "message.completed"; runId: string; messageId: string }
-  | { type: "usage.updated"; runId: string; usage?: TokenUsage; latencyMs?: number; delta?: boolean }
-  | { type: "run.completed"; runId: string; data?: AgentRunMetrics; startedAt?: string; finishedAt?: string; durationMs?: number; usage?: TokenUsage; contextCompression?: ContextCompression }
-  | { type: "run.failed"; runId: string; message: string; startedAt?: string; durationMs?: number });
+  | {
+      type: "usage.updated";
+      runId: string;
+      usage?: TokenUsage;
+      latencyMs?: number;
+      delta?: boolean;
+    }
+  | {
+      type: "run.completed";
+      runId: string;
+      data?: AgentRunMetrics;
+      startedAt?: string;
+      finishedAt?: string;
+      durationMs?: number;
+      usage?: TokenUsage;
+      contextCompression?: ContextCompression;
+    }
+  | {
+      type: "run.failed";
+      runId: string;
+      message: string;
+      startedAt?: string;
+      durationMs?: number;
+    }
+);
 
 export type RunStatus =
   "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | string;

@@ -16,7 +16,6 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from prompts.search_prompts import SEARCH_STOPWORDS
 
-
 _TOKEN_PATTERN = re.compile(r"[a-z0-9][a-z0-9._/-]{1,}|[\u4e00-\u9fff]+", re.IGNORECASE)
 
 
@@ -33,7 +32,12 @@ def extract_search_terms(value: str, max_terms: int = 64) -> list[str]:
 
     def add(term: str) -> None:
         term = term.strip()
-        if len(term) < 2 or term in SEARCH_STOPWORDS or term in seen or len(terms) >= max_terms:
+        if (
+            len(term) < 2
+            or term in SEARCH_STOPWORDS
+            or term in seen
+            or len(terms) >= max_terms
+        ):
             return
         seen.add(term)
         terms.append(term)
@@ -80,10 +84,11 @@ def bm25_scores(query: str, documents: Sequence[str]) -> list[float]:
     query_terms = extract_search_terms(query)
     if not documents or not query_terms:
         return [0.0 for _ in documents]
-    tokenized = [extract_search_terms(document, max_terms=512) for document in documents]
+    tokenized = [
+        extract_search_terms(document, max_terms=512) for document in documents
+    ]
     document_frequency = {
-        term: sum(term in set(tokens) for tokens in tokenized)
-        for term in query_terms
+        term: sum(term in set(tokens) for tokens in tokenized) for term in query_terms
     }
     average_length = sum(len(tokens) for tokens in tokenized) / max(len(tokenized), 1)
     scores: list[float] = []
@@ -97,7 +102,9 @@ def bm25_scores(query: str, documents: Sequence[str]) -> list[float]:
                 continue
             df = document_frequency[term]
             idf = math.log(1.0 + (len(documents) - df + 0.5) / (df + 0.5))
-            denominator = frequency + 0.9 * (1.0 - 0.75 + 0.75 * length / max(average_length, 1.0))
+            denominator = frequency + 0.9 * (
+                1.0 - 0.75 + 0.75 * length / max(average_length, 1.0)
+            )
             score += idf * (frequency * 1.9) / max(denominator, 1e-9)
         if normalize_query(query) in normalize_query(" ".join(tokens)):
             score += 0.35
@@ -140,7 +147,9 @@ def fuse_ranked_candidates(
     clean_method = str(method or "WEIGHTED_RRF").upper()
     if clean_method not in {"RRF", "WEIGHTED_RRF", "LINEAR"}:
         clean_method = "WEIGHTED_RRF"
-    configured = {name: max(0.0, float(value)) for name, value in (weights or {}).items()}
+    configured = {
+        name: max(0.0, float(value)) for name, value in (weights or {}).items()
+    }
     if not configured:
         configured = {name: 1.0 for name in channels}
     total_weight = sum(configured.values()) or 1.0
@@ -164,7 +173,11 @@ def fuse_ranked_candidates(
             }
 
     for name, values in ranked_channels.items():
-        weight = 1.0 / len(ranked_channels) if clean_method == "RRF" else configured.get(name, 0.0)
+        weight = (
+            1.0 / len(ranked_channels)
+            if clean_method == "RRF"
+            else configured.get(name, 0.0)
+        )
         for rank, (key, item, raw_score) in enumerate(values, start=1):
             candidate = candidates.get(key)
             if candidate is None:
@@ -199,7 +212,9 @@ def diversify_candidates(
         return list(candidates[:limit])
 
     token_sets = {
-        candidate.key: set(extract_search_terms(content_fn(candidate.item), max_terms=256))
+        candidate.key: set(
+            extract_search_terms(content_fn(candidate.item), max_terms=256)
+        )
         for candidate in candidates
     }
     remaining = list(candidates)
@@ -208,10 +223,12 @@ def diversify_candidates(
         if not selected:
             chosen = remaining[0]
         else:
+
             def mmr(candidate: FusedCandidate) -> float:
                 current = token_sets[candidate.key]
                 redundancy = max(
-                    len(current & token_sets[item.key]) / max(len(current | token_sets[item.key]), 1)
+                    len(current & token_sets[item.key])
+                    / max(len(current | token_sets[item.key]), 1)
                     for item in selected
                 )
                 return value * candidate.score - (1.0 - value) * redundancy

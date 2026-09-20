@@ -34,9 +34,17 @@ export const actionItemsApi = {
       ),
     ),
 
-  accept: (workspaceId: number | string, projectId: number, id: number | string) =>
+  accept: (
+    workspaceId: number | string,
+    projectId: number,
+    id: number | string,
+  ) =>
     actionItemsApi.update(workspaceId, projectId, id, { status: "accepted" }),
 
-  reject: (workspaceId: number | string, projectId: number, id: number | string) =>
+  reject: (
+    workspaceId: number | string,
+    projectId: number,
+    id: number | string,
+  ) =>
     actionItemsApi.update(workspaceId, projectId, id, { status: "rejected" }),
 };

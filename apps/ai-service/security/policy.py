@@ -8,7 +8,12 @@ class SecurityPolicyError(ValueError):
     pass
 
 
-def enforce_scope(expected_workspace_id: int, expected_project_id: int, workspace_id: int, project_id: int) -> tuple[int, int]:
+def enforce_scope(
+    expected_workspace_id: int,
+    expected_project_id: int,
+    workspace_id: int,
+    project_id: int,
+) -> tuple[int, int]:
     """Reject cross-tenant identifiers before a tool or model call is made."""
 
     if expected_workspace_id <= 0 or expected_project_id <= 0:
@@ -26,7 +31,12 @@ def validate_external_url(value: str) -> str:
     """
 
     parsed = urlparse(str(value).strip())
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+    ):
         raise SecurityPolicyError("only credential-free HTTP(S) URLs are allowed")
     host = parsed.hostname.rstrip(".").casefold()
     blocked_names = {"localhost", "metadata.google.internal", "host.docker.internal"}

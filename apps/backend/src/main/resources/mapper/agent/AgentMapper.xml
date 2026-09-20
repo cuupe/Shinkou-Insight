@@ -45,8 +45,8 @@
           AND created_by = #{userId}
     </delete>
     <insert id="insertMessage" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO agent_messages(thread_id, client_message_id, role, content, status, attachments)
-        VALUES(#{threadId}, #{clientMessageId}, #{role}, #{content}, #{status}, CAST(#{attachments} AS jsonb))
+        INSERT INTO agent_messages(thread_id, client_message_id, role, content, model_name, status, attachments)
+        VALUES(#{threadId}, #{clientMessageId}, #{role}, #{content}, #{modelName}, #{status}, CAST(#{attachments} AS jsonb))
     </insert>
     <update id="updateMessage">
         UPDATE agent_messages SET content = #{content}, status = #{status} WHERE id = #{id}
@@ -61,7 +61,8 @@
         SELECT client_message_id FROM agent_messages WHERE id = #{id}
     </select>
     <select id="findMessages" resultType="com.cuupe.backend.modules.agent.entity.AgentMessage">
-        SELECT m.id, m.thread_id, m.client_message_id, m.role, m.content, m.status,
+        SELECT m.id, m.thread_id, m.client_message_id, m.role, m.content, m.model_name,
+               m.status,
                m.attachments::text AS attachments, m.created_at
         FROM agent_messages m
         JOIN agent_threads t ON t.id = m.thread_id
@@ -71,7 +72,8 @@
         ORDER BY m.created_at, m.id
     </select>
     <select id="findFirstUserMessage" resultType="com.cuupe.backend.modules.agent.entity.AgentMessage">
-        SELECT m.id, m.thread_id, m.client_message_id, m.role, m.content, m.status,
+        SELECT m.id, m.thread_id, m.client_message_id, m.role, m.content, m.model_name,
+               m.status,
                m.attachments::text AS attachments, m.created_at
         FROM agent_messages m
         JOIN agent_threads t ON t.id = m.thread_id

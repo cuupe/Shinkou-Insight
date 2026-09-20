@@ -14,7 +14,7 @@ public record LoginRequestBySms(
         @NotBlank(message = "短信验证码ID不能为空")
         @Size(max = 100, message = "验证码ID格式不正确")
         String verifyCodeId,
-        // 图片验证码在短信申请时校验，保留字段以兼容现有客户端。
+        // 保留可选字段兼容旧客户端；短信登录流程不使用图片验证码。
         @Size(max = 8, message = "验证码格式不正确")
         String captcha,
         @Size(max = 100, message = "验证码格式不正确")

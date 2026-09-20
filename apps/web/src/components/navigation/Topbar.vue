@@ -118,7 +118,10 @@ function openNotification(notification: NotificationItem) {
   notificationOpen.value = false;
 
   if (notification.routeName) {
-    if (notification.routeName.startsWith("project-") && notification.projectId) {
+    if (
+      notification.routeName.startsWith("project-") &&
+      notification.projectId
+    ) {
       router.push({
         name: notification.routeName,
         params: {
@@ -278,11 +281,7 @@ onBeforeUnmount(() => {
               </small>
             </div>
 
-            <button
-              type="button"
-              :disabled="!unreadCount"
-              @click="markAllRead"
-            >
+            <button type="button" :disabled="!unreadCount" @click="markAllRead">
               全部已读
             </button>
           </div>
@@ -313,7 +312,10 @@ onBeforeUnmount(() => {
             <strong>正在加载通知</strong>
           </div>
 
-          <div v-else-if="filteredNotifications.length" class="notification-list">
+          <div
+            v-else-if="filteredNotifications.length"
+            class="notification-list"
+          >
             <button
               v-for="notification in filteredNotifications"
               :key="notification.id"
@@ -322,8 +324,14 @@ onBeforeUnmount(() => {
               type="button"
               @click="openNotification(notification)"
             >
-              <span class="notification-item-icon" :class="`kind-${notification.kind}`">
-                <component :is="notificationIcon(notification.kind)" :size="15" />
+              <span
+                class="notification-item-icon"
+                :class="`kind-${notification.kind}`"
+              >
+                <component
+                  :is="notificationIcon(notification.kind)"
+                  :size="15"
+                />
               </span>
 
               <span class="notification-item-copy">
@@ -332,17 +340,27 @@ onBeforeUnmount(() => {
                 <em>{{ notification.time }}</em>
               </span>
 
-              <i v-if="!notification.read" class="notification-unread-dot" aria-label="未读"></i>
+              <i
+                v-if="!notification.read"
+                class="notification-unread-dot"
+                aria-label="未读"
+              ></i>
             </button>
           </div>
 
           <div v-else class="notification-empty">
             <Bell :size="18" />
-            <strong>{{ notificationFilter === "unread" ? "暂无未读通知" : "暂无通知" }}</strong>
+            <strong>{{
+              notificationFilter === "unread" ? "暂无未读通知" : "暂无通知"
+            }}</strong>
             <span>新的调研、报告和工作区动态会显示在这里。</span>
           </div>
 
-          <button class="notification-view-all" type="button" @click="openNotificationsPage">
+          <button
+            class="notification-view-all"
+            type="button"
+            @click="openNotificationsPage"
+          >
             查看全部通知
             <ChevronRight :size="14" />
           </button>

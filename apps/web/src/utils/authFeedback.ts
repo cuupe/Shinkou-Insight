@@ -6,7 +6,8 @@ import {
 } from "@/api/core";
 
 export type AuthErrorField = "phone" | "password" | "smsCode" | "captcha";
-export type AuthErrorContext = "login-password" | "login-sms" | "register" | "send-sms";
+export type AuthErrorContext =
+  "login-password" | "login-sms" | "register" | "send-sms";
 
 export interface AuthFeedback {
   title: string;
@@ -31,10 +32,14 @@ export function getAuthFeedback(
     };
   }
 
-  if (status === 403 && message.trim().toLowerCase() === "invalid cors request") {
+  if (
+    status === 403 &&
+    message.trim().toLowerCase() === "invalid cors request"
+  ) {
     return {
       title: "前后端地址配置不一致",
-      message: "登录请求被服务端拦截，请确认前端地址已加入后端允许列表，并重启后端服务。",
+      message:
+        "登录请求被服务端拦截，请确认前端地址已加入后端允许列表，并重启后端服务。",
     };
   }
 

@@ -72,6 +72,17 @@ def test_latest_sources_require_publication_dates_and_historical_queries_still_w
     assert [item.id for item in rank_web_evidence("2020 人工智能进展", rows, 5, require_body=True)] == ["W1"]
 
 
+def test_task_framing_does_not_hide_the_actual_topic():
+    item = source(
+        content="光伏产业装机规模持续变化，政策和技术路线影响产能与市场竞争。",
+        content_kind="fulltext",
+        published_at=date.today().isoformat(),
+    )
+    query = "梳理一下当前光伏产业的情况，整理一个报告给我，内容要全面"
+    results = rank_web_evidence(query, [item], 5, require_body=True)
+    assert [result.id for result in results] == [item.id]
+
+
 def test_reposts_do_not_count_as_independent_sources_and_domains_are_diversified():
     text = "人工智能模型通过公开数据评测，其能力仍需要在具体任务上核验。" * 8
     rows = [source(1, content=text), source(2, content=text, url="https://mirror.example.org/repost"),

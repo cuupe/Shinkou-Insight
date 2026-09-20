@@ -1,11 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import {
-  Activity,
-  ArrowDownRight,
-  ArrowRight,
-  FileText,
-} from "@lucide/vue";
+import { Activity, ArrowDownRight, ArrowRight, FileText } from "@lucide/vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
 import TokenUsageChart from "@/components/common/TokenUsageChart.vue";
@@ -40,7 +35,9 @@ const trendPoints = computed(() => {
   const points = statistics.value?.dailyTrend || [];
   const max = Math.max(
     1,
-    ...points.map((point) => Math.max(Number(point.runs) || 0, Number(point.reports) || 0)),
+    ...points.map((point) =>
+      Math.max(Number(point.runs) || 0, Number(point.reports) || 0),
+    ),
   );
   return points.map((point, index) => ({
     ...point,
@@ -49,32 +46,52 @@ const trendPoints = computed(() => {
     reportsY: 100 - ((Number(point.reports) || 0) / max) * 100,
   }));
 });
-const runLine = computed(() => trendPoints.value.map((point) => `${point.x},${point.runsY}`).join(" "));
-const reportLine = computed(() => trendPoints.value.map((point) => `${point.x},${point.reportsY}`).join(" "));
+const runLine = computed(() =>
+  trendPoints.value.map((point) => `${point.x},${point.runsY}`).join(" "),
+);
+const reportLine = computed(() =>
+  trendPoints.value.map((point) => `${point.x},${point.reportsY}`).join(" "),
+);
 const hasTrendData = computed(() =>
-  trendPoints.value.some((point) => (Number(point.runs) || 0) > 0 || (Number(point.reports) || 0) > 0),
+  trendPoints.value.some(
+    (point) =>
+      (Number(point.runs) || 0) > 0 || (Number(point.reports) || 0) > 0,
+  ),
 );
 const trendLabels = computed(() => {
   const points = trendPoints.value;
   if (points.length <= 5) return points;
-  const indexes = [0, Math.floor((points.length - 1) / 3), Math.floor(((points.length - 1) * 2) / 3), points.length - 1];
+  const indexes = [
+    0,
+    Math.floor((points.length - 1) / 3),
+    Math.floor(((points.length - 1) * 2) / 3),
+    points.length - 1,
+  ];
   return indexes
     .filter((index, position) => indexes.indexOf(index) === position)
     .map((index) => points[index])
     .filter((point): point is (typeof points)[number] => Boolean(point));
 });
 const trendTotal = computed(() =>
-  trendPoints.value.reduce((total, point) => total + (Number(point.runs) || 0), 0),
+  trendPoints.value.reduce(
+    (total, point) => total + (Number(point.runs) || 0),
+    0,
+  ),
 );
 const trendReportTotal = computed(() =>
-  trendPoints.value.reduce((total, point) => total + (Number(point.reports) || 0), 0),
+  trendPoints.value.reduce(
+    (total, point) => total + (Number(point.reports) || 0),
+    0,
+  ),
 );
 const tokenBreakdown = computed(() => statistics.value?.tokenBreakdown || []);
-const tokenChartItems = computed(() => tokenBreakdown.value.map((item) => ({
-  label: `${item.projectName || "未命名项目"} · ${item.userName || `用户 ${item.userId}`}`,
-  detail: `${item.modelName || "模型未标注"} · ${item.runCount} 次运行`,
-  tokens: Number(item.totalTokens) || 0,
-})));
+const tokenChartItems = computed(() =>
+  tokenBreakdown.value.map((item) => ({
+    label: `${item.projectName || "未命名项目"} · ${item.userName || `用户 ${item.userId}`}`,
+    detail: `${item.modelName || "模型未标注"} · ${item.runCount} 次运行`,
+    tokens: Number(item.totalTokens) || 0,
+  })),
+);
 function formatTokens(value: number | string | undefined) {
   return Number(value || 0).toLocaleString("zh-CN");
 }
@@ -86,11 +103,10 @@ const greeting = computed(() => {
   if (hour < 18) return "下午好";
   return "晚上好";
 });
-const dashboardSubtitle = computed(
-  () =>
-    workspace.name
-      ? `这是 ${workspace.name} 的最新工作状态。`
-      : "工作区信息加载后，这里会显示最新工作状态。",
+const dashboardSubtitle = computed(() =>
+  workspace.name
+    ? `这是 ${workspace.name} 的最新工作状态。`
+    : "工作区信息加载后，这里会显示最新工作状态。",
 );
 /* 本周关注：基于项目真实汇总数据生成 */
 const focusItems = computed(() => {
@@ -175,20 +191,51 @@ function focusIcon(icon: string) {
           <span><i class="legend-dot violet" />报告沉淀</span>
         </div>
         <div class="trend-chart">
-          <div class="chart-y"><span>高</span><span>中</span><span>低</span></div>
+          <div class="chart-y">
+            <span>高</span><span>中</span><span>低</span>
+          </div>
           <div class="chart-area">
             <div class="chart-grid"><i /><i /><i /></div>
-            <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="运行与报告趋势图">
-              <polyline :points="runLine" fill="none" stroke="var(--teal)" stroke-width="1.5" vector-effect="non-scaling-stroke" />
-              <polyline :points="reportLine" fill="none" stroke="var(--violet)" stroke-width="1.5" vector-effect="non-scaling-stroke" />
+            <svg
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+              aria-label="运行与报告趋势图"
+            >
+              <polyline
+                :points="runLine"
+                fill="none"
+                stroke="var(--teal)"
+                stroke-width="1.5"
+                vector-effect="non-scaling-stroke"
+              />
+              <polyline
+                :points="reportLine"
+                fill="none"
+                stroke="var(--violet)"
+                stroke-width="1.5"
+                vector-effect="non-scaling-stroke"
+              />
             </svg>
-            <div class="chart-x"><span v-for="point in trendLabels" :key="point.date">{{ point.date }}</span></div>
+            <div class="chart-x">
+              <span v-for="point in trendLabels" :key="point.date">{{
+                point.date
+              }}</span>
+            </div>
           </div>
         </div>
         <div class="chart-summary">
-          <div><strong>{{ trendTotal }}</strong><span>近 {{ trendPoints.length }} 天调研运行</span></div>
-          <div><strong>{{ trendReportTotal }}</strong><span>近 {{ trendPoints.length }} 天新增报告</span></div>
-          <div><strong>{{ statistics?.summary?.openActionItemCount ?? 0 }}</strong><span>待跟进行动项</span></div>
+          <div>
+            <strong>{{ trendTotal }}</strong
+            ><span>近 {{ trendPoints.length }} 天调研运行</span>
+          </div>
+          <div>
+            <strong>{{ trendReportTotal }}</strong
+            ><span>近 {{ trendPoints.length }} 天新增报告</span>
+          </div>
+          <div>
+            <strong>{{ statistics?.summary?.openActionItemCount ?? 0 }}</strong
+            ><span>待跟进行动项</span>
+          </div>
         </div>
       </div>
       <div v-else class="empty-state chart-empty">
@@ -209,11 +256,27 @@ function focusIcon(icon: string) {
     <div v-if="tokenChartItems.length" class="workspace-token-content">
       <TokenUsageChart :items="tokenChartItems" />
       <div class="workspace-token-table">
-        <div class="workspace-token-row workspace-token-header"><span>项目 / 成员</span><span>模型</span><span>输入 / 输出</span><span>合计</span></div>
-        <div v-for="item in tokenBreakdown" :key="`${item.projectId}-${item.userId}-${item.modelName}`" class="workspace-token-row">
-          <span><strong>{{ item.projectName || "未命名项目" }}</strong><small>{{ item.userName || `用户 ${item.userId}` }} · {{ item.runCount }} 次运行</small></span>
+        <div class="workspace-token-row workspace-token-header">
+          <span>项目 / 成员</span><span>模型</span><span>输入 / 输出</span
+          ><span>合计</span>
+        </div>
+        <div
+          v-for="item in tokenBreakdown"
+          :key="`${item.projectId}-${item.userId}-${item.modelName}`"
+          class="workspace-token-row"
+        >
+          <span
+            ><strong>{{ item.projectName || "未命名项目" }}</strong
+            ><small
+              >{{ item.userName || `用户 ${item.userId}` }} ·
+              {{ item.runCount }} 次运行</small
+            ></span
+          >
           <span class="model-label">{{ item.modelName || "模型未标注" }}</span>
-          <span>{{ formatTokens(item.inputTokens) }} / {{ formatTokens(item.outputTokens) }}</span>
+          <span
+            >{{ formatTokens(item.inputTokens) }} /
+            {{ formatTokens(item.outputTokens) }}</span
+          >
           <strong>{{ formatTokens(item.totalTokens) }}</strong>
         </div>
       </div>
@@ -638,7 +701,10 @@ function focusIcon(icon: string) {
 }
 .workspace-token-row {
   display: grid;
-  grid-template-columns: minmax(8rem, 1.25fr) minmax(7rem, 1fr) minmax(6rem, 0.8fr) auto;
+  grid-template-columns: minmax(8rem, 1.25fr) minmax(7rem, 1fr) minmax(
+      6rem,
+      0.8fr
+    ) auto;
   align-items: center;
   gap: 0.5rem;
   min-width: 0;

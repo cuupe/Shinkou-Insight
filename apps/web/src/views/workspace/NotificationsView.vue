@@ -10,11 +10,16 @@ import {
   Users,
 } from "@lucide/vue";
 import PageHeader from "@/components/common/PageHeader.vue";
-import { useNotifications, type NotificationItem, type NotificationKind } from "@/composables/useNotifications";
+import {
+  useNotifications,
+  type NotificationItem,
+  type NotificationKind,
+} from "@/composables/useNotifications";
 import { useWorkspace } from "@/composables/useWorkspace";
 
 const { router, routeTo, workspaceId } = useWorkspace();
-const { notifications, unreadCount, loading, markRead, markAllRead } = useNotifications(workspaceId);
+const { notifications, unreadCount, loading, markRead, markAllRead } =
+  useNotifications(workspaceId);
 const filter = ref<"all" | "unread">("all");
 
 const filteredNotifications = computed(() =>
@@ -23,7 +28,8 @@ const filteredNotifications = computed(() =>
     : notifications.value,
 );
 const kindCount = computed(
-  () => new Set(notifications.value.map((notification) => notification.kind)).size,
+  () =>
+    new Set(notifications.value.map((notification) => notification.kind)).size,
 );
 
 function notificationIcon(kind: NotificationKind) {
@@ -83,7 +89,9 @@ function openNotification(notification: NotificationItem) {
       <div class="notifications-summary-card is-highlighted">
         <span>未读通知</span>
         <strong>{{ unreadCount }}</strong>
-        <small>{{ unreadCount ? "有内容需要查看" : "你已经处理完所有通知" }}</small>
+        <small>{{
+          unreadCount ? "有内容需要查看" : "你已经处理完所有通知"
+        }}</small>
       </div>
 
       <div class="notifications-summary-card">
@@ -135,7 +143,10 @@ function openNotification(notification: NotificationItem) {
           type="button"
           @click="openNotification(notification)"
         >
-          <span class="notifications-feed-icon" :class="`kind-${notification.kind}`">
+          <span
+            class="notifications-feed-icon"
+            :class="`kind-${notification.kind}`"
+          >
             <component :is="notificationIcon(notification.kind)" :size="18" />
           </span>
 
@@ -328,11 +339,26 @@ function openNotification(notification: NotificationItem) {
   background: var(--teal-soft);
 }
 
-.notifications-feed-icon.kind-research { color: #6d58b5; background: #f0ebff; }
-.notifications-feed-icon.kind-knowledge { color: #4778a8; background: #e9f3fb; }
-.notifications-feed-icon.kind-report { color: #af6a35; background: #fff2e6; }
-.notifications-feed-icon.kind-evaluation { color: #188b82; background: #e4f7f3; }
-.notifications-feed-icon.kind-workspace { color: #a34f74; background: #fcecf3; }
+.notifications-feed-icon.kind-research {
+  color: #6d58b5;
+  background: #f0ebff;
+}
+.notifications-feed-icon.kind-knowledge {
+  color: #4778a8;
+  background: #e9f3fb;
+}
+.notifications-feed-icon.kind-report {
+  color: #af6a35;
+  background: #fff2e6;
+}
+.notifications-feed-icon.kind-evaluation {
+  color: #188b82;
+  background: #e4f7f3;
+}
+.notifications-feed-icon.kind-workspace {
+  color: #a34f74;
+  background: #fcecf3;
+}
 
 .notifications-feed-copy {
   display: grid;
@@ -396,16 +422,38 @@ function openNotification(notification: NotificationItem) {
   text-align: center;
 }
 
-.notifications-page-empty svg { color: var(--teal); }
-.notifications-page-empty strong { color: var(--workspace-text); font-size: 0.875rem; }
-.notifications-page-empty span { font-size:0.8125rem; }
+.notifications-page-empty svg {
+  color: var(--teal);
+}
+.notifications-page-empty strong {
+  color: var(--workspace-text);
+  font-size: 0.875rem;
+}
+.notifications-page-empty span {
+  font-size: 0.8125rem;
+}
 
 @media (max-width: 47.5rem) {
-  .notifications-summary { grid-template-columns: 1fr; }
-  .notifications-summary-card { min-height: 6rem; }
-  .notifications-panel-header { align-items: flex-start; flex-direction: column; }
-  .notifications-feed-item { grid-template-columns: 2.25rem minmax(0, 1fr); padding: 0.875rem 1rem; }
-  .notifications-feed-icon { width: 2.25rem; height: 2.25rem; }
-  .notifications-feed-arrow { display: none; }
+  .notifications-summary {
+    grid-template-columns: 1fr;
+  }
+  .notifications-summary-card {
+    min-height: 6rem;
+  }
+  .notifications-panel-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .notifications-feed-item {
+    grid-template-columns: 2.25rem minmax(0, 1fr);
+    padding: 0.875rem 1rem;
+  }
+  .notifications-feed-icon {
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+  .notifications-feed-arrow {
+    display: none;
+  }
 }
 </style>

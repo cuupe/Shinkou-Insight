@@ -797,6 +797,7 @@ class AgentRuntime:
             "project_id": request.project_id,
             "user_id": request.user_id,
             "goal": request.goal,
+            "search_query": _augment_web_search_query(_web_search_query(request)),
             "strategy": request.config.strategy,
             "output_language": request.config.output_language,
             "allow_web_search": request.config.allow_web_search,
@@ -1190,7 +1191,12 @@ class AgentRuntime:
             await self.events.publish(
                 run.run_id,
                 "tool.completed",
-                {"tool": "web_search", "count": 0, "detail": "联网搜索不可用，未伪造结果"},
+                {
+                    "tool": "web_search",
+                    "count": 0,
+                    "detail": "联网搜索不可用，未伪造结果",
+                    "errorType": type(exc).__name__,
+                },
             )
             return []
 
@@ -1374,6 +1380,7 @@ class AgentRuntime:
                     "agent": "react",
                     "step": step_number,
                     "strategy": "REACT",
+                    "modelFeedback": action.note.strip(),
                     "action": action_name,
                 },
             )
@@ -1407,6 +1414,7 @@ class AgentRuntime:
                 "strategy": "PLAN_AND_SOLVE",
             },
         )
+        plan_from_model = True
         try:
             plan, plan_call = await model.structured(
                 plan_and_solve_prompt(
@@ -1419,6 +1427,7 @@ class AgentRuntime:
             )
             model_results.append(plan_call)
         except Exception as exc:
+            plan_from_model = False
             logger.warning("chat plan generation failed; using deterministic fallback", extra={"run_id": run.run_id, "error": str(exc)})
             fallback_steps = []
             if _should_search_knowledge(search_query):
@@ -1440,10 +1449,42 @@ class AgentRuntime:
                 "detail": f"已整理 {len(steps)} 个步骤，接下来执行资料核对并生成回答",
                 "agent": "planner",
                 "strategy": "PLAN_AND_SOLVE",
+                "modelFeedback": plan.summary.strip() if plan_from_model else "",
                 "stepCount": len(steps),
             },
         )
         searched_queries: set[tuple[str, str]] = set()
+        if request.config.allow_web_search and _should_search_web(search_query):
+            # A model-generated plan may choose only internal steps even when
+            # the user enabled web search for a current/freshness-sensitive
+            # question. Seed one bounded external search so the UI setting is
+            # honored and the plan cannot silently skip the required source.
+            await self.events.publish(
+                run.run_id,
+                "node.started",
+                {
+                    "node": "SEARCH_WEB",
+                    "title": "联网核对外部资料",
+                    "detail": f"已开启联网搜索，先核对：{_augment_web_search_query(search_query)[:120]}",
+                    "agent": "retriever",
+                    "strategy": "PLAN_AND_SOLVE",
+                },
+            )
+            external = await self._search_web(request, run, search_query)
+            evidence.extend(external)
+            searched_queries.add(("SEARCH_WEB", search_query.casefold()))
+            await self.events.publish(
+                run.run_id,
+                "node.completed",
+                {
+                    "node": "SEARCH_WEB",
+                    "title": "联网核对外部资料",
+                    "detail": f"联网搜索完成，取得 {len(external)} 条通过校验的来源",
+                    "agent": "retriever",
+                    "strategy": "PLAN_AND_SOLVE",
+                    "count": len(external),
+                },
+            )
         for index, step in enumerate(steps, start=1):
             if self.is_cancelled(run.run_id):
                 raise RunCancelled()
@@ -1455,7 +1496,12 @@ class AgentRuntime:
                 {
                     "node": "PLAN",
                     "title": f"执行第 {index} 步",
-                    "detail": step.objective[:300],
+                    "detail": (step.feedback.strip() or step.objective.strip())[:500],
+                    "modelFeedback": (
+                        (step.feedback.strip() or step.objective.strip())[:500]
+                        if plan_from_model
+                        else ""
+                    ),
                     "agent": "planner",
                     "strategy": "PLAN_AND_SOLVE",
                     "step": index,
@@ -1710,6 +1756,7 @@ class AgentRuntime:
                 "project_id": request.project_id,
                 "user_id": request.user_id,
                 "goal": request.goal,
+                "search_query": _augment_web_search_query(search_query),
                 "strategy": "MULTI_AGENT",
                 "output_language": request.config.output_language,
                 "allow_web_search": request.config.allow_web_search,
@@ -1879,6 +1926,17 @@ class AgentRuntime:
                     "content": "本次没有可引用的额外资料。请直接回答，不要编造项目内部事实或引用；若问题依赖项目上下文，请明确说明。",
                 }
             )
+        if missing_external:
+            context_messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "外部联网检索本轮没有取得满足要求的可读原文。不要因此停止回答，也不要只回复做不到。"
+                        "请继续完成一个可执行的预研稿：区分项目资料支持的事实、需要核验的通用判断和未知的最新数据；"
+                        "给出分析框架、关键影响因素、待补证指标和下一步检索方案。禁止把搜索摘要或模型记忆写成已核实的最新事实。"
+                    ),
+                }
+            )
         context_messages.append({"role": "user", "content": request.goal})
         compacted_messages, compression = _compact_chat_context(
             context_messages,
@@ -1898,10 +1956,10 @@ class AgentRuntime:
             )
             if request.config.output_language.casefold().startswith("en"):
                 content = f"No relevant, readable sources meeting the requested date range {period} were obtained. I cannot provide a verified summary from search snippets or model memory. Please supply source links, narrow the topic, or specify another date range."
-            draft = ModelChatResult(content=content)
+            draft = await self._stream_chat(request, model, compacted_messages)
             await self.events.publish(run.run_id, "message.delta", {
                 "type": "message.delta", "runId": str(run.run_id),
-                "messageId": str(request.agent_message_id or ""), "delta": content,
+                "messageId": str(request.agent_message_id or ""), "delta": "",
             })
         else:
             draft = await self._stream_chat(request, model, compacted_messages)
@@ -1914,8 +1972,7 @@ class AgentRuntime:
             strategy,
             context_message_count=len(selected_context_messages),
         )
-        if missing_external:
-            should_reflect, reflection_reason = False, "没有通过核验的外部证据，已停止生成事实总结"
+        # A degraded external search does not suppress the normal quality pass.
         if should_reflect:
             await self.events.publish(
                 run.run_id,

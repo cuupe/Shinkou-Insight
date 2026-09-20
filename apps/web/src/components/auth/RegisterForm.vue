@@ -6,11 +6,7 @@ import {
   EyeOffIcon,
   MessageCircleMoreIcon,
 } from "@lucide/vue";
-import {
-  Alert,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Card,
   CardContent,
@@ -208,11 +204,14 @@ function openAgreement(type: "terms" | "privacy") {
         role="alert"
         aria-live="polite"
         :variant="status.type === 'error' ? 'destructive' : 'default'"
-        ><CheckCircle2Icon v-if="status.type === 'success'" /><MessageCircleMoreIcon
-          v-else
-        /><AlertTitle>{{ status.title }}</AlertTitle
+        ><CheckCircle2Icon
+          v-if="status.type === 'success'"
+        /><MessageCircleMoreIcon v-else /><AlertTitle>{{
+          status.title
+        }}</AlertTitle
         ><AlertDescription>{{ status.message }}</AlertDescription></Alert
-      ><form
+      >
+      <form
         v-if="!registrationSucceeded"
         class="flex flex-col gap-5"
         @submit.prevent="submit"
@@ -321,8 +320,7 @@ function openAgreement(type: "terms" | "privacy") {
             </div>
             <FieldDescription v-if="smsExpired"
               >验证码已过期，请重新获取。</FieldDescription
-            ><FieldDescription v-else
-              >验证码 5 分钟内有效。</FieldDescription
+            ><FieldDescription v-else>验证码 5 分钟内有效。</FieldDescription
             ><FieldError v-if="errors.smsCode">{{
               errors.smsCode
             }}</FieldError></Field

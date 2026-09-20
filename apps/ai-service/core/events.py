@@ -20,7 +20,12 @@ class RunEvent:
     timestamp: str = field(default_factory=utc_now)
 
     def as_sse(self) -> str:
-        body = {"eventId": str(self.event_id), "runId": self.run_id, "timestamp": self.timestamp, **self.payload}
+        body = {
+            "eventId": str(self.event_id),
+            "runId": self.run_id,
+            "timestamp": self.timestamp,
+            **self.payload,
+        }
         return f"id: {self.event_id}\nevent: {self.event_type}\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
 
 
@@ -33,7 +38,9 @@ class EventBus:
         self._next_id = 0
         self._lock = asyncio.Lock()
 
-    async def publish(self, run_id: str | int, event_type: str, payload: dict[str, Any]) -> RunEvent:
+    async def publish(
+        self, run_id: str | int, event_type: str, payload: dict[str, Any]
+    ) -> RunEvent:
         async with self._lock:
             self._next_id += 1
             event = RunEvent(self._next_id, str(run_id), event_type, payload)
@@ -44,14 +51,24 @@ class EventBus:
         return event
 
     def history(self, run_id: str | int, after_id: int = 0) -> list[RunEvent]:
-        return [event for event in self._history.get(str(run_id), []) if event.event_id > after_id]
+        return [
+            event
+            for event in self._history.get(str(run_id), [])
+            if event.event_id > after_id
+        ]
 
-    async def subscribe(self, run_id: str | int, after_id: int = 0) -> AsyncIterator[RunEvent]:
+    async def subscribe(
+        self, run_id: str | int, after_id: int = 0
+    ) -> AsyncIterator[RunEvent]:
         queue: asyncio.Queue[RunEvent | None] = asyncio.Queue()
         run_key = str(run_id)
         async with self._lock:
             self._subscribers.setdefault(run_key, set()).add(queue)
-            initial_events = [event for event in self._history.get(run_key, []) if event.event_id > after_id]
+            initial_events = [
+                event
+                for event in self._history.get(run_key, [])
+                if event.event_id > after_id
+            ]
         try:
             for event in initial_events:
                 yield event

@@ -1,5 +1,11 @@
 <script setup lang="ts">
-import { ArrowRight, CheckCircle2, FileText, Search, SlidersHorizontal } from "@lucide/vue";
+import {
+  ArrowRight,
+  CheckCircle2,
+  FileText,
+  Search,
+  SlidersHorizontal,
+} from "@lucide/vue";
 import { ref } from "vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import {
@@ -61,7 +67,11 @@ function formatScore(value: unknown) {
 }
 
 function mapResult(item: KnowledgeSearchItem, index: number): RetrievalResult {
-  const score = item.rerankScore ?? item.fusionScore ?? item.vectorScore ?? item.keywordScore;
+  const score =
+    item.rerankScore ??
+    item.fusionScore ??
+    item.vectorScore ??
+    item.keywordScore;
   return {
     rank: index + 1,
     source: `${item.assetName}${item.pageNumber ? ` · p.${item.pageNumber}` : ""}`,
@@ -84,12 +94,16 @@ async function runSearch() {
   isSearching.value = true;
   selectedRank.value = null;
   try {
-    const response = await retrievalApi.search(workspaceId.value, projectId.value, {
-      query: playgroundQuery.value.trim(),
-      topK: topK.value,
-      retrievalMode: retrievalMode.value,
-      useReranker: rerank.value,
-    });
+    const response = await retrievalApi.search(
+      workspaceId.value,
+      projectId.value,
+      {
+        query: playgroundQuery.value.trim(),
+        topK: topK.value,
+        retrievalMode: retrievalMode.value,
+        useReranker: rerank.value,
+      },
+    );
     retrievalResults.value = response.items.map(mapResult);
     notify(
       retrievalResults.value.length
@@ -153,17 +167,16 @@ function openEvidence(result: RetrievalResult) {
       <div class="playground-config-summary">
         <div>
           <span>当前检索参数</span>
-          <strong>{{ retrievalMode }} · Top K {{ topK }} · Rerank {{ rerank ? "已启用" : "未启用" }}</strong>
+          <strong
+            >{{ retrievalMode }} · Top K {{ topK }} · Rerank
+            {{ rerank ? "已启用" : "未启用" }}</strong
+          >
         </div>
         <button class="text-button" type="button" @click="openParameters">
           调整参数 <SlidersHorizontal :size="14" />
         </button>
       </div>
-      <button
-        class="button button-primary"
-        type="button"
-        @click="runSearch"
-      >
+      <button class="button button-primary" type="button" @click="runSearch">
         <Search :size="16" />{{ isSearching ? "检索中..." : "运行检索" }}
       </button>
     </section>
@@ -188,7 +201,9 @@ function openEvidence(result: RetrievalResult) {
           >
         </div>
         <h3>{{ result.title }}</h3>
-        <small class="retrieval-source"><FileText :size="13" />{{ result.source }}</small>
+        <small class="retrieval-source"
+          ><FileText :size="13" />{{ result.source }}</small
+        >
         <p>{{ result.text }}</p>
         <button
           class="text-button"
@@ -199,7 +214,10 @@ function openEvidence(result: RetrievalResult) {
           查看证据 <ArrowRight :size="14" />
         </button>
       </article>
-      <div v-if="!retrievalResults.length" class="empty-state panel-empty-state retrieval-empty">
+      <div
+        v-if="!retrievalResults.length"
+        class="empty-state panel-empty-state retrieval-empty"
+      >
         <Search :size="20" />
         <strong>{{ isSearching ? "正在检索知识库" : "暂无召回结果" }}</strong>
         <span>{{
@@ -223,10 +241,18 @@ function openEvidence(result: RetrievalResult) {
       </DialogHeader>
       <div v-if="selectedResult" class="evidence-dialog-body">
         <div class="evidence-score-grid">
-          <div><span>相关性</span><strong>{{ selectedResult.score }}</strong></div>
-          <div><span>Vector</span><strong>{{ selectedResult.vector }}</strong></div>
-          <div><span>Keyword</span><strong>{{ selectedResult.keyword }}</strong></div>
-          <div><span>Fusion</span><strong>{{ selectedResult.fusion }}</strong></div>
+          <div>
+            <span>相关性</span><strong>{{ selectedResult.score }}</strong>
+          </div>
+          <div>
+            <span>Vector</span><strong>{{ selectedResult.vector }}</strong>
+          </div>
+          <div>
+            <span>Keyword</span><strong>{{ selectedResult.keyword }}</strong>
+          </div>
+          <div>
+            <span>Fusion</span><strong>{{ selectedResult.fusion }}</strong>
+          </div>
         </div>
         <div class="evidence-quote">
           <p class="eyebrow">引用片段</p>
@@ -236,12 +262,16 @@ function openEvidence(result: RetrievalResult) {
           <CheckCircle2 :size="16" />
           <span>该片段已纳入当前检索结果，可作为报告引用依据。</span>
         </div>
-        </div>
-        <DialogFooter>
-          <button class="button button-secondary button-sm" type="button" @click="evidenceOpen = false">
-            关闭
-          </button>
-        </DialogFooter>
+      </div>
+      <DialogFooter>
+        <button
+          class="button button-secondary button-sm"
+          type="button"
+          @click="evidenceOpen = false"
+        >
+          关闭
+        </button>
+      </DialogFooter>
     </DialogContent>
   </Dialog>
   <Dialog v-model:open="parameterOpen">
@@ -249,7 +279,10 @@ function openEvidence(result: RetrievalResult) {
       <form @submit.prevent="applyParameters">
         <DialogHeader>
           <DialogTitle>检索参数设置</DialogTitle>
-          <DialogDescription>调整本次 Playground 的召回策略，保存后再运行检索。</DialogDescription>
+          <DialogDescription
+            >调整本次 Playground
+            的召回策略，保存后再运行检索。</DialogDescription
+          >
         </DialogHeader>
         <div class="playground-parameter-form">
           <div class="parameter-field">
@@ -259,12 +292,18 @@ function openEvidence(result: RetrievalResult) {
                 <SelectValue placeholder="选择模式" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem v-for="mode in retrievalModes" :key="mode.value" :value="mode.value">
+                <SelectItem
+                  v-for="mode in retrievalModes"
+                  :key="mode.value"
+                  :value="mode.value"
+                >
                   {{ mode.label }}
                 </SelectItem>
               </SelectContent>
             </Select>
-            <small>Hybrid 综合语义与关键词召回，Vector 更偏向语义相似度。</small>
+            <small
+              >Hybrid 综合语义与关键词召回，Vector 更偏向语义相似度。</small
+            >
           </div>
           <div class="parameter-field">
             <label for="playground-top-k">Top K</label>
@@ -282,14 +321,24 @@ function openEvidence(result: RetrievalResult) {
               <strong>启用 Rerank</strong>
               <small>对初步召回结果进行二次排序。</small>
             </span>
-            <input id="playground-rerank" v-model="parameterRerank" type="checkbox" />
+            <input
+              id="playground-rerank"
+              v-model="parameterRerank"
+              type="checkbox"
+            />
           </label>
         </div>
         <DialogFooter>
-          <button class="button button-secondary button-sm" type="button" @click="parameterOpen = false">
+          <button
+            class="button button-secondary button-sm"
+            type="button"
+            @click="parameterOpen = false"
+          >
             取消
           </button>
-          <button class="button button-primary button-sm" type="submit">保存参数</button>
+          <button class="button button-primary button-sm" type="submit">
+            保存参数
+          </button>
         </DialogFooter>
       </form>
     </DialogContent>
@@ -600,7 +649,10 @@ function openEvidence(result: RetrievalResult) {
   border-radius: 0.6875rem;
   background: var(--surface-raised);
   cursor: pointer;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
 }
 .retrieval-card:hover,
 .retrieval-card.selected {
@@ -858,5 +910,23 @@ function openEvidence(result: RetrievalResult) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
-.result-card,.playground-result-card{background:var(--surface);border-color:var(--workspace-border);color:var(--workspace-text)}.result-text,.score-row{color:var(--workspace-muted)}.score-row span:last-child{color:var(--workspace-subtle)}.result-card input,.result-card textarea{background:var(--surface-soft);border-color:var(--workspace-border);color:var(--workspace-text)}
+.result-card,
+.playground-result-card {
+  background: var(--surface);
+  border-color: var(--workspace-border);
+  color: var(--workspace-text);
+}
+.result-text,
+.score-row {
+  color: var(--workspace-muted);
+}
+.score-row span:last-child {
+  color: var(--workspace-subtle);
+}
+.result-card input,
+.result-card textarea {
+  background: var(--surface-soft);
+  border-color: var(--workspace-border);
+  color: var(--workspace-text);
+}
 </style>

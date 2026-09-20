@@ -23,7 +23,8 @@ const authNotice = computed(() => {
   if (reason === "backend-unavailable") {
     return {
       title: "后端服务暂时不可用",
-      message: "当前会话已中断，可能是后端重启或网络异常。请确认服务已启动，稍后重新登录。",
+      message:
+        "当前会话已中断，可能是后端重启或网络异常。请确认服务已启动，稍后重新登录。",
     };
   }
 
@@ -314,7 +315,6 @@ const authNotice = computed(() => {
     grid-template-columns: minmax(0, 1fr) auto;
     min-width: 0;
   }
-
 }
 
 @media (max-width: 40rem) {
@@ -660,23 +660,43 @@ const authNotice = computed(() => {
 }
 
 .dark .auth-page .auth-layout-shell > section:first-child .text-background,
-.dark .auth-page .auth-layout-shell > section:first-child [class*="text-background/"] {
+.dark
+  .auth-page
+  .auth-layout-shell
+  > section:first-child
+  [class*="text-background/"] {
   color: #e7f2f1 !important;
 }
 
-.dark .auth-page .auth-layout-shell > section:first-child [class*="text-background/60"] {
+.dark
+  .auth-page
+  .auth-layout-shell
+  > section:first-child
+  [class*="text-background/60"] {
   color: rgb(231 242 241 / 0.72) !important;
 }
 
-.dark .auth-page .auth-layout-shell > section:first-child [class*="text-background/50"] {
+.dark
+  .auth-page
+  .auth-layout-shell
+  > section:first-child
+  [class*="text-background/50"] {
   color: rgb(231 242 241 / 0.64) !important;
 }
 
-.dark .auth-page .auth-layout-shell > section:first-child [class*="text-background/45"] {
+.dark
+  .auth-page
+  .auth-layout-shell
+  > section:first-child
+  [class*="text-background/45"] {
   color: rgb(231 242 241 / 0.56) !important;
 }
 
-.dark .auth-page .auth-layout-shell > section:first-child [class*="text-background/80"] {
+.dark
+  .auth-page
+  .auth-layout-shell
+  > section:first-child
+  [class*="text-background/80"] {
   color: rgb(231 242 241 / 0.9) !important;
 }
 

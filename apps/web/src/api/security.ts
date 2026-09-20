@@ -52,12 +52,40 @@ export type AuditLogEntry = {
   createdAt?: string;
 };
 
-const root = (workspaceId: number | string) => `/workspaces/${workspaceId}/security-harness`;
+const root = (workspaceId: number | string) =>
+  `/workspaces/${workspaceId}/security-harness`;
 
 export const securityApi = {
-  cases: (workspaceId: number | string) => unwrap<HarnessCase[]>(anet.get<ApiResponse<HarnessCase[]>>(`${root(workspaceId)}/cases`)),
-  runs: (workspaceId: number | string) => unwrap<HarnessRun[]>(anet.get<ApiResponse<HarnessRun[]>>(`${root(workspaceId)}/runs`)),
-  start: (workspaceId: number | string, payload: { projectId: number; caseIds?: string[]; includeModelProbes?: boolean }) => unwrap<HarnessRun>(anet.post<ApiResponse<HarnessRun>>(`${root(workspaceId)}/runs`, payload)),
-  detail: (workspaceId: number | string, runId: number | string) => unwrap<{ run: HarnessRun; results: HarnessResult[] }>(anet.get<ApiResponse<{ run: HarnessRun; results: HarnessResult[] }>>(`${root(workspaceId)}/runs/${runId}`)),
-  auditLogs: (workspaceId: number | string, limit = 50) => unwrap<AuditLogEntry[]>(anet.get<ApiResponse<AuditLogEntry[]>>(`/workspaces/${workspaceId}/audit-logs`, { params: { limit } })),
+  cases: (workspaceId: number | string) =>
+    unwrap<HarnessCase[]>(
+      anet.get<ApiResponse<HarnessCase[]>>(`${root(workspaceId)}/cases`),
+    ),
+  runs: (workspaceId: number | string) =>
+    unwrap<HarnessRun[]>(
+      anet.get<ApiResponse<HarnessRun[]>>(`${root(workspaceId)}/runs`),
+    ),
+  start: (
+    workspaceId: number | string,
+    payload: {
+      projectId: number;
+      caseIds?: string[];
+      includeModelProbes?: boolean;
+    },
+  ) =>
+    unwrap<HarnessRun>(
+      anet.post<ApiResponse<HarnessRun>>(`${root(workspaceId)}/runs`, payload),
+    ),
+  detail: (workspaceId: number | string, runId: number | string) =>
+    unwrap<{ run: HarnessRun; results: HarnessResult[] }>(
+      anet.get<ApiResponse<{ run: HarnessRun; results: HarnessResult[] }>>(
+        `${root(workspaceId)}/runs/${runId}`,
+      ),
+    ),
+  auditLogs: (workspaceId: number | string, limit = 50) =>
+    unwrap<AuditLogEntry[]>(
+      anet.get<ApiResponse<AuditLogEntry[]>>(
+        `/workspaces/${workspaceId}/audit-logs`,
+        { params: { limit } },
+      ),
+    ),
 };

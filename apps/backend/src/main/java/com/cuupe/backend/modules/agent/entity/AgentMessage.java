@@ -11,6 +11,7 @@ public class AgentMessage {
     private String clientMessageId;
     private String role;
     private String content;
+    private String modelName;
     private String status;
     private String attachments;
     private LocalDateTime createdAt;

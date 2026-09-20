@@ -11,6 +11,7 @@ public class AgentMessageRequest {
     private String threadId;
     private String messageId;
     private String content;
+    private String modelName;
     private List<Map<String, Object>> attachments = new ArrayList<>();
     private Boolean allowWebSearch;
     private Boolean reflectionEnabled;
