@@ -18,6 +18,7 @@ import {
   Users,
 } from "@lucide/vue";
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProjectWorkflow from "@/components/project/ProjectWorkflow.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { reviewApi } from "@/api/review";
 import type { ProjectReviewRun } from "@/api/types";
@@ -253,6 +254,8 @@ onMounted(loadGovernance);
       </button>
     </template>
   </PageHeader>
+
+  <ProjectWorkflow />
 
   <section class="review-hero panel">
     <div class="review-hero-icon"><ShieldAlert :size="24" /></div>

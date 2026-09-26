@@ -212,6 +212,16 @@ export interface KnowledgeAsset {
   [key: string]: unknown;
 }
 
+export interface StorageQuota {
+  fileBytes: number;
+  knowledgeBytes: number;
+  usedBytes: number;
+  maxBytes: number;
+  remainingBytes: number;
+  usagePercent: number;
+  maxSingleFileBytes: number;
+}
+
 export interface KnowledgeSearchPayload {
   query: string;
   topK?: number;
@@ -308,6 +318,7 @@ export interface AgentAttachment {
   size?: string;
   url?: string;
   previewUrl?: string;
+  createdAt?: string;
   uploadId?: string | number;
   /** 浏览器待上传文件，仅用于前端状态，不会发送给后端。 */
   file?: File;
@@ -321,6 +332,13 @@ export interface AgentAttachmentUploadResponse {
   mimeType: string;
   size: number;
   url: string;
+  createdAt?: string;
+}
+
+export interface AgentAttachmentPreviewResponse {
+  content: string;
+  metadata?: Record<string, unknown>;
+  warnings?: string[];
 }
 
 export interface AgentMedia {
@@ -342,6 +360,12 @@ export interface AgentMessage {
   citations?: AgentCitation[];
   attachments?: AgentAttachment[];
   media?: AgentMedia[];
+}
+
+export interface AgentContextMessage {
+  role: Extract<AgentMessageRole, "user" | "assistant">;
+  content: string;
+  attachments?: AgentAttachment[];
 }
 
 export interface AgentEvent {
@@ -394,7 +418,7 @@ export interface AgentSendMessagePayload {
       "id" | "name" | "kind" | "mimeType" | "size" | "uploadId"
     >
   >;
-  contextMessages?: Array<Pick<AgentMessage, "role" | "content">>;
+  contextMessages?: AgentContextMessage[];
 }
 
 export interface AgentRunConfig {
@@ -448,6 +472,12 @@ export type AgentStreamEvent = { eventId?: string } & (
       data?: AgentRunMetrics;
     }
   | { type: "event.updated"; runId: string; event: AgentEvent }
+  | {
+      type: "thinking.delta";
+      runId: string;
+      messageId: string;
+      delta: string;
+    }
   | { type: "message.delta"; runId: string; messageId: string; delta: string }
   | {
       type: "message.replace";

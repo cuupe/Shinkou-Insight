@@ -36,6 +36,7 @@ public interface AgentMapper {
     int upsertTokenUsage(AgentTokenUsage usage);
     List<AgentRunEvent> findEvents(@Param("runKey") String runKey, @Param("afterId") Long afterId);
     int insertAttachment(AgentAttachment attachment);
+    List<AgentAttachment> findAttachments(@Param("workspaceId") Long workspaceId, @Param("projectId") Long projectId, @Param("userId") Long userId);
     boolean hasAttachmentAccess(@Param("id") Long id, @Param("workspaceId") Long workspaceId, @Param("projectId") Long projectId, @Param("userId") Long userId);
     AgentAttachment findAttachment(@Param("id") Long id, @Param("workspaceId") Long workspaceId, @Param("projectId") Long projectId, @Param("userId") Long userId);
     AgentAttachment findAttachmentByStorageKey(@Param("storageKey") String storageKey, @Param("workspaceId") Long workspaceId, @Param("projectId") Long projectId, @Param("userId") Long userId);

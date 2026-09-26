@@ -5,6 +5,7 @@ import { useAgentQueue } from "@/composables/useAgentQueue";
 import type {
   AgentCitation,
   AgentAttachment,
+  AgentContextMessage,
   AgentEvent,
   AgentMedia,
   AgentMessage,
@@ -21,6 +22,7 @@ type AgentRunCallbacks = {
   onAccepted?: (runId: string | number) => void;
   onRunStarted?: (data?: AgentRunMetrics) => void;
   onEvent: (event: AgentEvent) => void;
+  onThinking?: (messageId: string, delta: string) => void;
   onDelta: (messageId: string, delta: string) => void;
   onReplace: (messageId: string, content: string) => void;
   onCitation: (citation: AgentCitation) => void;
@@ -42,7 +44,7 @@ type AgentTransport = {
       content: string;
       attachments?: AgentAttachment[];
       config?: AgentRunConfig;
-      contextMessages?: Array<{ role: "user" | "assistant"; content: string }>;
+      contextMessages?: AgentContextMessage[];
     },
     callbacks: AgentRunCallbacks,
   ) => Promise<AgentRunAccepted>;
@@ -62,6 +64,8 @@ type ThreadState = AgentThreadSummary & {
   runStartedAt?: string;
   runFinishedAt?: string;
   runDurationMs?: number;
+  draft: string;
+  thinking: string;
 };
 
 const threadStates = reactive<Record<string, ThreadState>>({});
@@ -82,10 +86,28 @@ const emptyThread: ThreadState = {
   runStartedAt: undefined,
   runFinishedAt: undefined,
   runDurationMs: undefined,
+  draft: "",
+  thinking: "",
 };
 const threadOrder = ref<string[]>([]);
 const activeThreadId = ref<string | null>(null);
-const draft = ref("");
+const orphanDraft = ref("");
+const draft = computed<string>({
+  get() {
+    const threadId = activeThreadId.value;
+    return threadId && threadStates[threadId]
+      ? threadStates[threadId].draft
+      : orphanDraft.value;
+  },
+  set(value) {
+    const threadId = activeThreadId.value;
+    if (threadId && threadStates[threadId]) {
+      threadStates[threadId].draft = value;
+    } else {
+      orphanDraft.value = value;
+    }
+  },
+});
 const composerError = ref("");
 const cancellingThreads = reactive(new Set<string>());
 const threadRunTokens = new Map<string, number>();
@@ -164,7 +186,14 @@ function createHttpTransport(): AgentTransport {
           attachments: context.attachments?.map(
             ({ url, previewUrl, file, ...attachment }) => attachment,
           ),
-          contextMessages: context.contextMessages,
+          contextMessages: context.contextMessages?.map(
+            ({ attachments, ...message }) => ({
+              ...message,
+              attachments: attachments?.map(
+                ({ url, previewUrl, file, ...attachment }) => attachment,
+              ),
+            }),
+          ),
         },
       );
       callbacks.onAccepted?.(accepted.runId);
@@ -239,6 +268,8 @@ function handleStreamEvent(
     });
   }
   if (event.type === "event.updated") callbacks.onEvent(event.event);
+  if (event.type === "thinking.delta")
+    callbacks.onThinking?.(event.messageId, event.delta);
   if (event.type === "message.delta")
     callbacks.onDelta(event.messageId, event.delta);
   if (event.type === "message.replace")
@@ -305,6 +336,7 @@ export function useAgentWorkspace() {
     historyKey = projectKey;
     threadOrder.value.splice(0);
     activeThreadId.value = null;
+    orphanDraft.value = "";
     Object.keys(threadStates).forEach((id) => delete threadStates[id]);
     threadRunTokens.clear();
     runControls.clear();
@@ -336,6 +368,10 @@ export function useAgentWorkspace() {
           runStartedAt: stored.runStartedAt,
           runFinishedAt: stored.runFinishedAt,
           runDurationMs: stored.runDurationMs,
+          // Drafts and live thinking are local UI state and are intentionally
+          // not persisted in the thread API response.
+          draft: "",
+          thinking: "",
         };
         threadOrder.value.push(stored.id);
       });
@@ -372,7 +408,6 @@ export function useAgentWorkspace() {
     if (wasActive) {
       activeThreadId.value =
         threadOrder.value[index] || threadOrder.value[index - 1] || null;
-      draft.value = "";
       composerError.value = "";
     }
   }
@@ -383,7 +418,7 @@ export function useAgentWorkspace() {
       id,
       title: "新建对话",
       preview: "等待输入第一个问题",
-      updatedAt: "刚刚",
+      updatedAt: new Date().toISOString(),
       messageCount: 0,
       messages: [],
       events: [],
@@ -396,6 +431,8 @@ export function useAgentWorkspace() {
       runStartedAt: undefined,
       runFinishedAt: undefined,
       runDurationMs: undefined,
+      draft: "",
+      thinking: "",
       persisted: false,
     };
     threadOrder.value.unshift(id);
@@ -447,25 +484,31 @@ export function useAgentWorkspace() {
       return;
     }
     const messageId = `message-${Date.now()}`;
+    const createdAt = new Date().toISOString();
     const assistantMessage: AgentMessage = {
       id: messageId,
       role: "assistant",
       content: "",
       modelName: config?.modelName || "Shinkou Agent",
-      createdAt: "刚刚",
+      createdAt,
       status: "streaming",
       citations: [],
       media: [],
     };
-    const contextMessages = thread.messages
-      .filter((message) => message.content.trim())
-      .map((message) => ({ role: message.role, content: message.content }))
+    const contextMessages: AgentContextMessage[] = thread.messages
+      .filter((message) => message.content.trim() || message.attachments?.length)
+      .map((message) => ({
+        role: message.role,
+        content:
+          message.content.trim() || "上一轮消息包含附件，请结合附件继续回答。",
+        attachments: message.attachments?.map((item) => ({ ...item })),
+      }))
       .slice(-40);
     thread.messages.push({
       id: `${messageId}-user`,
       role: "user",
       content,
-      createdAt: "刚刚",
+      createdAt,
       status: "completed",
       attachments: attachments.length
         ? attachments.map((item) => ({ ...item }))
@@ -483,11 +526,12 @@ export function useAgentWorkspace() {
       thread.title = summarizeThreadTitle(content);
     }
     thread.preview = content;
-    thread.updatedAt = "刚刚";
+    thread.updatedAt = createdAt;
     thread.messageCount = thread.messages.length;
     thread.events.splice(0);
     thread.eventHistory.splice(0);
     thread.citations.splice(0);
+    thread.thinking = "";
     thread.status = "running";
     // Only a backend-issued run ID is safe to send to the cancel endpoint.
     thread.runId = null;
@@ -526,10 +570,12 @@ export function useAgentWorkspace() {
       finalMessageCount: contextMessages.length + 1,
     };
     thread.tokenUsage = undefined;
-    const typewriterInterval = 14;
+    // Render streamed text once per animation frame instead of once per
+    // character. This keeps Markdown parsing and Vue updates smooth.
+    const displayBatchSize = 96;
     let pendingDelta = "";
     let streamEnded = false;
-    let displayTimer: number | undefined;
+    let displayFrame: number | undefined;
     let displayDoneSettled = false;
     let resolveDisplayDone!: () => void;
     const displayDone = new Promise<void>((resolve) => {
@@ -548,8 +594,9 @@ export function useAgentWorkspace() {
       resolveDisplayDone();
     };
     const abortDisplay = () => {
-      if (displayTimer !== undefined) window.clearTimeout(displayTimer);
-      displayTimer = undefined;
+      if (displayFrame !== undefined)
+        window.cancelAnimationFrame(displayFrame);
+      displayFrame = undefined;
       pendingDelta = "";
       streamEnded = true;
       if (!displayDoneSettled) {
@@ -557,8 +604,12 @@ export function useAgentWorkspace() {
         resolveDisplayDone();
       }
     };
+    const scheduleDisplay = () => {
+      if (displayFrame !== undefined) return;
+      displayFrame = window.requestAnimationFrame(pumpDisplay);
+    };
     const pumpDisplay = () => {
-      displayTimer = undefined;
+      displayFrame = undefined;
       if (!isCurrentRun()) {
         abortDisplay();
         return;
@@ -567,22 +618,23 @@ export function useAgentWorkspace() {
         if (streamEnded) settleDisplay();
         return;
       }
-      const nextCharacter = Array.from(pendingDelta)[0] || "";
-      pendingDelta = pendingDelta.slice(nextCharacter.length);
-      assistantMessage.content += nextCharacter;
+      const pendingCharacters = Array.from(pendingDelta);
+      const visibleCharacters = pendingCharacters.slice(0, displayBatchSize);
+      pendingDelta = pendingCharacters.slice(displayBatchSize).join("");
+      assistantMessage.content += visibleCharacters.join("");
       if (pendingDelta) {
-        displayTimer = window.setTimeout(pumpDisplay, typewriterInterval);
+        scheduleDisplay();
       } else if (streamEnded) {
         settleDisplay();
       }
     };
     const enqueueDelta = (delta: string) => {
       pendingDelta += delta;
-      if (displayTimer === undefined) pumpDisplay();
+      scheduleDisplay();
     };
     const endDisplay = () => {
       streamEnded = true;
-      if (displayTimer === undefined) pumpDisplay();
+      if (displayFrame === undefined) pumpDisplay();
     };
 
     try {
@@ -636,6 +688,10 @@ export function useAgentWorkspace() {
           onDelta: (id, delta) => {
             if (!isCurrentRun() || id !== messageId) return;
             enqueueDelta(delta);
+          },
+          onThinking: (id, delta) => {
+            if (!isCurrentRun() || id !== messageId) return;
+            thread.thinking += delta;
           },
           onReplace: (id, content) => {
             if (!isCurrentRun() || id !== messageId) return;
@@ -779,6 +835,7 @@ export function useAgentWorkspace() {
     eventHistory: computed(() => activeThread.value.eventHistory),
     citations,
     draft,
+    thinking: computed(() => activeThread.value.thinking),
     composerError,
     isRunning,
     hasRunningThread,

@@ -2,6 +2,7 @@ package com.cuupe.backend.modules.agent.controller;
 
 import com.cuupe.backend.common.Result;
 import com.cuupe.backend.modules.audit.service.AuditLogService;
+import com.cuupe.backend.modules.ai.AiIndexingClient;
 import com.cuupe.backend.modules.agent.dto.AgentAttachmentResponse;
 import com.cuupe.backend.modules.agent.dto.AgentMessageRequest;
 import com.cuupe.backend.modules.agent.dto.AgentRunAccepted;
@@ -29,6 +30,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.List;
+import java.io.IOException;
 
 @RestController
 @RequestMapping("/workspaces/{workspaceId}/projects/{projectId}/agent")
@@ -36,6 +38,7 @@ import java.util.List;
 public class AgentController {
     private final AgentService agentService;
     private final AuditLogService auditLogService;
+    private final AiIndexingClient aiIndexingClient;
 
     @PostMapping("/messages")
     public Result<AgentRunAccepted> sendMessage(
@@ -95,6 +98,15 @@ public class AgentController {
         return Result.success();
     }
 
+    @GetMapping("/attachments")
+    public Result<List<AgentAttachmentResponse>> listAttachments(
+            @PathVariable Long workspaceId,
+            @PathVariable Long projectId,
+            Authentication authentication
+    ) {
+        return Result.success(agentService.listAttachments(workspaceId, projectId, userId(authentication)));
+    }
+
     @PostMapping(value = "/attachments", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Result<AgentAttachmentResponse> uploadAttachment(
             @PathVariable Long workspaceId,
@@ -129,6 +141,27 @@ public class AgentController {
                     .body(input.readAllBytes());
         } catch (Exception exception) {
             throw new IllegalStateException("附件读取失败", exception);
+        }
+    }
+
+    @GetMapping("/attachments/{attachmentId}/preview")
+    public Result<Map<String, Object>> attachmentPreview(
+            @PathVariable Long workspaceId,
+            @PathVariable Long projectId,
+            @PathVariable Long attachmentId,
+            Authentication authentication
+    ) throws IOException {
+        AgentAttachment attachment = agentService.getAttachment(workspaceId, projectId, userId(authentication), attachmentId);
+        try (InputStream input = agentService.openAttachment(attachment)) {
+            return Result.success(aiIndexingClient.previewFile(
+                    attachment.getFileName(),
+                    attachment.getMimeType(),
+                    input.readAllBytes()
+            ));
+        } catch (IOException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new IllegalStateException("附件预览生成失败", exception);
         }
     }
 

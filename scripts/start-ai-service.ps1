@@ -1,7 +1,9 @@
 param(
     [int]$Port = 8003,
     [switch]$Reload,
-    [switch]$NoReload
+    [switch]$NoReload,
+    [switch]$Elevated,
+    [string]$NetworkProbeUrl = "https://api.siliconflow.cn/v1/models"
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +13,58 @@ $serviceRoot = Join-Path $projectRoot "apps\ai-service"
 $pythonPath = Join-Path $serviceRoot ".venv\Scripts\python.exe"
 $logRoot = Join-Path $projectRoot "logs"
 $logPath = Join-Path $logRoot "ai-service.log"
+
+function Test-IsAdministrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Test-ExternalHttps {
+    param([string]$Uri)
+
+    try {
+        $response = Invoke-WebRequest -UseBasicParsing -Uri $Uri -Method Get -TimeoutSec 8
+        return $response.StatusCode -ge 200 -and $response.StatusCode -lt 500
+    }
+    catch {
+        # A provider response such as 401/404 still proves that outbound HTTPS
+        # works. Only transport-level failures are treated as restricted access.
+        $response = $_.Exception.Response
+        if ($null -ne $response -and $null -ne $response.StatusCode) {
+            return ([int]$response.StatusCode) -lt 500
+        }
+        return $false
+    }
+}
+
+# Never leave the AI service running in a restricted Windows token. The
+# service must be able to open outbound HTTPS sockets to the configured LLM.
+if (-not $Elevated -and -not (Test-IsAdministrator)) {
+    $elevatedArguments = @(
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        $PSCommandPath,
+        '-Elevated',
+        '-Port',
+        [string]$Port,
+        '-NetworkProbeUrl',
+        $NetworkProbeUrl
+    )
+    if ($Reload) { $elevatedArguments += '-Reload' }
+    if ($NoReload) { $elevatedArguments += '-NoReload' }
+
+    $powershell = (Get-Command powershell.exe).Source
+    $elevated = Start-Process -FilePath $powershell -ArgumentList $elevatedArguments -WorkingDirectory $projectRoot -Verb RunAs -Wait -PassThru
+    exit $elevated.ExitCode
+}
+
+if (-not (Test-ExternalHttps -Uri $NetworkProbeUrl)) {
+    throw 'Outbound HTTPS preflight failed. The AI service will not start in a restricted environment.'
+}
+Write-Host ('Outbound HTTPS check passed: {0}' -f $NetworkProbeUrl) -ForegroundColor Green
 
 # Prefer the project-local optional file-analysis toolchain when present.
 # This keeps OCR/PDF/Office support working without requiring system-wide

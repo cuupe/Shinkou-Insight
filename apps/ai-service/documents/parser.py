@@ -79,7 +79,7 @@ OFFICE_CONVERSION_EXTENSIONS = {".doc", ".xls", ".ppt", ".odt", ".ods", ".odp", 
 @dataclass(slots=True)
 class ParsedDocument:
     documents: list[Document]
-    parser_version: str = "parser-v3-local-media"
+    parser_version: str = "parser-v4-docx-structure"
     warnings: list[str] = field(default_factory=list)
     tools: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -222,6 +222,71 @@ class DocumentParser:
             },
         )
 
+    def _docx_paragraph_text(self, paragraph: Any) -> str:
+        """Read paragraph XML so hyperlinks and explicit line breaks are not lost."""
+
+        from docx.oxml.ns import qn
+
+        parts: list[str] = []
+        hyperlink_tag = qn("w:hyperlink")
+
+        def visit(node: Any) -> None:
+            if node.tag == hyperlink_tag:
+                relationship_id = node.get(qn("r:id"))
+                label = "".join(
+                    child.text or ""
+                    for child in node.iter(qn("w:t"))
+                )
+                target = ""
+                if relationship_id:
+                    relationship = paragraph.part.rels.get(relationship_id)
+                    target = str(getattr(relationship, "target_ref", "") or "")
+                parts.append(
+                    f"[{label}]({target})" if label and target else label
+                )
+                return
+            if node.tag == qn("w:t"):
+                parts.append(node.text or "")
+            elif node.tag == qn("w:tab"):
+                parts.append("\t")
+            elif node.tag in {qn("w:br"), qn("w:cr")}:
+                parts.append("\n")
+            for child in node:
+                visit(child)
+
+        visit(paragraph._p)
+        return "".join(parts)
+
+    def _docx_list_level(self, paragraph: Any) -> int:
+        from docx.oxml.ns import qn
+
+        style_name = str(getattr(paragraph.style, "name", "") or "")
+        style_match = re.search(r"(?:bullet|number)\s+(\d+)", style_name.casefold())
+        if style_match:
+            return max(0, int(style_match.group(1)) - 1)
+        ilvl = paragraph._p.find("./" + qn("w:pPr") + "/" + qn("w:numPr") + "/" + qn("w:ilvl"))
+        try:
+            return max(0, int(ilvl.get(qn("w:val")))) if ilvl is not None else 0
+        except (TypeError, ValueError):
+            return 0
+
+    def _docx_semantic_prefix(self, paragraph: Any) -> tuple[str, str]:
+        style_name = str(getattr(paragraph.style, "name", "") or "")
+        normalized = style_name.casefold()
+        if normalized == "title":
+            return "# ", "heading"
+        heading = re.search(r"heading\s+(\d+)", normalized)
+        if heading:
+            return "#" * min(6, int(heading.group(1))) + " ", "heading"
+        level = self._docx_list_level(paragraph)
+        if "list bullet" in normalized:
+            return "  " * level + "- ", "list"
+        if "list number" in normalized:
+            return "  " * level + "1. ", "list"
+        if "quote" in normalized:
+            return "> ", "quote"
+        return "", "paragraph"
+
     def _docx(self, data: bytes, file_name: str) -> ParsedDocument:
         try:
             from docx import Document as DocxDocument
@@ -230,18 +295,20 @@ class DocumentParser:
 
         document = DocxDocument(io.BytesIO(data))
         paragraphs: list[str] = []
+        style_names: set[str] = set()
+        heading_count = 0
+        list_count = 0
         for paragraph in document.paragraphs:
-            value = paragraph.text.strip()
+            value = self._docx_paragraph_text(paragraph).strip()
+            style_name = str(getattr(paragraph.style, "name", "") or "")
+            if style_name:
+                style_names.add(style_name)
             if not value:
                 paragraphs.append("")
                 continue
-            style_name = str(getattr(paragraph.style, "name", "") or "")
-            heading = (
-                re.search(r"(\d+)", style_name)
-                if "heading" in style_name.casefold()
-                else None
-            )
-            prefix = "#" * min(int(heading.group(1)), 6) + " " if heading else ""
+            prefix, semantic_kind = self._docx_semantic_prefix(paragraph)
+            heading_count += semantic_kind == "heading"
+            list_count += semantic_kind == "list"
             paragraphs.append(prefix + value)
 
         for table_index, table in enumerate(document.tables, start=1):
@@ -252,7 +319,7 @@ class DocumentParser:
         for section in document.sections:
             for label, part in (("页眉", section.header), ("页脚", section.footer)):
                 values = [
-                    paragraph.text.strip()
+                    self._docx_paragraph_text(paragraph).strip()
                     for paragraph in part.paragraphs
                     if paragraph.text.strip()
                 ]
@@ -289,6 +356,9 @@ class DocumentParser:
                 "kind": "docx",
                 "tableCount": len(document.tables),
                 "embeddedImageCount": len(seen_images),
+                "headingCount": heading_count,
+                "listCount": list_count,
+                "paragraphStyleNames": sorted(style_names),
             },
         )
 

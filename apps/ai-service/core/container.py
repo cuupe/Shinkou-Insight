@@ -274,7 +274,11 @@ class ServiceContainer:
                 ToolSpec(
                     name="generate_document_bundle",
                     version="1.0",
-                    description="Generate Markdown, DOCX, PDF and PPTX files from a final Markdown report.",
+                    description=(
+                        "Render a final Markdown report into native Markdown, DOCX, PDF and PPTX files. "
+                        "For DOCX/PDF/PPTX, parse headings, paragraphs, lists, tables, links, emphasis and code "
+                        "into the target format; never copy Markdown markers as visible document text."
+                    ),
                     permission="WRITE",
                     timeout_seconds=120,
                     max_concurrency=2,

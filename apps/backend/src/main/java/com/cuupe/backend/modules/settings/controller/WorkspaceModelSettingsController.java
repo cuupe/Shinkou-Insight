@@ -234,7 +234,7 @@ public class WorkspaceModelSettingsController {
             if (stop != null && (!(stop instanceof List<?> values) || values.size() > 4)) throw invalidModelConfig();
             Object extraBody = config.get("extraBody");
             if (extraBody != null && !(extraBody instanceof Map<?, ?>)) throw invalidModelConfig();
-            String reasoning = String.valueOf(config.getOrDefault("reasoningEffort", "none"));
+            String reasoning = String.valueOf(config.getOrDefault("reasoningEffort", "high"));
             if (!List.of("none", "low", "medium", "high").contains(reasoning)) throw invalidModelConfig();
             String structured = String.valueOf(config.getOrDefault("structuredOutputMethod", "json_schema"));
             if (!List.of("json_schema", "function_calling", "json_mode").contains(structured)) throw invalidModelConfig();

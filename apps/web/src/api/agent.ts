@@ -2,6 +2,7 @@ import { anet, unwrap } from "./core";
 import { projectPath } from "./paths";
 import type {
   AgentAttachmentUploadResponse,
+  AgentAttachmentPreviewResponse,
   AgentSendMessagePayload,
   AgentRunAccepted,
   AgentStreamEvent,
@@ -60,6 +61,24 @@ export const agentApi = {
       ),
     );
   },
+
+  listAttachments: (workspaceId: number | string, projectId: number) =>
+    unwrap<AgentAttachmentUploadResponse[]>(
+      anet.get<ApiResponse<AgentAttachmentUploadResponse[]>>(
+        `${projectPath(workspaceId, projectId)}/agent/attachments`,
+      ),
+    ),
+
+  previewAttachment: (
+    workspaceId: number | string,
+    projectId: number,
+    attachmentId: string | number,
+  ) =>
+    unwrap<AgentAttachmentPreviewResponse>(
+      anet.get<ApiResponse<AgentAttachmentPreviewResponse>>(
+        `${projectPath(workspaceId, projectId)}/agent/attachments/${attachmentId}/preview`,
+      ),
+    ),
 
   cancelRun: (
     workspaceId: number | string,

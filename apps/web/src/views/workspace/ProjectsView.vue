@@ -639,11 +639,19 @@ onMounted(loadProjects);
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
   align-items: stretch;
+  align-content: start;
+  overflow: visible;
+}
+
+:global(.page-content) > .project-grid {
+  flex: 0 0 auto;
+  overflow: visible;
 }
 
 .project-card {
   min-width: 0;
-  height: 11.75rem;
+  min-height: 11.75rem;
+  height: auto;
   box-sizing: border-box;
 
   display: flex;
@@ -653,7 +661,7 @@ onMounted(loadProjects);
   border: 0.0625rem solid var(--workspace-border);
   border-radius: 0.75rem;
 
-  padding: 1.125rem;
+  padding: 1.25rem 1.5rem 1.125rem;
 
   box-shadow: 0 0.4375rem 1.4375rem rgba(21, 53, 52, 0.035);
 
@@ -783,10 +791,11 @@ onMounted(loadProjects);
   color: var(--workspace-muted);
 
   font-size: 0.8125rem;
-  line-height: 1.65;
+  line-height: 1.6;
 
-  height: 2.375rem;
-  min-height: 2.375rem;
+  height: auto;
+  min-height: 2.75rem;
+  max-height: 2.75rem;
 
   margin: 0;
 
@@ -805,7 +814,7 @@ onMounted(loadProjects);
   display: flex;
   gap: 1.25rem;
 
-  padding: 0.625rem 0;
+  padding: 0.75rem 0 0.625rem;
   margin-top: auto;
 
   border-bottom: 0.0625rem solid #edf1f1;
@@ -841,7 +850,9 @@ onMounted(loadProjects);
 
   text-decoration: none;
 
-  margin-top: 0.5rem;
+  min-height: 1.25rem;
+  margin-top: 0.75rem;
+  padding-bottom: 0.125rem;
 }
 
 .project-card-link:hover {
@@ -1047,8 +1058,9 @@ onMounted(loadProjects);
   }
 
   .project-card {
-    height: 14rem;
-    padding: 1.25rem;
+    min-height: 14rem;
+    height: auto;
+    padding: 1.25rem 1.5rem 1.125rem;
   }
 }
 
@@ -1058,7 +1070,8 @@ onMounted(loadProjects);
   }
 
   .project-card {
-    height: 13.5rem;
+    min-height: 13.5rem;
+    height: auto;
   }
 
   .project-pagination {

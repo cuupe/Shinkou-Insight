@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import base64
+import binascii
 import logging
 import shutil
 import time
@@ -99,6 +101,36 @@ async def file_tools(http_request: Request) -> dict[str, Any]:
             "model": parser.whisper_model if parser else None,
         },
         "office": {"libreoffice": bool(shutil.which("soffice") or shutil.which("libreoffice"))},
+    }
+
+
+@router.post("/internal/files/preview", dependencies=[Depends(verify_internal_api_key)])
+async def file_preview(http_request: Request) -> dict[str, Any]:
+    """Extract a bounded, browser-renderable preview without indexing the file."""
+
+    body = await http_request.json()
+    file_name = str(body.get("fileName") or body.get("file_name") or "attachment")
+    mime_type = str(body.get("mimeType") or body.get("mime_type") or "application/octet-stream")
+    encoded = str(body.get("data") or "")
+    try:
+        data = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(400, "Invalid base64 file content") from exc
+    parser = getattr(http_request.app.state.runtime, "file_parser", None)
+    if parser is None:
+        raise HTTPException(503, "File preview parser is not available")
+    try:
+        parsed = parser.analyze_bytes(data, file_name=file_name, mime_type=mime_type)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    content = "\n\n".join(
+        str(getattr(document, "page_content", "") or "")
+        for document in parsed.documents
+    ).strip()
+    return {
+        "content": content[:200_000],
+        "metadata": parsed.metadata,
+        "warnings": parsed.warnings,
     }
 
 

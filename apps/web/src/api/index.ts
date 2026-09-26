@@ -20,6 +20,7 @@ import { settingsApi } from "./settings";
 import { notificationsApi } from "./notifications";
 import { statisticsApi } from "./statistics";
 import { securityApi } from "./security";
+import { storageApi } from "./storage";
 
 export * from "./core";
 export * from "./types";
@@ -41,4 +42,5 @@ export const api = {
   notifications: notificationsApi,
   statistics: statisticsApi,
   security: securityApi,
+  storage: storageApi,
 };

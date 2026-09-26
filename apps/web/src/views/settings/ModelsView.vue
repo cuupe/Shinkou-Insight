@@ -157,7 +157,7 @@ const newModel = reactive<NewModelForm>({
   presencePenalty: 0,
   seed: null as number | null,
   stop: "",
-  reasoningEffort: "none",
+  reasoningEffort: "low",
   structuredOutputMethod: "json_schema",
   extraBody: "",
   timeout: 60,
@@ -296,7 +296,7 @@ function fromApiModel(model: ProjectModelConfig): ModelRecord {
       String(config.reasoningEffort),
     )
       ? (String(config.reasoningEffort) as ModelRecord["reasoningEffort"])
-      : "none",
+      : "high",
     structuredOutputMethod: [
       "json_schema",
       "function_calling",
@@ -599,7 +599,7 @@ function resetNewModel() {
     presencePenalty: 0,
     seed: null,
     stop: "",
-    reasoningEffort: "none",
+    reasoningEffort: "low",
     structuredOutputMethod: "json_schema",
     extraBody: "",
     timeout: 60,

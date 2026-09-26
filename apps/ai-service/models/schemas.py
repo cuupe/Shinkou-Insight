@@ -20,9 +20,20 @@ class HealthResponse(ApiModel):
     mode: str
 
 
+class AttachmentInput(ApiModel):
+    """Trusted object-storage reference for a user-uploaded chat attachment."""
+
+    attachment_id: int | str | None = None
+    file_name: str = Field(min_length=1, max_length=255)
+    mime_type: str | None = Field(default=None, max_length=255)
+    storage_key: str = Field(min_length=1, max_length=1_000)
+    file_size: int | None = Field(default=None, ge=0, le=100_000_000)
+
+
 class ChatMessage(ApiModel):
     role: Literal["system", "user", "assistant", "tool"]
     content: str = Field(min_length=1, max_length=100_000)
+    attachments: list[AttachmentInput] = Field(default_factory=list, max_length=10)
 
 
 class ModelGenerationConfig(ApiModel):
@@ -37,7 +48,7 @@ class ModelGenerationConfig(ApiModel):
     presence_penalty: float = Field(default=0, ge=-2, le=2)
     seed: int | None = Field(default=None, ge=0, le=2_147_483_647)
     stop: list[str] = Field(default_factory=list, max_length=4)
-    reasoning_effort: Literal["none", "low", "medium", "high"] | None = None
+    reasoning_effort: Literal["none", "low", "medium", "high"] | None = "high"
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -261,16 +272,6 @@ class ResearchConfig(ApiModel):
     multi_agent_mode: Literal["AUTO", "ON", "OFF"] = "AUTO"
     # 当后端没有解析出项目级模型时，作为默认模型的本次运行覆盖参数。
     generation: ModelGenerationConfig | None = None
-
-
-class AttachmentInput(ApiModel):
-    """Trusted object-storage reference for a user-uploaded chat attachment."""
-
-    attachment_id: int | str | None = None
-    file_name: str = Field(min_length=1, max_length=255)
-    mime_type: str | None = Field(default=None, max_length=255)
-    storage_key: str = Field(min_length=1, max_length=1_000)
-    file_size: int | None = Field(default=None, ge=0, le=100_000_000)
 
 
 class ExecuteRunRequest(ApiModel):

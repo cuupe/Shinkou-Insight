@@ -14,7 +14,7 @@ public class KnowledgeAsset {
     private Long fileSize;
     private String checksum;
     private String storageKey;
-    private String content;
+    private String sourceUrl;
     private String parseStatus;
     private String indexStatus;
     private Integer chunkCount;

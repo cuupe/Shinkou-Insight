@@ -61,6 +61,26 @@ export function dateFormatWithseconds(zone: string, date: Date) {
 
 export type DateTimeLike = Date | string | number | null | undefined;
 
+const backendNaiveDateTimePattern =
+  /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?$/;
+
+function parseDateTime(value: Date | string | number) {
+  if (value instanceof Date) return value;
+  if (typeof value === "number") return new Date(value);
+
+  const raw = value.trim();
+  if (!raw) return null;
+
+  // Jackson serializes the backend's LocalDateTime without an offset. Those
+  // values are database wall-clock time in Asia/Shanghai, not browser-local
+  // time. Add the source offset before handing the value to Date.
+  const normalized = raw.replace(" ", "T");
+  if (backendNaiveDateTimePattern.test(raw)) {
+    return new Date(`${normalized}+08:00`);
+  }
+  return new Date(raw);
+}
+
 /** Format backend timestamps for the UI without ISO delimiters or fractions. */
 export function formatDateTime(
   value: unknown,
@@ -76,11 +96,9 @@ export function formatDateTime(
   }
 
   const date =
-    value instanceof Date
-      ? value
-      : typeof value === "string" || typeof value === "number"
-        ? new Date(value)
-        : null;
+    value instanceof Date || typeof value === "string" || typeof value === "number"
+      ? parseDateTime(value)
+      : null;
   if (date && !Number.isNaN(date.getTime())) {
     return dateFormatWithseconds(zone, date) || fallback;
   }

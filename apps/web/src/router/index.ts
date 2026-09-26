@@ -27,6 +27,7 @@ import ActionItemsView from "@/views/project/ActionItemsView.vue";
 import EvaluationView from "@/views/project/EvaluationView.vue";
 import ReviewView from "@/views/project/ReviewView.vue";
 import AgentWorkspaceView from "@/views/project/AgentWorkspaceView.vue";
+import FileLibraryView from "@/views/project/FileLibraryView.vue";
 import HelpCenterView from "@/views/help/HelpCenterView.vue";
 import NotificationsView from "@/views/workspace/NotificationsView.vue";
 
@@ -110,7 +111,7 @@ const router = createRouter({
         {
           path: "projects/:projectId",
           name: "project-start",
-          redirect: { name: "project-agent-chat" },
+          redirect: { name: "project-planning" },
         },
         {
           path: "projects/:projectId/overview",
@@ -126,6 +127,11 @@ const router = createRouter({
           path: "projects/:projectId/agent",
           name: "project-agent-chat",
           component: AgentWorkspaceView,
+        },
+        {
+          path: "projects/:projectId/files",
+          name: "project-files",
+          component: FileLibraryView,
         },
         {
           path: "projects/:projectId/knowledge/assets",

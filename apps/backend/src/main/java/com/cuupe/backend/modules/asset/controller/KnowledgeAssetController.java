@@ -11,11 +11,13 @@ import com.cuupe.backend.modules.notification.service.NotificationService;
 import com.cuupe.backend.modules.project.entity.Project;
 import com.cuupe.backend.modules.project.mapper.ProjectMapper;
 import com.cuupe.backend.modules.storage.ObjectStorageService;
+import com.cuupe.backend.modules.storage.service.StorageQuotaService;
 import com.cuupe.backend.modules.user.security.UserLoginByPassword;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import java.nio.charset.StandardCharsets;
@@ -27,6 +29,8 @@ import java.util.Map;
 @RequestMapping("/workspaces/{workspaceId}/projects/{projectId}/assets")
 @RequiredArgsConstructor
 public class KnowledgeAssetController {
+    private static final int TEXT_PREVIEW_LIMIT = 2 * 1024 * 1024;
+
     private final KnowledgeAssetMapper assetMapper;
     private final NotificationService notificationService;
     private final ObjectStorageService objectStorageService;
@@ -34,18 +38,22 @@ public class KnowledgeAssetController {
     private final RuntimeConfigResolver runtimeConfigResolver;
     private final ProjectMapper projectMapper;
     private final AuditLogService auditLogService;
+    private final StorageQuotaService storageQuotaService;
 
     @GetMapping public Result<List<KnowledgeAsset>> list(@PathVariable Long projectId, Authentication auth) { return Result.success(assetMapper.findByProject(projectId, userId(auth))); }
     @GetMapping("/{assetId}") public Result<KnowledgeAsset> detail(@PathVariable Long projectId, @PathVariable Long assetId, Authentication auth) { return Result.success(required(projectId, assetId, auth)); }
 
     @PostMapping(consumes = "multipart/form-data")
+    @Transactional(rollbackFor = Exception.class)
     public Result<KnowledgeAsset> upload(@PathVariable Long workspaceId, @PathVariable Long projectId, @RequestPart("file") MultipartFile file, @RequestParam(required=false) String name, @RequestParam(required=false) String language, @RequestParam(required=false) String sourceUrl, Authentication auth) throws Exception {
         if (file.isEmpty()) throw ApiException.badRequest("EMPTY_FILE", "上传文件不能为空");
         Long currentUserId = userId(auth);
+        storageQuotaService.validateFileSize(file.getSize());
         KnowledgeAsset asset = new KnowledgeAsset();
         asset.setProjectId(projectId); asset.setCreatedBy(currentUserId); asset.setName(name == null || name.isBlank() ? file.getOriginalFilename() : name.trim());
         asset.setAssetType(typeOf(file.getOriginalFilename())); asset.setMimeType(file.getContentType()); asset.setLanguage(language); asset.setFileSize(file.getSize()); asset.setChecksum(hex(MessageDigest.getInstance("SHA-256").digest(file.getBytes())));
         String normalizedSourceUrl = sourceUrl == null ? "" : sourceUrl.trim();
+        asset.setSourceUrl(normalizedSourceUrl.isBlank() ? null : normalizedSourceUrl);
         if (!normalizedSourceUrl.isBlank()) {
             KnowledgeAsset sourceMatch = assetMapper.findByProjectAndSourceUrl(projectId, normalizedSourceUrl, currentUserId);
             if (sourceMatch != null) return Result.success(sourceMatch);
@@ -66,12 +74,12 @@ public class KnowledgeAssetController {
         }
         KnowledgeAsset existing = assetMapper.findByProjectAndChecksum(projectId, asset.getChecksum(), currentUserId);
         if (existing != null) return Result.success(existing);
+        storageQuotaService.reserve(currentUserId, file.getSize());
         String storageKey = "workspaces/" + workspaceId + "/projects/" + projectId + "/assets/" + asset.getChecksum() + "/" + safeFileName(file.getOriginalFilename());
         try (var input = file.getInputStream()) {
             objectStorageService.put(storageKey, input, file.getSize(), file.getContentType());
         }
         asset.setStorageKey(storageKey);
-        if (file.getContentType() != null && (file.getContentType().startsWith("text/") || file.getOriginalFilename().toLowerCase().endsWith(".md"))) asset.setContent(new String(file.getBytes(), StandardCharsets.UTF_8));
         try {
             assetMapper.insert(asset);
             assetMapper.markIndexing(asset.getId(), projectId);
@@ -92,6 +100,7 @@ public class KnowledgeAssetController {
         } catch (RuntimeException exception) {
             KnowledgeAsset duplicate = assetMapper.findByProjectAndChecksum(projectId, asset.getChecksum(), currentUserId);
             if (duplicate != null) {
+                storageQuotaService.release(currentUserId, asset.getFileSize());
                 try { objectStorageService.remove(storageKey); } catch (Exception ignored) { }
                 return Result.success(duplicate);
             }
@@ -102,15 +111,39 @@ public class KnowledgeAssetController {
         auditLogService.record(workspaceId, projectId, userId(auth), "ASSET_UPLOADED", "ASSET", asset.getId(), Map.of("name", asset.getName() == null ? "" : asset.getName(), "size", asset.getFileSize()));
         return Result.success(required(projectId, asset.getId(), auth));
     }
-    @DeleteMapping("/{assetId}") public Result<Void> remove(@PathVariable Long workspaceId, @PathVariable Long projectId, @PathVariable Long assetId, Authentication auth) { Long user=userId(auth); if (assetMapper.markDeleted(assetId, projectId, user) == 0) throw notFound(); auditLogService.record(workspaceId, projectId, user, "ASSET_DELETED", "ASSET", assetId); return Result.success(); }
+    @DeleteMapping("/{assetId}")
+    @Transactional(rollbackFor = Exception.class)
+    public Result<Void> remove(@PathVariable Long workspaceId, @PathVariable Long projectId, @PathVariable Long assetId, Authentication auth) {
+        Long user = userId(auth);
+        KnowledgeAsset asset = required(projectId, assetId, auth);
+        if (assetMapper.markDeleted(assetId, projectId, user) == 0) throw notFound();
+        storageQuotaService.release(user, asset.getFileSize() == null ? 0L : asset.getFileSize());
+        auditLogService.record(workspaceId, projectId, user, "ASSET_DELETED", "ASSET", assetId);
+        return Result.success();
+    }
     @PostMapping("/{assetId}/reindex") public Result<KnowledgeAsset> reindex(@PathVariable Long workspaceId, @PathVariable Long projectId, @PathVariable Long assetId, Authentication auth) { Long user=userId(auth); if (assetMapper.resetIndex(assetId, projectId, user) == 0) throw notFound(); assetMapper.deleteChunks(assetId); KnowledgeAsset asset=required(projectId,assetId,auth); assetMapper.markIndexing(assetId, projectId); Map<String, Object> runtimeEmbedding=runtimeConfigResolver.resolveEmbeddingPayload(workspaceId, projectId, user, null); Project project=projectMapper.findAccessibleById(workspaceId, projectId, user); String chunkingConfig=project == null ? null : project.getChunkingConfig(); Thread.startVirtualThread(() -> { try { aiIndexingClient.index(asset, workspaceId, user, runtimeEmbedding, chunkingConfig); assetMapper.markIndexed(assetId, projectId); } catch (Exception exception) { assetMapper.markIndexFailed(assetId, projectId, exception.getMessage()); } }); auditLogService.record(workspaceId, projectId, user, "ASSET_REINDEX_REQUESTED", "ASSET", assetId); return Result.success(required(projectId, assetId, auth)); }
     @GetMapping("/{assetId}/chunks") public Result<List<Map<String,Object>>> chunks(@PathVariable Long projectId, @PathVariable Long assetId, Authentication auth) { required(projectId,assetId,auth); return Result.success(assetMapper.findChunks(assetId,projectId,userId(auth))); }
-    @GetMapping("/{assetId}/content") public Result<String> content(@PathVariable Long projectId, @PathVariable Long assetId, Authentication auth) { KnowledgeAsset asset=required(projectId,assetId,auth); return Result.success(asset.getContent() == null ? "" : asset.getContent()); }
+    @GetMapping("/{assetId}/content")
+    public Result<String> content(@PathVariable Long projectId, @PathVariable Long assetId, Authentication auth) throws Exception {
+        KnowledgeAsset asset = required(projectId, assetId, auth);
+        if (asset.getStorageKey() == null || asset.getStorageKey().isBlank() || !isTextAsset(asset)) {
+            return Result.success("");
+        }
+        try (var input = objectStorageService.open(asset.getStorageKey())) {
+            byte[] bytes = input.readNBytes(TEXT_PREVIEW_LIMIT + 1);
+            String content = new String(bytes, StandardCharsets.UTF_8);
+            if (bytes.length > TEXT_PREVIEW_LIMIT) {
+                content = content.substring(0, Math.min(content.length(), TEXT_PREVIEW_LIMIT)) + "\n\n[预览已截断]";
+            }
+            return Result.success(content);
+        }
+    }
 
     private KnowledgeAsset required(Long projectId, Long assetId, Authentication auth) { KnowledgeAsset asset=assetMapper.findById(assetId, projectId, userId(auth)); if(asset==null) throw notFound(); return asset; }
     private Long userId(Authentication auth) { Object principal=auth.getPrincipal(); if(principal instanceof UserLoginByPassword user && user.getId()!=null) return user.getId(); throw new IllegalStateException("当前会话缺少用户信息"); }
     private ApiException notFound() { return new ApiException(org.springframework.http.HttpStatus.NOT_FOUND,"ASSET_NOT_FOUND","资料不存在或无权访问"); }
     private String typeOf(String filename) { if(filename==null) return "FILE"; int dot=filename.lastIndexOf('.'); return dot<0 ? "FILE" : filename.substring(dot+1).toUpperCase(); }
+    private boolean isTextAsset(KnowledgeAsset asset) { return asset.getMimeType() != null && asset.getMimeType().toLowerCase().startsWith("text/") || "MD".equalsIgnoreCase(asset.getAssetType()) || "TXT".equalsIgnoreCase(asset.getAssetType()); }
     private String hex(byte[] bytes) { StringBuilder result=new StringBuilder(); for(byte value:bytes) result.append(String.format("%02x",value)); return result.toString(); }
     private String safeFileName(String value) { String name=value==null||value.isBlank()?"file":value.replaceAll("[\\r\\n\\\\/]", "_").trim(); return name.length()<=255?name:name.substring(0,255); }
 }

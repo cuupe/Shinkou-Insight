@@ -2,6 +2,8 @@ package com.cuupe.backend.modules.agent.entity;
 
 import lombok.Data;
 
+import java.time.LocalDateTime;
+
 @Data
 public class AgentAttachment {
     private Long id;
@@ -14,4 +16,5 @@ public class AgentAttachment {
     private Long fileSize;
     private String storageKey;
     private byte[] content;
+    private LocalDateTime createdAt;
 }

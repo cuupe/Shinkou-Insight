@@ -3,6 +3,8 @@ package com.cuupe.backend.modules.agent.dto;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 
+import java.time.LocalDateTime;
+
 @Data
 @AllArgsConstructor
 public class AgentAttachmentResponse {
@@ -12,4 +14,5 @@ public class AgentAttachmentResponse {
     private String mimeType;
     private Long size;
     private String url;
+    private LocalDateTime createdAt;
 }

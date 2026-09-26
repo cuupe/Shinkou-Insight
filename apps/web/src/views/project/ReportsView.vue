@@ -10,6 +10,7 @@ import {
   Search,
 } from "@lucide/vue";
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProjectWorkflow from "@/components/project/ProjectWorkflow.vue";
 import {
   Dialog,
   DialogContent,
@@ -230,6 +231,8 @@ async function copySummary() {
       </div>
     </template>
   </PageHeader>
+
+  <ProjectWorkflow />
 
   <div class="report-metrics">
     <div class="report-metric">

@@ -49,6 +49,60 @@ def _siliconflow_thinking_options(
         kwargs["reasoning_effort"] = effort
 
 
+def _normalize_provider_messages(
+    messages: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Put one combined system instruction before the conversation stream.
+
+    The runtime can add system context while assembling a request (for
+    example, attachment summaries, retrieved evidence, or reflection notes).
+    OpenAI-compatible providers generally accept that transport-neutral shape,
+    but SiliconFlow models reject both late system messages and requests with
+    more than one system message. Keep the relative order of all non-system
+    messages, and combine every system instruction into the first system
+    message. Copy each mapping so request construction never mutates caller
+    state.
+    """
+
+    system_messages: list[dict[str, Any]] = []
+    conversation_messages: list[dict[str, Any]] = []
+    for raw_message in messages:
+        message = dict(raw_message)
+        role = str(message.get("role", "user")).strip().casefold()
+        if role == "system":
+            message["role"] = "system"
+            system_messages.append(message)
+        else:
+            conversation_messages.append(message)
+    if not system_messages:
+        return conversation_messages
+
+    merged_system = dict(system_messages[0])
+    merged_system["role"] = "system"
+    text_parts: list[str] = []
+    non_text_content: list[Any] = []
+    has_non_text_content = False
+    for message in system_messages:
+        content = message.get("content", "")
+        if isinstance(content, str):
+            if content:
+                text_parts.append(content)
+        elif isinstance(content, list):
+            has_non_text_content = True
+            non_text_content.extend(content)
+        elif content is not None:
+            has_non_text_content = True
+            non_text_content.append(content)
+
+    if has_non_text_content:
+        blocks: list[Any] = [{"type": "text", "text": part} for part in text_parts]
+        blocks.extend(non_text_content)
+        merged_system["content"] = blocks
+    else:
+        merged_system["content"] = "\n\n".join(text_parts)
+    return [merged_system, *conversation_messages]
+
+
 # =========================================================
 # Exceptions
 # =========================================================
@@ -266,9 +320,17 @@ class ModelGateway(Protocol):
 
 @dataclass(frozen=True)
 class ModelStreamChunk:
-    """One provider response delta and optional usage metadata."""
+    """One provider response delta and optional usage metadata.
+
+    ``thinking`` carries the provider's reasoning/chain-of-thought text
+    (``reasoning_content`` / ``reasoning``) separately from the visible answer
+    ``delta``. It is surfaced to the UI as live thinking while the visible
+    answer is still being produced, so a reasoning model does not leave the
+    user staring at a silent spinner.
+    """
 
     delta: str = ""
+    thinking: str = ""
     usage: TokenUsage | None = None
 
 
@@ -405,6 +467,9 @@ class LangChainModelGateway:
                 **self._invoke_kwargs(temperature),
             ):
                 content = _message_content(chunk)
+                thinking = _message_thinking(chunk)
+                if thinking:
+                    yield ModelStreamChunk(delta="", thinking=thinking)
                 if content:
                     yield ModelStreamChunk(delta=content)
         except Exception as exc:
@@ -493,7 +558,7 @@ def _to_langchain_messages(messages: Sequence[dict[str, str]]) -> list[Any]:
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
     converted: list[Any] = []
-    for message in messages:
+    for message in _normalize_provider_messages(messages):
         role = message.get("role", "user")
         content = message.get("content", "")
         if role == "system":
@@ -522,6 +587,28 @@ def _message_content(message: Any) -> str:
                     parts.append(str(value))
         return "".join(parts)
     return str(content or "")
+
+
+def _message_thinking(message: Any) -> str:
+    """Extract reasoning text from a LangChain message chunk.
+
+    Reasoning providers often place the chain-of-thought in
+    ``additional_kwargs.reasoning_content`` (or ``response_metadata``). We
+    surface it as live thinking instead of discarding the already-generating
+    tokens.
+    """
+    if message is None:
+        return ""
+    values: list[str] = []
+    for container in ("additional_kwargs", "response_metadata"):
+        meta = getattr(message, container, None) or {}
+        if not isinstance(meta, dict):
+            continue
+        for key in ("reasoning_content", "reasoning"):
+            value = meta.get(key)
+            if isinstance(value, str) and value:
+                values.append(value)
+    return "".join(values)
 
 
 def _model_chat_result(message: Any, *, fallback_model: str, latency_ms: int) -> ModelChatResult:
@@ -799,6 +886,9 @@ class HttpModelGateway:
                     if raw_usage:
                         usage = self._extract_usage(data)
                     delta = self._extract_stream_delta(data)
+                    thinking = self._extract_stream_thinking(data)
+                    if thinking:
+                        yield ModelStreamChunk(delta="", thinking=thinking)
                     if delta:
                         yield ModelStreamChunk(delta=delta)
         except httpx.TimeoutException as exc:
@@ -817,9 +907,10 @@ class HttpModelGateway:
         stream: bool,
     ) -> dict[str, Any]:
         generation = self.generation
+        provider_messages = _normalize_provider_messages(messages)
         payload: dict[str, Any] = {
             "model": self.model,
-            "messages": messages,
+            "messages": provider_messages,
             "temperature": generation.temperature if temperature is None else temperature,
             "top_p": generation.top_p,
             "max_tokens": generation.max_tokens,
@@ -861,6 +952,29 @@ class HttpModelGateway:
             return "".join(
                 str(item.get("text", "")) for item in content if isinstance(item, dict) and item.get("text")
             )
+        return ""
+
+    def _extract_stream_thinking(self, data: dict[str, Any]) -> str:
+        """Extract provider reasoning/chain-of-thought text from a stream chunk.
+
+        OpenAI-compatible reasoning providers (SiliconFlow/DeepSeek among
+        others) send the thinking text in a separate ``reasoning_content`` (or
+        ``reasoning``) field before any visible ``content`` begins. Returning it
+        separately lets the runtime relay it as live ``thinking.delta`` events
+        instead of discarding the tokens the user already paid for.
+        """
+        try:
+            choice = (data.get("choices") or [])[0]
+        except (IndexError, TypeError):
+            return ""
+        delta = choice.get("delta") or choice.get("message") or {}
+        if not isinstance(delta, dict):
+            return ""
+        value = delta.get("reasoning_content")
+        if value is None:
+            value = delta.get("reasoning")
+        if isinstance(value, str):
+            return value
         return ""
 
     # =====================================================

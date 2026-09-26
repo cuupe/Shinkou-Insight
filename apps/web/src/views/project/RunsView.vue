@@ -12,6 +12,7 @@ import {
   Square,
 } from "@lucide/vue";
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProjectWorkflow from "@/components/project/ProjectWorkflow.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { runsApi } from "@/api/runs";
 import type { ResearchRun } from "@/api/types";
@@ -175,6 +176,8 @@ async function cancelQueuedTask(task: QueueTask) {
     :subtitle="`${selectedProject?.name || '暂无项目'} · 统一查看 Agent 的等待、执行和结果状态`"
   >
   </PageHeader>
+
+  <ProjectWorkflow />
 
   <div class="queue-summary">
     <div class="queue-summary-card queue-summary-running">
@@ -459,10 +462,9 @@ async function cancelQueuedTask(task: QueueTask) {
 }
 .queue-table {
   display: grid;
-  grid-template-columns: minmax(17rem, 1.75fr) 5.5rem minmax(
-      12rem,
-      1.35fr
-    ) 4.5rem 7.5rem 7.25rem;
+  grid-template-columns:
+    minmax(17rem, 1.75fr) 5.5rem minmax(12rem, 1.35fr)
+    4.5rem 7.5rem 7.25rem;
   gap: 0.75rem;
   align-items: center;
   min-width: 54rem;

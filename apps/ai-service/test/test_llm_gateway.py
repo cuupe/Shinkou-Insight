@@ -148,6 +148,70 @@ async def test_http_gateway_request_generation_override_reaches_provider():
     assert seen["reasoning_effort"] == "high"
 
 
+@pytest.mark.asyncio
+async def test_http_gateway_moves_late_system_messages_to_provider_prefix():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, json={"model": "demo", "choices": [{"message": {"content": "ok"}}]})
+
+    messages = [
+        {"role": "system", "content": "base instructions"},
+        {"role": "user", "content": "first question"},
+        {"role": "assistant", "content": "first answer"},
+        {"role": "system", "content": "attachment context"},
+        {"role": "user", "content": "follow-up"},
+    ]
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = HttpModelGateway(
+            client=client,
+            base_url="https://mock.local/v1",
+            api_key="test-key",
+            model="demo-model",
+        )
+        await gateway.chat(messages)
+
+    assert [message["role"] for message in seen["messages"]] == ["system", "user", "assistant", "user"]
+    assert seen["messages"][0]["content"] == "base instructions\n\nattachment context"
+    assert messages[3]["role"] == "system"
+
+
+@pytest.mark.asyncio
+async def test_http_gateway_structured_output_keeps_all_system_messages_at_front():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "model": "demo",
+                "choices": [{"message": {"content": '{"id":"Q1","question":"ok","source":"INTERNAL","rationale":"test"}'}}],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = HttpModelGateway(
+            client=client,
+            base_url="https://mock.local/v1",
+            api_key="test-key",
+            model="demo-model",
+        )
+        await gateway.structured(
+            [
+                {"role": "user", "content": "question"},
+                {"role": "system", "content": "context added by runtime"},
+            ],
+            PlanItem,
+        )
+
+    assert [message["role"] for message in seen["messages"]] == ["system", "user"]
+    assert seen["messages"][0]["content"].startswith("你必须只返回一个合法 JSON 对象")
+    assert "context added by runtime" in seen["messages"][0]["content"]
+
+
 @pytest.mark.parametrize(
     "effort, budget, enabled",
     [("none", None, False), ("low", 1024, True), ("medium", 4096, True), ("high", 16384, True)],
@@ -236,3 +300,27 @@ async def test_http_gateway_streams_openai_compatible_sse_deltas():
     assert chunks[-1].usage is not None
     assert chunks[-1].usage.total_tokens == 7
     assert chunks[-1].usage.available is True
+
+
+async def test_http_gateway_streams_reasoning_content_as_thinking():
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = (
+            'data: {"choices":[{"delta":{"reasoning_content":"先分析证据"}}]}\n\n'
+            'data: {"choices":[{"delta":{"reasoning_content":"再组织结论"}}]}\n\n'
+            'data: {"choices":[{"delta":{"content":"最终回答"}}]}\n\n'
+            'data: {"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}\n\n'
+            'data: [DONE]\n\n'
+        )
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body.encode())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = HttpModelGateway(
+            client=client,
+            base_url="https://mock.local/v1",
+            api_key="test-key",
+            model="demo-model",
+        )
+        chunks = [chunk async for chunk in gateway.stream([{"role": "user", "content": "test"}])]
+
+    assert ["".join(c.thinking for c in chunks if c.thinking)] == ["先分析证据再组织结论"]
+    assert [c.delta for c in chunks if c.delta] == ["最终回答"]

@@ -8,13 +8,13 @@ import {
   Database,
   Download,
   FileCheck2,
-  MessageCircle,
   ShieldCheck,
   Users,
   Zap,
 } from "@lucide/vue";
 import { useWorkspace } from "@/composables/useWorkspace";
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProjectWorkflow from "@/components/project/ProjectWorkflow.vue";
 import TokenUsageChart from "@/components/common/TokenUsageChart.vue";
 const {
   selectedProject,
@@ -30,11 +30,11 @@ const {
 
 const quickActions = [
   {
-    label: "启动项目 Agent",
-    description: "从目标开始，串联规划、搜集与审查",
-    route: "project-agent-chat",
+    label: "开始项目分析",
+    description: "填写目标后启动完整工作流",
+    route: "project-planning",
     tone: "violet",
-    icon: MessageCircle,
+    icon: ClipboardList,
   },
   {
     label: "查看规划中枢",
@@ -212,6 +212,9 @@ function exportProjectSnapshot() {
     :subtitle="selectedProject?.description || ''"
   >
   </PageHeader>
+
+  <ProjectWorkflow />
+
   <div class="quick-actions">
     <button
       v-for="(action, index) in quickActions"
@@ -240,9 +243,9 @@ function exportProjectSnapshot() {
     <button
       class="button button-primary button-sm"
       type="button"
-      @click="router.push(routeTo('project-agent-chat'))"
+      @click="router.push(routeTo('project-planning'))"
     >
-      启动 Agent <ArrowRight :size="14" />
+      开始填写项目 <ArrowRight :size="14" />
     </button>
   </section>
   <section class="panel project-statistics-panel">

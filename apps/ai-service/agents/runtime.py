@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -114,7 +115,7 @@ def _normalize_model_markdown(value: str) -> str:
         .replace("\\\n", "\n")
     )
     normalized = re.sub(r"\\([#>*_`~\-\[\]])", r"\1", normalized)
-    normalized = re.sub(r"^(#{1,6})(?=\S)", r"\1 ", normalized, flags=re.MULTILINE)
+    normalized = re.sub(r"^(#{1,6})(?=[^#\s])", r"\1 ", normalized, flags=re.MULTILINE)
     normalized = re.sub(r"^(\s*)([-+])(?=\S)", r"\1\2 ", normalized, flags=re.MULTILINE)
     normalized = re.sub(r"^(\s*)\*(?=[^\s*])", r"\1* ", normalized, flags=re.MULTILINE)
     normalized = re.sub(r"^(\s*)(\d+[.)])(?=\S)", r"\1\2 ", normalized, flags=re.MULTILINE)
@@ -135,8 +136,39 @@ def _estimate_tokens(text: str) -> int:
     return max(0, int((cjk_count * 1.6) + (other_count / 4) + 0.999))
 
 
-def _estimate_message_tokens(messages: list[dict[str, str]]) -> int:
-    return sum(_estimate_tokens(message["content"]) + 4 for message in messages)
+def _message_attachments(message: Any) -> list[dict[str, Any]]:
+    raw = (
+        message.get("attachments")
+        if isinstance(message, dict)
+        else getattr(message, "attachments", None)
+    )
+    if not raw:
+        return []
+    result: list[dict[str, Any]] = []
+    for attachment in raw:
+        if hasattr(attachment, "model_dump"):
+            value = attachment.model_dump()
+        elif isinstance(attachment, dict):
+            value = dict(attachment)
+        else:
+            continue
+        if value.get("storage_key") or value.get("storageKey"):
+            result.append(value)
+    return result
+
+
+def _message_token_cost(message: dict[str, Any]) -> int:
+    # Image tokens are provider-specific. Reserve a conservative amount so a
+    # retained image cannot silently evict the actual question from context.
+    attachment_cost = sum(
+        1_024 if str(item.get("mime_type") or item.get("mimeType") or "").startswith("image/") else 64
+        for item in message.get("attachments") or []
+    )
+    return _estimate_tokens(message["content"]) + 4 + attachment_cost
+
+
+def _estimate_message_tokens(messages: list[dict[str, Any]]) -> int:
+    return sum(_message_token_cost(message) for message in messages)
 
 
 def _truncate_to_tokens(text: str, token_budget: int) -> str:
@@ -163,34 +195,45 @@ def _truncate_to_tokens(text: str, token_budget: int) -> str:
 
 
 def _fit_messages_to_token_budget(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     token_budget: int,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """Keep the newest messages while enforcing the measured prompt budget."""
 
-    fitted: list[dict[str, str]] = []
+    fitted: list[dict[str, Any]] = []
     remaining = max(0, token_budget)
     for message in reversed(messages):
         if remaining <= 4:
             break
-        content = _truncate_to_tokens(message["content"], remaining - 4)
+        attachment_cost = sum(
+            1_024 if str(item.get("mime_type") or item.get("mimeType") or "").startswith("image/") else 64
+            for item in message.get("attachments") or []
+        )
+        content = _truncate_to_tokens(message["content"], remaining - 4 - attachment_cost)
         if not content:
             continue
-        fitted.append({"role": message["role"], "content": content})
-        remaining -= _estimate_tokens(content) + 4
+        fitted_message: dict[str, Any] = {"role": message["role"], "content": content}
+        if message.get("attachments"):
+            fitted_message["attachments"] = message["attachments"]
+        fitted.append(fitted_message)
+        remaining -= _message_token_cost(fitted_message)
     return list(reversed(fitted))
 
 
 def _compact_chat_context(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     max_chars: int = 24_000,
     max_tokens: int | None = None,
     model_context_window: int | None = None,
-) -> tuple[list[dict[str, str]], dict[str, int]]:
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Compress old turns deterministically before the model limit is reached."""
 
     normalized = [
-        {"role": str(message.get("role", "user")), "content": str(message.get("content", "")).strip()}
+        {
+            "role": str(message.get("role", "user")),
+            "content": str(message.get("content", "")).strip(),
+            **({"attachments": message["attachments"]} if message.get("attachments") else {}),
+        }
         for message in messages
         if str(message.get("content", "")).strip()
     ]
@@ -218,20 +261,25 @@ def _compact_chat_context(
     recent = normalized[-recent_count:]
     older = normalized[:-recent_count]
     recent_budget = token_budget if not older else max(64, token_budget - min(2_000, max(128, token_budget // 4)))
-    bounded_recent: list[dict[str, str]] = []
+    bounded_recent: list[dict[str, Any]] = []
     remaining_recent = recent_budget
     for message in reversed(recent):
         if remaining_recent <= 4:
             break
         content = message["content"]
-        bounded = _truncate_to_tokens(content, remaining_recent - 4)
-        bounded_recent.append(
-            {
-                "role": message["role"],
-                "content": bounded,
-            }
+        attachment_cost = sum(
+            1_024 if str(item.get("mime_type") or item.get("mimeType") or "").startswith("image/") else 64
+            for item in message.get("attachments") or []
         )
-        remaining_recent -= _estimate_tokens(bounded) + 4
+        bounded = _truncate_to_tokens(content, remaining_recent - 4 - attachment_cost)
+        bounded_message: dict[str, Any] = {
+            "role": message["role"],
+            "content": bounded,
+        }
+        if message.get("attachments"):
+            bounded_message["attachments"] = message["attachments"]
+        bounded_recent.append(bounded_message)
+        remaining_recent -= _message_token_cost(bounded_message)
     recent = list(reversed(bounded_recent))
     older_count = len(older)
     if not older:
@@ -305,6 +353,53 @@ _CONTEXT_FOLLOW_UP_HINTS = CONTEXT_FOLLOW_UP_HINTS
 _CONTEXT_FOLLOW_UP_WORD_HINTS = CONTEXT_FOLLOW_UP_WORD_HINTS
 _CONTEXT_STOP_TERMS = SEARCH_STOPWORDS
 
+# Short follow-ups often change the requested answer format without repeating
+# the original subject.  They must still retain the latest turn, otherwise a
+# request such as “answer it in the standard mathematical format” looks like
+# an unrelated question to the lexical relevance filter.
+_CONTEXT_RESPONSE_INSTRUCTION_HINTS = (
+    "\u6309\u7167",
+    "\u6309\u6807\u51c6",
+    "\u6309\u6b65\u9aa4",
+    "\u6309\u8981\u6c42",
+    "\u6309\u683c\u5f0f",
+    "\u6807\u51c6",
+    "\u65b9\u5f0f",
+    "\u89e3\u7b54",
+    "\u56de\u7b54",
+    "\u8be6\u7ec6",
+    "\u7b80\u6d01",
+    "\u8865\u5145",
+    "\u5c55\u5f00",
+    "\u6539\u4e3a",
+    "\u6539\u6210",
+    "\u6362\u4e00\u79cd",
+    "\u91cd\u65b0",
+    "\u91cd\u5199",
+    "\u683c\u5f0f",
+    "\u89e3\u91ca",
+    "\u6da6\u8272",
+    "\u8be6\u7ec6",
+    "\u8fc7\u7a0b",
+    "\u539f\u9898",
+    "\u4e0a\u9762",
+    "\u521a\u624d",
+    "\u8fd9\u4e2a",
+    "\u8fd9\u9053",
+    "\u4e0a\u4e00\u95ee",
+    "\u7ee7\u7eed",
+    "\u518d\u8bf4",
+)
+_CONTEXT_DIRECT_QUESTION_HINTS = (
+    "\u4ec0\u4e48",
+    "\u4e3a\u4ec0\u4e48",
+    "\u5982\u4f55",
+    "\u600e\u4e48",
+    "\u54ea\u4e2a",
+    "\u591a\u5c11",
+    "\u662f\u5426",
+)
+
 
 def _context_terms(value: str) -> set[str]:
     terms: set[str] = set()
@@ -320,21 +415,36 @@ def _context_terms(value: str) -> set[str]:
     return terms
 
 
+def _is_implicit_response_follow_up(question: str) -> bool:
+    """Recognize answer-format follow-ups that omit the original subject."""
+
+    normalized = re.sub(r"\s+", "", str(question or "").casefold()).strip()
+    if not normalized or "?" in normalized or "？" in normalized:
+        return False
+    if any(marker in normalized for marker in _CONTEXT_DIRECT_QUESTION_HINTS):
+        return False
+    return any(hint in normalized for hint in _CONTEXT_RESPONSE_INSTRUCTION_HINTS)
+
+
 def _select_chat_context(
     messages: list[Any],
     question: str,
     *,
     max_messages: int = 8,
-) -> tuple[list[dict[str, str]], dict[str, int]]:
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Select only relevant history without spending a model call."""
 
     normalized = [
         {
             "role": str(message.get("role", "user") if isinstance(message, dict) else getattr(message, "role", "user")),
             "content": str(message.get("content", "") if isinstance(message, dict) else getattr(message, "content", "")).strip(),
+            **({"attachments": _message_attachments(message)} if _message_attachments(message) else {}),
         }
         for message in messages
-        if str(message.get("content", "") if isinstance(message, dict) else getattr(message, "content", "")).strip()
+        if (
+            str(message.get("content", "") if isinstance(message, dict) else getattr(message, "content", "")).strip()
+            or _message_attachments(message)
+        )
     ]
     provided_count = len(normalized)
     if not normalized:
@@ -343,7 +453,9 @@ def _select_chat_context(
     normalized_question = re.sub(r"\s+", " ", str(question or "").casefold()).strip()
     has_follow_up_hint = any(hint in normalized_question for hint in _CONTEXT_FOLLOW_UP_HINTS)
     has_follow_up_hint = has_follow_up_hint or bool(_CONTEXT_FOLLOW_UP_WORD_HINTS.search(normalized_question))
-    if has_follow_up_hint:
+    has_follow_up_hint = has_follow_up_hint or _is_implicit_response_follow_up(normalized_question)
+    has_attachment_history = any(message.get("attachments") for message in normalized)
+    if has_follow_up_hint or (has_attachment_history and len(normalized_question) <= 32):
         selected = normalized[-max_messages:]
     else:
         question_terms = _context_terms(normalized_question)
@@ -372,6 +484,61 @@ def _select_chat_context(
         "selectedContextMessages": len(selected),
         "filteredMessages": max(0, provided_count - len(selected)),
     }
+
+
+async def _materialize_multimodal_messages(
+    messages: list[dict[str, Any]],
+    storage: Any | None,
+) -> list[dict[str, Any]]:
+    """Turn trusted historical image references into provider image blocks.
+
+    The OCR summary remains in the system context as a deterministic fallback,
+    while vision-capable providers receive the original image again on every
+    follow-up turn. Images are bounded before base64 encoding so a large upload
+    cannot unexpectedly consume the whole model context.
+    """
+
+    max_image_bytes = 12 * 1024 * 1024
+    materialized: list[dict[str, Any]] = []
+    for message in messages:
+        text = str(message.get("content", "")).strip()
+        blocks: list[dict[str, Any]] = []
+        if text:
+            blocks.append({"type": "text", "text": text})
+        for attachment in message.get("attachments") or []:
+            mime_type = str(
+                attachment.get("mime_type") or attachment.get("mimeType") or ""
+            ).strip().casefold()
+            storage_key = str(
+                attachment.get("storage_key") or attachment.get("storageKey") or ""
+            ).strip()
+            if not mime_type.startswith("image/") or not storage or not storage_key:
+                continue
+            try:
+                data = await asyncio.wait_for(storage.get(storage_key), timeout=30)
+                if len(data) > max_image_bytes:
+                    logger.warning(
+                        "historical image skipped because it exceeds multimodal limit",
+                        extra={"file_size": len(data)},
+                    )
+                    continue
+                encoded = base64.b64encode(data).decode("ascii")
+                blocks.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
+                    }
+                )
+            except Exception as exc:
+                logger.warning(
+                    "historical image could not be materialized; OCR context remains available",
+                    extra={"error": str(exc)[:240]},
+                )
+        if len(blocks) == 1 and blocks[0].get("type") == "text":
+            materialized.append({"role": message["role"], "content": text})
+        elif blocks:
+            materialized.append({"role": message["role"], "content": blocks})
+    return materialized
 
 
 _FOLLOW_UP_SEARCH_HINTS = FOLLOW_UP_SEARCH_HINTS
@@ -444,6 +611,7 @@ def _select_chat_strategy(request: ExecuteRunRequest, question: str | None = Non
 
     quality_sensitive = any(hint in normalized for hint in _REFLECTION_HINTS)
     needs_project_context = _should_search_knowledge(normalized) or _should_search_graph(normalized)
+    needs_external_search = request.config.allow_web_search and _should_search_web(normalized)
     if quality_sensitive and (needs_project_context or len(normalized) > 36):
         return "REFLECTION"
     # A routine project fact lookup only needs one retrieval and one answer
@@ -451,8 +619,8 @@ def _select_chat_strategy(request: ExecuteRunRequest, question: str | None = Non
     # otherwise the action selector repeats the same evidence in another
     # prompt before the answer is even generated.
     if needs_project_context:
-        return "DIRECT"
-    if request.config.allow_web_search:
+        return "REACT" if needs_external_search else "DIRECT"
+    if needs_external_search:
         return "REACT"
     if quality_sensitive:
         return "REFLECTION"
@@ -574,6 +742,59 @@ def _should_search_web(question: str) -> bool:
     if not normalized:
         return False
     return any(hint in normalized for hint in _EXPLICIT_SEARCH_HINTS + _RECENCY_HINTS)
+
+
+_FAST_CHAT_MAX_CHARS = 48
+_FAST_CHAT_MAX_TOKENS = 1_536
+
+
+def _is_fast_chat_request(
+    request: ExecuteRunRequest,
+    question: str,
+    strategy: str,
+) -> bool:
+    """Keep routine direct questions on a low-latency generation path.
+
+    The router already avoids retrieval and reflection for these turns, but a
+    project model can still carry a high reasoning budget into the provider.
+    This gate is deliberately conservative so project facts, attachments,
+    long follow-ups, and explicit research requests keep their full workflow.
+    """
+
+    if strategy != "DIRECT":
+        return False
+    normalized = re.sub(r"\s+", "", str(question or "").casefold())
+    if not normalized or len(normalized) > _FAST_CHAT_MAX_CHARS:
+        return False
+    if request.attachments or len(request.context_messages) > 6:
+        return False
+    if _should_search_knowledge(normalized) or _should_search_graph(normalized):
+        return False
+    if request.config.allow_web_search and _should_search_web(normalized):
+        return False
+    return True
+
+
+def _fast_chat_generation(
+    request: ExecuteRunRequest,
+    model: ModelGateway,
+) -> ModelGenerationConfig:
+    """Return a bounded generation config for a simple direct answer."""
+
+    current = getattr(model, "generation", None)
+    if not isinstance(current, ModelGenerationConfig):
+        current = (
+            request.runtime_model.generation
+            if request.runtime_model is not None
+            else request.config.generation
+        )
+    current = current or ModelGenerationConfig()
+    return current.model_copy(
+        update={
+            "reasoning_effort": "none",
+            "max_tokens": min(current.max_tokens, _FAST_CHAT_MAX_TOKENS),
+        }
+    )
 
 
 def _evidence_excerpt(content: str, query: str, max_chars: int) -> str:
@@ -957,12 +1178,29 @@ class AgentRuntime:
         parts: list[str] = []
         usage: TokenUsage | None = None
         async for chunk in stream(messages):
+            thinking = ""
             if isinstance(chunk, ModelStreamChunk):
                 delta = chunk.delta
+                thinking = chunk.thinking
                 if chunk.usage is not None:
                     usage = chunk.usage
             else:
                 delta = str(chunk or "")
+            # Relay the provider's reasoning/chain-of-thought text as live
+            # thinking.delta events before the visible answer starts. This turns
+            # the long silent "thinking" phase into visible progress instead of
+            # making the run look stuck.
+            if thinking and message_id:
+                await self.events.publish(
+                    request.run_id,
+                    "thinking.delta",
+                    {
+                        "type": "thinking.delta",
+                        "runId": str(request.run_id),
+                        "messageId": message_id,
+                        "delta": thinking,
+                    },
+                )
             if not delta:
                 continue
             parts.append(delta)
@@ -1236,26 +1474,44 @@ class AgentRuntime:
         # asks for project material. Seed that search before asking the model
         # to choose another action, so a routine REACT request does not spend
         # one call deciding to do the search we already know is required.
+        # The internal / graph / web seeds are independent, so run them
+        # concurrently instead of waiting on each one serially.
+        seed_tasks: list[str] = []
+        seed_calls: list[asyncio.Task[list[Evidence]]] = []
+
+        def _seed_search(kind: str) -> asyncio.Task[list[Evidence]]:
+            if kind == "internal":
+                return asyncio.create_task(self._search_internal(request, run, search_query))
+            if kind == "graph":
+                return asyncio.create_task(self._search_graph(request, run, search_query))
+            return asyncio.create_task(self._search_web(request, run, search_query))
+
         if _should_search_knowledge(search_query) and not _should_search_web(search_query):
-            internal = await self._search_internal(request, run, search_query)
-            evidence.extend(internal)
-            seeded_internal = True
-            searched_queries.add(("SEARCH_INTERNAL", search_query.casefold()))
-            observations.append(f"项目资料检索返回 {len(internal)} 条来源")
-
+            seed_tasks.append("internal")
+            seed_calls.append(_seed_search("internal"))
         if self.graph_store is not None and _should_search_graph(search_query):
-            graph = await self._search_graph(request, run, search_query)
-            evidence.extend(graph)
-            searched_queries.add(("SEARCH_GRAPH", search_query.casefold()))
-            observations.append(f"知识图谱检索返回 {len(graph)} 条来源")
-
-        # Explicitly current/search-oriented wording is already a clear user
-        # request, so seed the loop with that observation before asking for the
-        # next action. This still keeps the final decision model-driven.
+            seed_tasks.append("graph")
+            seed_calls.append(_seed_search("graph"))
         if request.config.allow_web_search and _should_search_web(search_query):
-            external = await self._search_web(request, run, search_query)
-            evidence.extend(external)
-            observations.append(f"网页搜索返回 {len(external)} 条来源")
+            seed_tasks.append("web")
+            seed_calls.append(_seed_search("web"))
+
+        for kind, result in zip(seed_tasks, await asyncio.gather(*seed_calls, return_exceptions=True)):
+            if isinstance(result, Exception):
+                logger.warning("chat seed search failed", extra={"run_id": run.run_id, "kind": kind, "error": str(result)})
+                continue
+            if kind == "internal":
+                evidence.extend(result)
+                seeded_internal = True
+                searched_queries.add(("SEARCH_INTERNAL", search_query.casefold()))
+                observations.append(f"项目资料检索返回 {len(result)} 条来源")
+            elif kind == "graph":
+                evidence.extend(result)
+                searched_queries.add(("SEARCH_GRAPH", search_query.casefold()))
+                observations.append(f"知识图谱检索返回 {len(result)} 条来源")
+            else:
+                evidence.extend(result)
+                observations.append(f"网页搜索返回 {len(result)} 条来源")
 
         # For a narrow internal fact lookup, the deterministic pre-search is
         # already the complete answer path. Asking a second model call to
@@ -1688,6 +1944,7 @@ class AgentRuntime:
         base_strategy = _select_chat_strategy(request, search_query)
         multi_agent_enabled, multi_agent_reason = _should_enable_multi_agent(request, search_query)
         strategy = "MULTI_AGENT" if multi_agent_enabled else base_strategy
+        fast_chat = _is_fast_chat_request(request, search_query, strategy)
         multi_agent_result: dict[str, Any] | None = None
         multi_agent_fallback = False
         await self.repository.update(
@@ -1702,7 +1959,11 @@ class AgentRuntime:
             {
                 "node": "CHAT",
                 "title": "确定回答路径",
-                "detail": multi_agent_reason,
+                "detail": (
+                    "简单问题启用快速直答，关闭深度思考"
+                    if fast_chat
+                    else multi_agent_reason
+                ),
                 "agent": "primary_agent" if multi_agent_enabled else "router",
                 "strategy": strategy,
                 "multiAgent": multi_agent_enabled,
@@ -1731,6 +1992,9 @@ class AgentRuntime:
         evidence: list[Evidence] = []
         model_results: list[ModelChatResult] = []
         model = self.model_for(run.run_id)
+        if fast_chat:
+            model = self._with_generation(model, _fast_chat_generation(request, model))
+            self._run_models[str(run.run_id)] = model
         should_search_project = _should_search_knowledge(search_query) or _should_search_graph(search_query)
         if multi_agent_enabled:
             await self.repository.update(
@@ -1833,31 +2097,29 @@ class AgentRuntime:
                 )
 
         if not multi_agent_enabled and strategy in {"DIRECT", "REFLECTION"}:
-            await self.events.publish(
-                run.run_id,
-                "node.started",
-                {
-                    "node": "SEARCH",
-                    "title": "按需检查项目资料",
-                    "agent": "retriever",
-                    "skipped": not should_search_project and not _should_search_web(search_query),
-                },
+            should_search = should_search_project or (
+                request.config.allow_web_search and _should_search_web(search_query)
             )
-            evidence = await self._collect_initial_evidence(request, run, search_query)
-            await self.events.publish(
-                run.run_id,
-                "node.completed",
-                {
-                    "node": "SEARCH",
-                    "title": "按需检查项目资料",
-                    "detail": (
-                        f"围绕“{search_query[:80]}”记录 {len(evidence)} 条相关来源"
-                        if evidence or should_search_project
-                        else "当前问题不依赖项目资料，未检索引用"
-                    ),
-                    "skipped": not evidence and not should_search_project and not _should_search_web(search_query),
-                },
-            )
+            if should_search:
+                await self.events.publish(
+                    run.run_id,
+                    "node.started",
+                    {
+                        "node": "SEARCH",
+                        "title": "按需检查项目资料",
+                        "agent": "retriever",
+                    },
+                )
+                evidence = await self._collect_initial_evidence(request, run, search_query)
+                await self.events.publish(
+                    run.run_id,
+                    "node.completed",
+                    {
+                        "node": "SEARCH",
+                        "title": "按需检查项目资料",
+                        "detail": f"围绕“{search_query[:80]}”记录 {len(evidence)} 条相关来源",
+                    },
+                )
         elif strategy == "REACT":
             evidence, model_results = await self._run_react(request, run, search_query, selected_context_messages)
         elif strategy == "PLAN_AND_SOLVE":
@@ -1885,9 +2147,14 @@ class AgentRuntime:
             {
                 "role": "system",
                 "content": (
+                    ("这是简单直答路径。请直接回答问题，保持必要的简洁，不要自行展开检索、规划、反思或长篇报告。\n" if fast_chat else "")
+                    +
                     "最终回答必须输出为标准 Markdown：使用 #/## 标题、空格规范的列表、段落和必要的表格。"
                     "引用只在事实句末尾使用精确的 [来源ID] 标签；不要把来源标题、URL、来源说明或参考文献列表写进正文。"
                     "不要输出反斜杠转义的 Markdown 标记。"
+                    "回答完整度要求：除非用户明确要求只给结果、一句话或简短回答，不能只输出结论、资料缺口或三五句摘要。"
+                    "对于解释、比较、方案和调研问题，至少完整覆盖直接结论、分点依据或推理、限制与不确定性、以及可执行建议；每个要点用完整段落展开。"
+                    "资料不足时不得编造事实，但也不要停在‘资料不足’；请继续给出已知背景、分析框架、待核验数据、判断标准和下一步行动。"
                 ),
             },
             *selected_context_messages,
@@ -1916,7 +2183,7 @@ class AgentRuntime:
                 _evidence_message(
                     evidence,
                     search_query,
-                    content_limit=600 if strategy == "DIRECT" else 2_000,
+                    content_limit=1_200 if strategy == "DIRECT" else 2_000,
                 )
             )
         else:
@@ -1937,12 +2204,26 @@ class AgentRuntime:
                     ),
                 }
             )
-        context_messages.append({"role": "user", "content": request.goal})
+        context_messages.append(
+            {
+                "role": "user",
+                "content": request.goal,
+                **(
+                    {"attachments": [item.model_dump() for item in request.attachments]}
+                    if request.attachments
+                    else {}
+                ),
+            }
+        )
         compacted_messages, compression = _compact_chat_context(
             context_messages,
             max_chars=_chat_context_limit(request),
             max_tokens=_chat_context_budget(request),
             model_context_window=_chat_context_window(request),
+        )
+        model_messages = await _materialize_multimodal_messages(
+            compacted_messages,
+            self.file_storage,
         )
         compression.update(context_selection)
         compression.update(attachment_metrics)
@@ -1956,13 +2237,13 @@ class AgentRuntime:
             )
             if request.config.output_language.casefold().startswith("en"):
                 content = f"No relevant, readable sources meeting the requested date range {period} were obtained. I cannot provide a verified summary from search snippets or model memory. Please supply source links, narrow the topic, or specify another date range."
-            draft = await self._stream_chat(request, model, compacted_messages)
+            draft = await self._stream_chat(request, model, model_messages)
             await self.events.publish(run.run_id, "message.delta", {
                 "type": "message.delta", "runId": str(run.run_id),
                 "messageId": str(request.agent_message_id or ""), "delta": "",
             })
         else:
-            draft = await self._stream_chat(request, model, compacted_messages)
+            draft = await self._stream_chat(request, model, model_messages)
         result = draft
         model_results.append(draft)
         should_reflect, reflection_reason = _reflection_decision(
@@ -2025,7 +2306,16 @@ class AgentRuntime:
                         *compacted_messages,
                         {"role": "user", "content": "请输出修正后的最终回答，不要解释修改过程。"},
                     ]
-                    result = await self._stream_chat(request, model, revision_messages, replace=True)
+                    revision_model_messages = await _materialize_multimodal_messages(
+                        revision_messages,
+                        self.file_storage,
+                    )
+                    result = await self._stream_chat(
+                        request,
+                        model,
+                        revision_model_messages,
+                        replace=True,
+                    )
                     model_results.append(result)
                     reflection_payload["revised"] = True
                     reflection_payload["detail"] = "发现问题，已完成一次修正"

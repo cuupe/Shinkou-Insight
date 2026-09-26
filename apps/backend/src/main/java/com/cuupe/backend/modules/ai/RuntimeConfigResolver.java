@@ -142,7 +142,7 @@ public class RuntimeConfigResolver {
         putIntegerIfPresent(generation, "seed", config.get("seed"));
         Object stop = config.get("stop");
         if (stop instanceof List<?> values) generation.put("stop", values.stream().map(String::valueOf).filter(value -> !value.isBlank()).limit(4).toList());
-        String reasoning = String.valueOf(config.getOrDefault("reasoningEffort", "none"));
+        String reasoning = String.valueOf(config.getOrDefault("reasoningEffort", "high"));
         if (List.of("none", "low", "medium", "high").contains(reasoning)) generation.put("reasoningEffort", reasoning);
         Object extraBody = config.get("extraBody");
         if (extraBody instanceof Map<?, ?> values) generation.put("extraBody", values);

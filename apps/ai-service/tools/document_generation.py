@@ -43,6 +43,28 @@ def _markdown_lines(markdown: str) -> list[str]:
 
 def _normalise_markdown(markdown: str, sources: list[dict[str, Any]]) -> str:
     content = str(markdown or "").strip()
+    wrapped = re.fullmatch(
+        r"\s*```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*",
+        content,
+        flags=re.IGNORECASE,
+    )
+    if wrapped:
+        content = wrapped.group(1).strip()
+    fenced_blocks: list[str] = []
+
+    def protect(match: re.Match[str]) -> str:
+        fenced_blocks.append(match.group(0))
+        return f"\x00SHINKOU_CODE_{len(fenced_blocks) - 1}\x00"
+
+    protected = re.sub(r"(```[\s\S]*?```|~~~[\s\S]*?~~~)", protect, content)
+    protected = re.sub(r"^(#{1,6})(?=[^#\s])", r"\1 ", protected, flags=re.MULTILINE)
+    protected = re.sub(r"^(\s*)([-+])(?=\S)", r"\1\2 ", protected, flags=re.MULTILINE)
+    protected = re.sub(r"^(\s*)(\d+[.)])(?=\S)", r"\1\2 ", protected, flags=re.MULTILINE)
+
+    def restore(match: re.Match[str]) -> str:
+        return fenced_blocks[int(match.group(1))]
+
+    content = re.sub(r"\x00SHINKOU_CODE_(\d+)\x00", restore, protected)
     if not sources:
         return content + ("\n" if content else "")
     source_lines = ["", "## 来源", ""]
@@ -64,14 +86,21 @@ def _set_run_font(
     size: int = 11,
     bold: bool = False,
     italic: bool = False,
+    underline: bool = False,
+    strike: bool = False,
+    color: str | None = None,
 ) -> None:
     from docx.oxml.ns import qn
-    from docx.shared import Pt
+    from docx.shared import Pt, RGBColor
 
     run.font.name = name
     run.font.size = Pt(size)
     run.bold = bold
     run.italic = italic
+    run.underline = underline
+    run.font.strike = strike
+    if color:
+        run.font.color.rgb = RGBColor.from_string(color)
     run._element.rPr.rFonts.set(qn("w:eastAsia"), name)
 
 
@@ -86,6 +115,11 @@ def _add_hyperlink(paragraph: Any, label: str, url: str) -> None:
     hyperlink.set(qn("r:id"), relationship)
     run = OxmlElement("w:r")
     properties = OxmlElement("w:rPr")
+    r_fonts = OxmlElement("w:rFonts")
+    r_fonts.set(qn("w:ascii"), "Microsoft YaHei")
+    r_fonts.set(qn("w:hAnsi"), "Microsoft YaHei")
+    r_fonts.set(qn("w:eastAsia"), "Microsoft YaHei")
+    properties.append(r_fonts)
     color = OxmlElement("w:color")
     color.set(qn("w:val"), "147d78")
     properties.append(color)
@@ -102,30 +136,209 @@ def _add_hyperlink(paragraph: Any, label: str, url: str) -> None:
 
 def _add_markdown_runs(paragraph: Any, text: str) -> None:
     pattern = re.compile(
-        r"(\[([^\]]+)\]\((https?://[^)]+)\)|\*\*([^*]+)\*\*|__([^_]+)__|`([^`]+)`)"
+        r"(?P<image>!\[(?P<image_label>[^\]]*)\]\((?P<image_url>[^)\s]+)(?:\s+\"[^\"]*\")?\))|"
+        r"(?P<link>\[(?P<link_label>[^\]]+)\]\((?P<link_url>https?://[^)]+)\))|"
+        r"(?P<strong>\*\*(?P<strong_text>.+?)\*\*|__(?P<strong_alt>.+?)__)|"
+        r"(?P<strike>~~(?P<strike_text>.+?)~~)|"
+        r"(?P<code>`(?P<code_text>[^`]+)`)|"
+        r"(?P<em>\*(?P<em_text>[^*]+?)\*|(?<!\w)_(?P<em_alt>[^_]+?)_(?!\w))"
     )
     cursor = 0
     for match in pattern.finditer(text):
         if match.start() > cursor:
             run = paragraph.add_run(text[cursor : match.start()])
             _set_run_font(run)
-        if match.group(2) and match.group(3):
-            _add_hyperlink(paragraph, match.group(2), match.group(3))
+        if match.group("link_label") and match.group("link_url"):
+            _add_hyperlink(paragraph, match.group("link_label"), match.group("link_url"))
+        elif match.group("image_label"):
+            run = paragraph.add_run(match.group("image_label"))
+            _set_run_font(run, italic=True, color="666666")
+        elif match.group("strong_text") or match.group("strong_alt"):
+            run = paragraph.add_run(match.group("strong_text") or match.group("strong_alt"))
+            _set_run_font(run, bold=True)
+        elif match.group("strike_text"):
+            run = paragraph.add_run(match.group("strike_text"))
+            _set_run_font(run, strike=True)
+        elif match.group("code_text"):
+            run = paragraph.add_run(match.group("code_text"))
+            _set_run_font(run, name="Consolas", size=9, color="7A3E00")
+        elif match.group("em_text") or match.group("em_alt"):
+            run = paragraph.add_run(match.group("em_text") or match.group("em_alt"))
+            _set_run_font(run, italic=True)
         else:
-            run = paragraph.add_run(
-                match.group(4) or match.group(5) or match.group(6) or ""
-            )
-            _set_run_font(run, bold=bool(match.group(4) or match.group(5)))
+            run = paragraph.add_run(match.group(0))
+            _set_run_font(run)
         cursor = match.end()
     if cursor < len(text):
         run = paragraph.add_run(text[cursor:])
         _set_run_font(run)
 
 
+def _split_table_row(line: str) -> list[str]:
+    value = line.strip()
+    if value.startswith("|"):
+        value = value[1:]
+    if value.endswith("|") and not value.endswith("\\|"):
+        value = value[:-1]
+    cells: list[str] = []
+    current: list[str] = []
+    escaped = False
+    for character in value:
+        if character == "|" and not escaped:
+            cells.append("".join(current).replace("\\|", "|").strip())
+            current = []
+            continue
+        current.append(character)
+        escaped = character == "\\" and not escaped
+        if character != "\\":
+            escaped = False
+    cells.append("".join(current).replace("\\|", "|").strip())
+    return cells
+
+
+def _is_table_separator(line: str) -> bool:
+    cells = _split_table_row(line)
+    return len(cells) >= 1 and all(
+        bool(re.fullmatch(r":?-{3,}:?", cell.replace(" ", ""))) for cell in cells
+    )
+
+
+def _is_block_start(lines: list[str], index: int) -> bool:
+    value = lines[index]
+    if re.match(r"^\s*(?:`{3,}|~{3,})", value):
+        return True
+    if re.match(r"^\s*#{1,6}\s+\S", value):
+        return True
+    if re.match(r"^\s*>\s?", value):
+        return True
+    if re.match(r"^\s*(?:[-+*]|\d+[.)])\s+\S", value):
+        return True
+    if re.match(r"^\s*(?:[-*_]\s*){3,}$", value):
+        return True
+    return index + 1 < len(lines) and "|" in value and _is_table_separator(lines[index + 1])
+
+
+def _parse_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
+    """Parse Markdown blocks before writing native DOCX nodes."""
+
+    lines = _markdown_lines(markdown)
+    blocks: list[dict[str, Any]] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        if not stripped:
+            index += 1
+            continue
+
+        fence = re.match(r"^\s*(`{3,}|~{3,})\s*([\w+-]*)\s*$", line)
+        if fence:
+            marker = fence.group(1)[0]
+            code_lines: list[str] = []
+            index += 1
+            while index < len(lines) and not re.match(
+                rf"^\s*{re.escape(marker)}{{{len(fence.group(1))},}}\s*$", lines[index]
+            ):
+                code_lines.append(lines[index])
+                index += 1
+            if index < len(lines):
+                index += 1
+            blocks.append({"kind": "code", "language": fence.group(2), "text": "\n".join(code_lines)})
+            continue
+
+        heading = re.match(r"^\s*(#{1,6})\s+(.+?)\s*#*\s*$", line)
+        if heading:
+            blocks.append({"kind": "heading", "level": len(heading.group(1)), "text": heading.group(2).strip()})
+            index += 1
+            continue
+
+        if index + 1 < len(lines) and "|" in line and _is_table_separator(lines[index + 1]):
+            headers = _split_table_row(line)
+            alignments = _split_table_row(lines[index + 1])
+            rows: list[list[str]] = []
+            index += 2
+            while index < len(lines) and lines[index].strip() and "|" in lines[index]:
+                rows.append(_split_table_row(lines[index]))
+                index += 1
+            blocks.append({"kind": "table", "headers": headers, "alignments": alignments, "rows": rows})
+            continue
+
+        if re.match(r"^\s*(?:[-*_]\s*){3,}$", line):
+            blocks.append({"kind": "rule"})
+            index += 1
+            continue
+
+        if re.match(r"^\s*>\s?", line):
+            quote_lines: list[str] = []
+            while index < len(lines):
+                match = re.match(r"^\s*>\s?(.*)$", lines[index])
+                if not match:
+                    break
+                quote_lines.append(match.group(1))
+                index += 1
+            blocks.append({"kind": "quote", "text": "\n".join(quote_lines)})
+            continue
+
+        list_match = re.match(r"^(\s*)([-+*]|\d+[.)])\s+(.+)$", line)
+        if list_match:
+            base_indent = len(list_match.group(1).replace("\t", "    "))
+            items: list[dict[str, Any]] = []
+            while index < len(lines):
+                current = lines[index]
+                match = re.match(r"^(\s*)([-+*]|\d+[.)])\s+(.+)$", current)
+                if match:
+                    indent = len(match.group(1).replace("\t", "    "))
+                    if indent < base_indent:
+                        break
+                    items.append(
+                        {
+                            "ordered": match.group(2)[0].isdigit(),
+                            "level": max(0, (indent - base_indent) // 2),
+                            "text": match.group(3).strip(),
+                        }
+                    )
+                    index += 1
+                    continue
+                if items and current.strip() and len(current) - len(current.lstrip()) > base_indent:
+                    items[-1]["text"] += " " + current.strip()
+                    index += 1
+                    continue
+                break
+            blocks.append({"kind": "list", "items": items})
+            continue
+
+        paragraph_lines = [stripped]
+        index += 1
+        while index < len(lines) and lines[index].strip():
+            if _is_block_start(lines, index):
+                break
+            paragraph_lines.append(lines[index].strip())
+            index += 1
+        blocks.append({"kind": "paragraph", "text": " ".join(paragraph_lines)})
+    return blocks
+
+
+def _add_soft_break_text(paragraph: Any, text: str) -> None:
+    for index, line in enumerate(str(text).split("\n")):
+        if index:
+            paragraph.add_run().add_break()
+        _add_markdown_runs(paragraph, line)
+
+
+def _set_paragraph_shading(paragraph: Any, fill: str) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    properties = paragraph._p.get_or_add_pPr()
+    shading = OxmlElement("w:shd")
+    shading.set(qn("w:fill"), fill)
+    properties.append(shading)
+
+
 def _write_docx(path: Path, markdown: str) -> None:
     from docx import Document
-    from docx.enum.section import WD_SECTION
     from docx.enum.style import WD_STYLE_TYPE
+    from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     from docx.shared import Inches, Pt, RGBColor
 
@@ -140,6 +353,8 @@ def _write_docx(path: Path, markdown: str) -> None:
     normal.font.name = "Microsoft YaHei"
     normal.font.size = Pt(10.5)
     normal._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")
+    normal.paragraph_format.space_after = Pt(6)
+    normal.paragraph_format.line_spacing = 1.25
     for style_name, size, color in (
         ("Title", 22, "174b4a"),
         ("Heading 1", 16, "147d78"),
@@ -152,47 +367,95 @@ def _write_docx(path: Path, markdown: str) -> None:
         style.font.bold = True
         style.font.color.rgb = RGBColor.from_string(color)
         style._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")
+        style.paragraph_format.space_before = Pt(10 if style_name != "Title" else 0)
+        style.paragraph_format.space_after = Pt(6)
+        style.paragraph_format.keep_with_next = True
     if "Quote" not in styles:
         styles.add_style("Quote", WD_STYLE_TYPE.PARAGRAPH)
-    in_code = False
-    for raw_line in _markdown_lines(markdown):
-        line = raw_line.strip()
-        if line.startswith("```"):
-            in_code = not in_code
-            continue
-        if in_code:
+    quote = styles["Quote"]
+    quote.font.name = "Microsoft YaHei"
+    quote.font.size = Pt(10.5)
+    quote.font.italic = True
+    quote.font.color.rgb = RGBColor.from_string("52656A")
+    quote._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")
+    quote.paragraph_format.left_indent = Inches(0.3)
+    quote.paragraph_format.space_after = Pt(6)
+    if "Code Block" not in styles:
+        styles.add_style("Code Block", WD_STYLE_TYPE.PARAGRAPH)
+    code_style = styles["Code Block"]
+    code_style.font.name = "Consolas"
+    code_style.font.size = Pt(9)
+    code_style.font.color.rgb = RGBColor.from_string("4A3424")
+    code_style._element.rPr.rFonts.set(qn("w:eastAsia"), "Consolas")
+    code_style.paragraph_format.left_indent = Inches(0.25)
+    code_style.paragraph_format.space_after = Pt(6)
+
+    first_heading = True
+    for block in _parse_markdown_blocks(markdown):
+        kind = block["kind"]
+        if kind == "heading":
+            level = min(6, int(block["level"]))
+            style_name = "Title" if level == 1 and first_heading else f"Heading {min(level, 3)}"
+            paragraph = document.add_paragraph(style=style_name)
+            _add_markdown_runs(paragraph, block["text"])
+            first_heading = False
+        elif kind == "paragraph":
+            paragraph = document.add_paragraph()
+            _add_soft_break_text(paragraph, block["text"])
+        elif kind == "quote":
             paragraph = document.add_paragraph(style="Quote")
-            run = paragraph.add_run(raw_line)
-            _set_run_font(run, name="Consolas", size=9)
-            continue
-        if not line:
-            continue
-        heading = re.match(r"^(#{1,3})\s+(.+)$", line)
-        if heading:
-            level = len(heading.group(1))
-            paragraph = document.add_paragraph(
-                style=(
-                    "Title"
-                    if level == 1 and not document.paragraphs
-                    else f"Heading {level}"
-                )
-            )
-            _add_markdown_runs(paragraph, heading.group(2))
-            continue
-        if line.startswith(">"):
-            paragraph = document.add_paragraph(style="Quote")
-            _add_markdown_runs(paragraph, line[1:].strip())
-            continue
-        bullet = re.match(r"^(?:[-*+])\s+(.+)$", line)
-        ordered = re.match(r"^\d+[.)]\s+(.+)$", line)
-        if bullet or ordered:
-            paragraph = document.add_paragraph(
-                style="List Bullet" if bullet else "List Number"
-            )
-            _add_markdown_runs(paragraph, (bullet or ordered).group(1))
-            continue
-        paragraph = document.add_paragraph()
-        _add_markdown_runs(paragraph, line)
+            _add_soft_break_text(paragraph, block["text"])
+            _set_paragraph_shading(paragraph, "EAF3F2")
+        elif kind == "code":
+            paragraph = document.add_paragraph(style="Code Block")
+            code_lines = str(block["text"]).split("\n") or [""]
+            for index, code_line in enumerate(code_lines):
+                if index:
+                    paragraph.add_run().add_break()
+                run = paragraph.add_run(code_line)
+                _set_run_font(run, name="Consolas", size=9, color="4A3424")
+            _set_paragraph_shading(paragraph, "F5EEE8")
+        elif kind == "list":
+            for item in block["items"]:
+                level = min(3, int(item["level"]))
+                style_name = "List Number" if item["ordered"] else "List Bullet"
+                if level:
+                    candidate = f"{style_name} {level + 1}"
+                    if candidate in styles:
+                        style_name = candidate
+                paragraph = document.add_paragraph(style=style_name)
+                _add_markdown_runs(paragraph, item["text"])
+        elif kind == "table":
+            headers = list(block["headers"])
+            width = max(1, len(headers), *(len(row) for row in block["rows"]))
+            table = document.add_table(rows=1, cols=width)
+            try:
+                table.style = "Light Shading Accent 1"
+            except KeyError:
+                table.style = "Table Grid"
+            for column in range(width):
+                cell = table.rows[0].cells[column]
+                cell.text = ""
+                paragraph = cell.paragraphs[0]
+                _add_markdown_runs(paragraph, headers[column] if column < len(headers) else "")
+                for run in paragraph.runs:
+                    run.bold = True
+            for row in block["rows"]:
+                cells = table.add_row().cells
+                for column in range(width):
+                    cells[column].text = ""
+                    _add_markdown_runs(cells[column].paragraphs[0], row[column] if column < len(row) else "")
+        elif kind == "rule":
+            paragraph = document.add_paragraph()
+            properties = paragraph._p.get_or_add_pPr()
+            border = OxmlElement("w:pBdr")
+            bottom = OxmlElement("w:bottom")
+            bottom.set(qn("w:val"), "single")
+            bottom.set(qn("w:sz"), "6")
+            bottom.set(qn("w:space"), "1")
+            bottom.set(qn("w:color"), "B8D6D2")
+            border.append(bottom)
+            properties.append(border)
     document.save(path)
 
 
@@ -322,7 +585,11 @@ def _convert_to_pdf(docx_path: Path, output_dir: Path) -> Path:
 
 
 class DocumentGenerationTool:
-    """Generate a consistent document bundle from the final Markdown answer."""
+    """Render the final Markdown into native, format-specific document structures.
+
+    Markdown is only the source representation. It must never be copied as the
+    visible body of a DOCX/PDF/PPTX artifact.
+    """
 
     def generate(self, **input_data: Any) -> dict[str, Any]:
         title = str(input_data.get("title") or "Shinkou 研究报告").strip()[:200]

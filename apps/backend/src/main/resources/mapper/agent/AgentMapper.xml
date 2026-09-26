@@ -152,6 +152,15 @@
         INSERT INTO agent_attachments(workspace_id, project_id, uploaded_by, file_name, kind, mime_type, file_size, storage_key, content)
         VALUES(#{workspaceId}, #{projectId}, #{uploadedBy}, #{fileName}, #{kind}, #{mimeType}, #{fileSize}, #{storageKey}, #{content})
     </insert>
+    <select id="findAttachments" resultType="com.cuupe.backend.modules.agent.entity.AgentAttachment">
+        SELECT a.id, a.workspace_id, a.project_id, a.uploaded_by, a.file_name, a.kind, a.mime_type,
+               a.file_size, a.storage_key, a.created_at
+        FROM agent_attachments a
+        JOIN workspace_members wm ON wm.workspace_id = a.workspace_id
+            AND wm.user_id = #{userId} AND wm.status = 'ACTIVE'
+        WHERE a.workspace_id = #{workspaceId} AND a.project_id = #{projectId}
+        ORDER BY a.created_at DESC, a.id DESC
+    </select>
     <select id="hasAttachmentAccess" resultType="boolean">
         SELECT EXISTS (
             SELECT 1 FROM agent_attachments a

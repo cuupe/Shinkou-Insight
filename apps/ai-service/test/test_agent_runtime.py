@@ -10,12 +10,16 @@ from agents.runtime import (
     _chat_retrieval_limit,
     _compact_chat_context,
     _evidence_excerpt,
+    _fast_chat_generation,
+    _is_fast_chat_request,
+    _materialize_multimodal_messages,
     _normalize_model_markdown,
     _select_chat_context,
     _select_chat_strategy,
     _should_enable_multi_agent,
     _should_search_graph,
     _should_search_knowledge,
+    _should_search_web,
 )
 from core.events import EventBus
 from core.repository import InMemoryRunRepository
@@ -148,6 +152,101 @@ def test_follow_up_chat_context_keeps_recent_messages():
         {"role": "assistant", "content": "第二个话题已回答。"},
     ]
     assert stats["filteredMessages"] == 0
+
+
+def test_implicit_answer_format_follow_up_keeps_recent_messages():
+    selected, stats = _select_chat_context(
+        [
+            {"role": "user", "content": "3.548×6.224−5.47+sin(0.3)×6−2"},
+            {"role": "assistant", "content": "上一次已经计算出结果，请按步骤说明。"},
+        ],
+        "\u6309\u7167\u6807\u51c6\u7684\u6570\u5b66\u89e3\u7b54\u65b9\u5f0f\u89e3\u7b54",
+    )
+
+    assert selected == [
+        {"role": "user", "content": "3.548×6.224−5.47+sin(0.3)×6−2"},
+        {"role": "assistant", "content": "上一次已经计算出结果，请按步骤说明。"},
+    ]
+    assert stats["filteredMessages"] == 0
+
+
+def test_image_follow_up_keeps_attachment_context_and_short_instruction():
+    selected, stats = _select_chat_context(
+        [
+            {
+                "role": "user",
+                "content": "请解答图片中的题目",
+                "attachments": [
+                    {
+                        "attachmentId": 57,
+                        "fileName": "problem.png",
+                        "mimeType": "image/png",
+                        "storageKey": "workspaces/1/problem.png",
+                    }
+                ],
+            },
+            {"role": "assistant", "content": "我先识别题目内容。"},
+        ],
+        "给出详细过程",
+    )
+
+    assert selected[0]["attachments"][0]["storageKey"] == "workspaces/1/problem.png"
+    assert stats["selectedContextMessages"] == 2
+
+
+class MemoryAttachmentStorage:
+    async def get(self, key):
+        assert key == "workspaces/1/problem.png"
+        return b"image-bytes"
+
+
+@pytest.mark.asyncio
+async def test_historical_image_is_materialized_as_a_provider_image_block():
+    messages = await _materialize_multimodal_messages(
+        [
+            {
+                "role": "user",
+                "content": "请继续分析这张图",
+                "attachments": [
+                    {
+                        "mimeType": "image/png",
+                        "storageKey": "workspaces/1/problem.png",
+                    }
+                ],
+            }
+        ],
+        MemoryAttachmentStorage(),
+    )
+
+    assert messages[0]["content"][0] == {"type": "text", "text": "请继续分析这张图"}
+    assert messages[0]["content"][1]["type"] == "image_url"
+    assert messages[0]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+@pytest.mark.asyncio
+async def test_chat_answer_format_follow_up_includes_previous_problem_in_prompt():
+    model = ReflectingModelGateway()
+    runtime, _repository = make_runtime(model)
+    request = ExecuteRunRequest(
+        run_id="chat-context-format-follow-up-1",
+        workspace_id=1,
+        project_id=1,
+        goal="\u6309\u7167\u6807\u51c6\u7684\u6570\u5b66\u89e3\u7b54\u65b9\u5f0f\u89e3\u7b54",
+        agent_message_id="message-context-format-follow-up-1",
+        context_messages=[
+            {"role": "user", "content": "3.548×6.224−5.47+sin(0.3)×6−2"},
+            {"role": "assistant", "content": "上一次已经计算出结果，请按步骤说明。"},
+        ],
+        config=ResearchConfig(reflection_enabled=False),
+    )
+
+    await runtime.execute(request)
+
+    assert model.chat_calls == 1
+    assert any(
+        "3.548×6.224−5.47+sin(0.3)×6−2" in message["content"]
+        for message in model.chat_messages[0]
+    )
 
 
 class ReflectingModelGateway:
@@ -415,12 +514,40 @@ def test_chat_strategy_router_matches_request_shape():
     direct = ExecuteRunRequest(run_id="strategy-direct", workspace_id=1, project_id=1, goal="1+1=?")
     project = ExecuteRunRequest(run_id="strategy-project", workspace_id=1, project_id=1, goal="这个项目使用什么数据库？")
     broad = ExecuteRunRequest(run_id="strategy-plan", workspace_id=1, project_id=1, goal="请全面比较项目的部署方案并给出迁移建议")
+    research = ExecuteRunRequest(run_id="strategy-research", workspace_id=1, project_id=1, goal="整理一下近三年人工智能的发展和先进技术")
+    simple_with_web_enabled = ExecuteRunRequest(
+        run_id="strategy-simple-web-enabled",
+        workspace_id=1,
+        project_id=1,
+        goal="这题怎么做",
+        config=ResearchConfig(allow_web_search=True),
+    )
     forced = ExecuteRunRequest(run_id="strategy-forced", workspace_id=1, project_id=1, goal="简单回答", config=ResearchConfig(strategy="REFLECTION"))
 
     assert _select_chat_strategy(direct) == "DIRECT"
     assert _select_chat_strategy(project) == "DIRECT"
+    assert _select_chat_strategy(simple_with_web_enabled) == "DIRECT"
     assert _select_chat_strategy(broad) == "PLAN_AND_SOLVE"
+    assert _select_chat_strategy(research) == "PLAN_AND_SOLVE"
+    assert _should_search_web(research.goal) is True
     assert _select_chat_strategy(forced) == "REFLECTION"
+
+
+def test_fast_chat_disables_expensive_reasoning_for_simple_direct_questions():
+    request = ExecuteRunRequest(
+        run_id="fast-chat",
+        workspace_id=1,
+        project_id=1,
+        goal="What is recursion?",
+    )
+
+    assert _is_fast_chat_request(request, request.goal, "DIRECT") is True
+    generation = _fast_chat_generation(request, MockModelGateway())
+    assert generation.reasoning_effort == "none"
+    assert generation.max_tokens == 1_536
+
+    project_lookup = request.model_copy(update={"goal": "What database does this project use?"})
+    assert _is_fast_chat_request(project_lookup, project_lookup.goal, "DIRECT") is False
 
 
 def test_multi_agent_gate_only_opens_for_complex_or_explicit_requests():
@@ -493,7 +620,7 @@ async def test_chat_skips_project_search_for_direct_prompt():
         project_id=1,
         goal="1+1=?",
         agent_message_id="message-direct-1",
-        config=ResearchConfig(reflection_enabled=False),
+        config=ResearchConfig(allow_web_search=True, reflection_enabled=False),
     )
 
     await runtime.execute(request)
@@ -503,11 +630,11 @@ async def test_chat_skips_project_search_for_direct_prompt():
         event.event_type == "tool.started" and event.payload.get("tool") == "search_knowledge"
         for event in events
     )
-    search_completed = next(
-        event for event in events
-        if event.event_type == "node.completed" and event.payload.get("node") == "SEARCH"
+    assert not any(
+        event.event_type in {"node.started", "node.completed"}
+        and event.payload.get("node") == "SEARCH"
+        for event in events
     )
-    assert search_completed.payload["skipped"] is True
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ import {
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import SearchField from "@/components/common/SearchField.vue";
+import StorageUsageCard from "@/components/common/StorageUsageCard.vue";
 import {
   Dialog,
   DialogContent,
@@ -59,6 +60,7 @@ const chunkingConfig = reactive({
 });
 const chunkingSaving = ref(false);
 const chunkingError = ref("");
+const MAX_SINGLE_FILE_BYTES = 256 * 1024 * 1024;
 
 function syncChunkingConfig(project: typeof selectedProject.value) {
   const raw = project?.chunkingConfig;
@@ -197,8 +199,16 @@ async function onFilesSelected(event: Event) {
   const files = Array.from(input.files || []);
   if (!files.length) return;
   try {
+    const acceptedFiles = files.filter(
+      (file) => file.size < MAX_SINGLE_FILE_BYTES,
+    );
+    const rejectedCount = files.length - acceptedFiles.length;
+    if (rejectedCount) {
+      notify(`${rejectedCount} 个文件未上传：单个文件必须小于 256 MB`);
+    }
+    if (!acceptedFiles.length) return;
     const results = await Promise.allSettled(
-      files.map((file) =>
+      acceptedFiles.map((file) =>
         assetsApi.upload(workspaceId.value, projectId.value, file),
       ),
     );
@@ -208,6 +218,7 @@ async function onFilesSelected(event: Event) {
     const failed = results.length - uploaded.length;
     if (uploaded.length) {
       assets.unshift(...uploaded.map(mapAsset));
+      window.dispatchEvent(new Event("storage-quota-changed"));
       startIndexPolling();
     }
     notify(
@@ -356,7 +367,10 @@ async function confirmDelete() {
   clearSelection();
   deleteTargetId.value = null;
   deleteDialogOpen.value = false;
-  if (removeCount) notify(`已移除 ${removeCount} 个知识库资料`);
+  if (removeCount) {
+    window.dispatchEvent(new Event("storage-quota-changed"));
+    notify(`已移除 ${removeCount} 个知识库资料`);
+  }
 }
 
 onMounted(() => {
@@ -386,6 +400,8 @@ onUnmounted(stopIndexPolling);
     accept=".pdf,.md,.markdown,.txt,.csv,.json,.html,.htm,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.rtf,image/*,audio/*,video/*"
     @change="onFilesSelected"
   />
+
+  <StorageUsageCard />
 
   <section class="knowledge-health-grid" aria-label="知识库状态概览">
     <article class="health-card health-card-primary">
@@ -1299,10 +1315,30 @@ onUnmounted(stopIndexPolling);
   width: 1.625rem;
   height: 1.625rem;
 }
+
+/* The knowledge table uses a quiet icon row; keep the destructive action
+   neutral until it is hovered instead of inheriting the global dark-theme
+   filled danger surface. */
+.row-actions .icon-button.danger-icon,
+:global(.dark) .asset-row .row-actions .icon-button.danger-icon {
+  border-color: transparent;
+  background: transparent;
+  color: var(--workspace-muted);
+}
+
 .danger-icon:hover {
   color: #b65353;
   border-color: #e3b5b5;
   background: #fff5f5;
+}
+
+.row-actions .icon-button.danger-icon:hover,
+.row-actions .icon-button.danger-icon:focus-visible,
+:global(.dark) .asset-row .row-actions .icon-button.danger-icon:hover,
+:global(.dark) .asset-row .row-actions .icon-button.danger-icon:focus-visible {
+  border-color: color-mix(in oklab, var(--red) 40%, var(--workspace-border));
+  background: color-mix(in oklab, var(--red) 12%, var(--surface));
+  color: var(--red);
 }
 .row-status-icon {
   margin-left: 0.125rem;

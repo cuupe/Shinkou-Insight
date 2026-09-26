@@ -16,6 +16,7 @@ import {
   Users,
 } from "@lucide/vue";
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProjectWorkflow from "@/components/project/ProjectWorkflow.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { planningApi } from "@/api/planning";
 import { formatDateTime } from "@/lib/utils";
@@ -55,6 +56,7 @@ const savedAt = ref("");
 const dirty = ref(false);
 const hydrating = ref(false);
 const saving = ref(false);
+const analysisStarting = ref(false);
 const planLoadFailed = ref(false);
 
 const projectName = computed(() => selectedProject.value?.name || "当前项目");
@@ -227,7 +229,7 @@ async function loadDraft() {
 }
 
 async function saveDraft() {
-  if (saving.value) return;
+  if (saving.value) return false;
   saving.value = true;
   try {
     const remote = await planningApi.save(workspaceId.value, projectId.value, {
@@ -238,20 +240,44 @@ async function saveDraft() {
     planLoadFailed.value = false;
     dirty.value = false;
     notify("规划已保存到项目空间");
+    return true;
   } catch (error) {
     notify(
       error instanceof Error
         ? `规划未保存：${error.message}`
         : "规划未保存，数据库暂不可用",
     );
+    return false;
   } finally {
     saving.value = false;
   }
 }
 
+async function startAnalysis() {
+  if (analysisStarting.value) return;
+  if (!form.objective.trim()) {
+    notify("请先填写项目目标，再开始智能分析");
+    return;
+  }
+  analysisStarting.value = true;
+  try {
+    if (dirty.value && !(await saveDraft())) return;
+    sessionStorage.setItem(
+      `shinkou-project-analysis:${workspaceId.value}:${projectId.value}`,
+      JSON.stringify({ ...form }),
+    );
+    notify("项目定义已保存，正在启动智能分析");
+    await router.push({
+      ...routeTo("project-agent-chat"),
+      query: { workflow: "project-analysis" },
+    });
+  } finally {
+    analysisStarting.value = false;
+  }
+}
+
 function openResearch() {
-  notify("已打开 Agent 对话，请先明确要搜集的市场与竞品范围");
-  router.push(routeTo("project-agent-chat"));
+  void startAnalysis();
 }
 
 function openReview() {
@@ -279,7 +305,7 @@ onMounted(() => void loadDraft());
         <ShieldCheck :size="16" />打开审查中心
       </button>
       <button
-        class="button button-primary"
+        class="button button-secondary"
         type="button"
         :disabled="!dirty || saving || planLoadFailed"
         @click="saveDraft"
@@ -291,11 +317,21 @@ onMounted(() => void loadDraft());
               ? "保存规划草稿"
               : savedAt
                 ? "已保存"
-                : "尚未保存"
+          : "尚未保存"
         }}
+      </button>
+      <button
+        class="button button-primary"
+        type="button"
+        :disabled="analysisStarting || saving || planLoadFailed"
+        @click="startAnalysis"
+      >
+        <Search :size="16" />{{ analysisStarting ? "启动中..." : "保存并开始分析" }}
       </button>
     </template>
   </PageHeader>
+
+  <ProjectWorkflow />
 
   <section class="planning-hero panel">
     <div class="planning-hero-copy">
@@ -451,10 +487,7 @@ onMounted(() => void loadDraft());
         </div>
       </div>
       <div class="planning-form-footer">
-        <span
-          ><LockKeyhole
-            :size="13"
-          />仅保存到项目空间，服务不可用时不会伪造已保存状态</span
+        <span><LockKeyhole :size="13" />仅保存到项目空间</span
         ><button
           class="button button-primary button-sm"
           type="button"
@@ -522,7 +555,7 @@ onMounted(() => void loadDraft());
           type="button"
           @click="openResearch"
         >
-          <Search :size="14" />发起对比研究
+          <Search :size="14" />开始智能分析
         </button>
       </div>
       <div class="comparison-list">

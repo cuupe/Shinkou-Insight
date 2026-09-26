@@ -576,7 +576,7 @@ const { mobileOpen } = useWorkspace();
 }
 
 .app-shell .project-card {
-  height: 11.75rem !important;
+  height: auto !important;
   padding: 1.125rem !important;
 }
 
@@ -826,6 +826,17 @@ const { mobileOpen } = useWorkspace();
 }
 
 .app-shell .page-content:has(> .settings-layout) .settings-panel {
+  overflow: visible;
+}
+
+/* 知识库由多个自然高度区块组成，应该由工作区页面统一承载纵向滚动。
+   如果继续把资料面板压缩到剩余高度，顶部状态卡和切分设置会被裁掉。 */
+.app-shell .page-content:has(> .knowledge-health-grid) {
+  overflow-y: auto;
+}
+
+.app-shell .page-content:has(> .knowledge-health-grid) > * {
+  flex: 0 0 auto;
   overflow: visible;
 }
 

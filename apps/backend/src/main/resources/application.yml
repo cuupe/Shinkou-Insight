@@ -18,8 +18,10 @@ spring:
 
   servlet:
     multipart:
-      max-file-size: 50MB
-      max-request-size: 50MB
+      # The service rejects file sizes >= 256 MiB; this parser cap prevents
+      # unbounded multipart bodies before the application-level check runs.
+      max-file-size: 256MB
+      max-request-size: 256MB
 
   # PostgreSQL
   datasource:

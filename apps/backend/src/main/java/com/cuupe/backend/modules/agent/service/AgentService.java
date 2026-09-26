@@ -16,6 +16,7 @@ import com.cuupe.backend.modules.ai.RuntimeConfigResolver;
 import com.cuupe.backend.modules.workspace.entity.Workspace;
 import com.cuupe.backend.modules.workspace.mapper.WorkspaceMapper;
 import com.cuupe.backend.modules.storage.ObjectStorageService;
+import com.cuupe.backend.modules.storage.service.StorageQuotaService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -39,11 +40,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
 @Service
 @RequiredArgsConstructor
 public class AgentService {
-    private static final long MAX_ATTACHMENT_BYTES = 50L * 1024 * 1024;
+    private static final int MAX_ATTACHMENTS_PER_MESSAGE = 10;
 
     private final AgentMapper mapper;
     private final ObjectMapper objectMapper;
     private final ObjectStorageService objectStorageService;
+    private final StorageQuotaService storageQuotaService;
     private final AiIndexingClient aiClient;
     private final RuntimeConfigResolver runtimeConfigResolver;
     private final WorkspaceMapper workspaceMapper;
@@ -62,7 +64,9 @@ public class AgentService {
         validateGeneration(request);
 
         List<Map<String, Object>> attachments = request.getAttachments() == null ? List.of() : request.getAttachments();
-        if (attachments.size() > 10) throw ApiException.badRequest("TOO_MANY_ATTACHMENTS", "一次最多上传 10 个附件");
+        if (attachments.size() > MAX_ATTACHMENTS_PER_MESSAGE) {
+            throw ApiException.badRequest("TOO_MANY_ATTACHMENTS", "一次最多上传 10 个附件");
+        }
         for (Map<String, Object> attachment : attachments) validateAttachmentReference(workspaceId, projectId, userId, attachment);
 
         String threadKey = safeKey(request.getThreadId(), "thread-" + UUID.randomUUID());
@@ -287,12 +291,14 @@ public class AgentService {
         return emitter;
     }
 
+    @Transactional(rollbackFor = Exception.class)
     public AgentAttachmentResponse uploadAttachment(Long workspaceId, Long projectId, Long userId, MultipartFile file) throws Exception {
         if (!mapper.hasProjectAccess(workspaceId, projectId, userId)) {
             throw new ApiException(HttpStatus.NOT_FOUND, "PROJECT_NOT_FOUND", "项目不存在或无权访问");
         }
         if (file == null || file.isEmpty()) throw ApiException.badRequest("EMPTY_FILE", "附件不能为空");
-        if (file.getSize() > MAX_ATTACHMENT_BYTES) throw ApiException.badRequest("FILE_TOO_LARGE", "附件不能超过 50 MB");
+        storageQuotaService.validateFileSize(file.getSize());
+        storageQuotaService.reserve(userId, file.getSize());
 
         AgentAttachment attachment = new AgentAttachment();
         attachment.setWorkspaceId(workspaceId);
@@ -314,7 +320,30 @@ public class AgentService {
             throw exception;
         }
         String url = "/api/workspaces/" + workspaceId + "/projects/" + projectId + "/agent/attachments/" + attachment.getId() + "/content";
-        return new AgentAttachmentResponse(attachment.getId(), attachment.getFileName(), attachment.getKind(), attachment.getMimeType(), attachment.getFileSize(), url);
+        return attachmentResponse(attachment, url);
+    }
+
+    public List<AgentAttachmentResponse> listAttachments(Long workspaceId, Long projectId, Long userId) {
+        if (!mapper.hasProjectAccess(workspaceId, projectId, userId)) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "PROJECT_NOT_FOUND", "椤圭洰涓嶅瓨鍦ㄦ垨鏃犳潈璁块棶");
+        }
+        return mapper.findAttachments(workspaceId, projectId, userId).stream()
+                .map(attachment -> attachmentResponse(attachment,
+                        "/api/workspaces/" + workspaceId + "/projects/" + projectId
+                                + "/agent/attachments/" + attachment.getId() + "/content"))
+                .toList();
+    }
+
+    private AgentAttachmentResponse attachmentResponse(AgentAttachment attachment, String url) {
+        return new AgentAttachmentResponse(
+                attachment.getId(),
+                attachment.getFileName(),
+                attachment.getKind(),
+                attachment.getMimeType(),
+                attachment.getFileSize(),
+                url,
+                attachment.getCreatedAt()
+        );
     }
 
     public AgentAttachment getAttachment(Long workspaceId, Long projectId, Long userId, Long attachmentId) {
@@ -324,6 +353,7 @@ public class AgentService {
     }
 
     @SuppressWarnings("unchecked")
+    @Transactional(rollbackFor = Exception.class)
     public void handleAiCallback(String runKey, Map<String, Object> body) {
         Object callbackLock = callbackLocks.computeIfAbsent(runKey, ignored -> new Object());
         synchronized (callbackLock) {
@@ -398,6 +428,18 @@ public class AgentService {
             }
             if ("artifact.added".equals(eventType)) {
                 publishArtifact(run, body, payload);
+                return;
+            }
+            if ("thinking.delta".equals(eventType)) {
+                String thinking = String.valueOf(payload.getOrDefault("delta", ""));
+                if (!thinking.isBlank()) {
+                    publish(run, "thinking.delta", Map.of(
+                            "type", "thinking.delta",
+                            "runId", runKey,
+                            "messageId", findMessageKey(run.getAssistantMessageId()),
+                            "delta", thinking
+                    ));
+                }
                 return;
             }
             if ("message.delta".equals(eventType)) {
@@ -561,7 +603,24 @@ public class AgentService {
                 if (!generation.isEmpty()) config.put("generation", generation);
             }
             applyGenerationOverrides(runtime, request);
-            aiClient.executeAgentRun(run.getRunKey(), workspaceId, projectId, userId, findMessageKey(run.getAssistantMessageId()), query, config, runtime, request.getContextMessages(), attachmentPayload(workspaceId, projectId, userId, request.getAttachments()));
+            List<Map<String, Object>> trustedContextMessages = contextMessagePayload(
+                    workspaceId, projectId, userId, request.getContextMessages());
+            aiClient.executeAgentRun(
+                    run.getRunKey(),
+                    workspaceId,
+                    projectId,
+                    userId,
+                    findMessageKey(run.getAssistantMessageId()),
+                    query,
+                    config,
+                    runtime,
+                    trustedContextMessages,
+                    attachmentPayload(
+                            workspaceId,
+                            projectId,
+                            userId,
+                            request.getAttachments(),
+                            request.getContextMessages()));
         } catch (Exception exception) {
             String message = exception.getMessage() == null ? "Agent 运行失败" : shortText(exception.getMessage(), 900);
             mapper.updateMessage(run.getAssistantMessageId(), message, "FAILED");
@@ -704,7 +763,7 @@ public class AgentService {
         String fileName = safeFileName(String.valueOf(valueAny(raw, "fileName", "file_name", "generated-file")));
         String mimeType = String.valueOf(valueAny(raw, "mimeType", "mime_type", "application/octet-stream"));
         long fileSize = Math.max(0L, longValue(valueAny(raw, "fileSize", "file_size", 0L)) == null ? 0L : longValue(valueAny(raw, "fileSize", "file_size", 0L)));
-        if (fileSize > MAX_ATTACHMENT_BYTES) throw new IOException("生成文件超过大小限制");
+        storageQuotaService.validateFileSize(fileSize);
         AgentAttachment attachment = mapper.findAttachmentByStorageKey(storageKey, workspaceId, projectId, userId);
         if (attachment == null) {
             attachment = new AgentAttachment();
@@ -716,6 +775,12 @@ public class AgentService {
             attachment.setMimeType(mimeType);
             attachment.setFileSize(fileSize);
             attachment.setStorageKey(storageKey);
+            try {
+                storageQuotaService.reserve(userId, fileSize);
+            } catch (RuntimeException exception) {
+                try { objectStorageService.remove(storageKey); } catch (Exception ignored) { }
+                throw exception;
+            }
             mapper.insertAttachment(attachment);
         }
         Map<String, Object> attachmentMap = new LinkedHashMap<>();
@@ -994,12 +1059,86 @@ public class AgentService {
         return "file";
     }
 
-    private List<Map<String, Object>> attachmentPayload(Long workspaceId, Long projectId, Long userId, List<Map<String, Object>> references) {
-        if (references == null || references.isEmpty()) return List.of();
+    private List<Map<String, Object>> contextMessagePayload(
+            Long workspaceId,
+            Long projectId,
+            Long userId,
+            List<Map<String, Object>> messages) {
+        if (messages == null || messages.isEmpty()) return List.of();
         List<Map<String, Object>> payload = new java.util.ArrayList<>();
+        Set<Long> seen = new java.util.HashSet<>();
+        for (Map<String, Object> message : messages) {
+            if (message == null) continue;
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("role", message.getOrDefault("role", "user"));
+            item.put("content", message.getOrDefault("content", ""));
+            Object rawAttachments = message.get("attachments");
+            if (rawAttachments instanceof List<?> list) {
+                List<Map<String, Object>> references = new java.util.ArrayList<>();
+                for (Object value : list) {
+                    if (value instanceof Map<?, ?> raw) {
+                        Map<String, Object> reference = new LinkedHashMap<>();
+                        for (Map.Entry<?, ?> entry : raw.entrySet()) {
+                            reference.put(String.valueOf(entry.getKey()), entry.getValue());
+                        }
+                        references.add(reference);
+                    }
+                }
+                List<Map<String, Object>> trusted = attachmentPayload(
+                        workspaceId, projectId, userId, references);
+                List<Map<String, Object>> bounded = new java.util.ArrayList<>();
+                for (Map<String, Object> attachment : trusted) {
+                    Long attachmentId = longValue(attachment.get("attachmentId"));
+                    if (attachmentId == null || !seen.add(attachmentId)) continue;
+                    bounded.add(attachment);
+                    if (seen.size() >= MAX_ATTACHMENTS_PER_MESSAGE) break;
+                }
+                if (!bounded.isEmpty()) item.put("attachments", bounded);
+            }
+            payload.add(item);
+        }
+        return payload;
+    }
+
+    private List<Map<String, Object>> attachmentPayload(
+            Long workspaceId,
+            Long projectId,
+            Long userId,
+            List<Map<String, Object>> references) {
+        return attachmentPayload(workspaceId, projectId, userId, references, List.of());
+    }
+
+    private List<Map<String, Object>> attachmentPayload(
+            Long workspaceId,
+            Long projectId,
+            Long userId,
+            List<Map<String, Object>> currentReferences,
+            List<Map<String, Object>> contextMessages) {
+        List<Map<String, Object>> references = new java.util.ArrayList<>();
+        if (currentReferences != null) references.addAll(currentReferences);
+        if (contextMessages != null) {
+            for (Map<String, Object> message : contextMessages) {
+                if (message == null) continue;
+                Object rawAttachments = message.get("attachments");
+                if (!(rawAttachments instanceof List<?> list)) continue;
+                for (Object value : list) {
+                    if (value instanceof Map<?, ?> raw) {
+                        Map<String, Object> reference = new LinkedHashMap<>();
+                        for (Map.Entry<?, ?> entry : raw.entrySet()) {
+                            reference.put(String.valueOf(entry.getKey()), entry.getValue());
+                        }
+                        references.add(reference);
+                    }
+                }
+            }
+        }
+        if (references.isEmpty()) return List.of();
+        List<Map<String, Object>> payload = new java.util.ArrayList<>();
+        Set<Long> seen = new java.util.HashSet<>();
         for (Map<String, Object> reference : references) {
             Long attachmentId = longValue(reference == null ? null : reference.get("uploadId"));
             if (attachmentId == null) continue;
+            if (!seen.add(attachmentId)) continue;
             AgentAttachment attachment = mapper.findAttachment(attachmentId, workspaceId, projectId, userId);
             if (attachment == null || attachment.getStorageKey() == null || attachment.getStorageKey().isBlank()) continue;
             Map<String, Object> item = new LinkedHashMap<>();
@@ -1009,6 +1148,7 @@ public class AgentService {
             item.put("storageKey", attachment.getStorageKey());
             item.put("fileSize", attachment.getFileSize());
             payload.add(item);
+            if (payload.size() >= MAX_ATTACHMENTS_PER_MESSAGE) break;
         }
         return payload;
     }

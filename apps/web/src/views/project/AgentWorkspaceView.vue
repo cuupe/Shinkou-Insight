@@ -10,13 +10,14 @@ import {
 } from "vue";
 import {
   AlertCircle,
-  BarChart3,
   Bot,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   Circle,
   Clock3,
+  Copy,
   Cpu,
   Database,
   Download,
@@ -24,6 +25,7 @@ import {
   FileSearch,
   FileSpreadsheet,
   FileText,
+  FolderOpen,
   Image,
   Music2,
   Paperclip,
@@ -43,6 +45,7 @@ import {
   X,
 } from "@lucide/vue";
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProjectWorkflow from "@/components/project/ProjectWorkflow.vue";
 import { agentApi } from "@/api/agent";
 import { getApiErrorMessage } from "@/api/core";
 import { assetsApi } from "@/api/assets";
@@ -60,7 +63,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import DOMPurify from "dompurify";
+import katex from "katex";
 import MarkdownIt from "markdown-it";
+import texmath from "markdown-it-texmath";
+import "katex/dist/katex.min.css";
+import { useRoute } from "vue-router";
 import { useAgentWorkspace } from "@/composables/useAgentWorkspace";
 import type {
   AgentAttachment,
@@ -69,12 +76,17 @@ import type {
   AgentEventKind,
   AgentMessage,
   AgentThreadSummary,
+  AgentAttachmentUploadResponse,
 } from "@/api/types";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { formatDateTime } from "@/lib/utils";
 
 const { notify, router, routeTo, workspaceId, projectId, allowWeb } =
   useWorkspace();
+const route = useRoute();
+const MAX_SINGLE_FILE_BYTES = 256 * 1024 * 1024;
+const MAX_ATTACHMENTS_PER_MESSAGE = 10;
+const ATTACHMENT_PREVIEW_LIMIT = 3;
 const {
   activeThread,
   threads,
@@ -83,6 +95,7 @@ const {
   eventHistory,
   citations,
   draft,
+  thinking,
   composerError,
   isRunning,
   cancelling,
@@ -103,6 +116,17 @@ const contextLoading = ref(false);
 const conversationScroll = ref<HTMLElement | null>(null);
 const attachmentInput = ref<HTMLInputElement | null>(null);
 const pendingAttachments = ref<AgentAttachment[]>([]);
+const expandedAttachmentGroups = reactive(new Set<string>());
+const fileLibraryOpen = ref(false);
+const fileLibraryLoading = ref(false);
+const fileLibraryFiles = ref<AgentAttachment[]>([]);
+const fileLibraryQuery = ref("");
+const selectedFileLibraryIds = reactive(new Set<string>());
+const messageImagePreviewOpen = ref(false);
+const messageImagePreview = ref<AgentAttachment | null>(null);
+const copiedMessageId = ref("");
+let copiedMessageResetTimer: number | undefined;
+let copiedCodeResetTimer: number | undefined;
 const processReviewOpen = ref(false);
 const deleteOpen = ref(false);
 const deletingThread = ref<AgentThreadSummary | null>(null);
@@ -135,7 +159,7 @@ const generation = reactive<ChatGenerationForm>({
   topP: 0.9,
   topK: null,
   frequencyPenalty: 0,
-  thinkingEnabled: false,
+  thinkingEnabled: true,
   reasoningEffort: "high",
 });
 const savingCitationIds = reactive(new Set<string>());
@@ -145,9 +169,19 @@ const webSearchReady = computed(() =>
     webSearchConfig.value?.enabled && webSearchConfig.value?.hasCredential,
   ),
 );
+const visibleFileLibraryFiles = computed(() => {
+  const query = fileLibraryQuery.value.trim().toLowerCase();
+  if (!query) return fileLibraryFiles.value;
+  return fileLibraryFiles.value.filter((file) =>
+    file.name.toLowerCase().includes(query),
+  );
+});
+const selectedFileLibraryCount = computed(
+  () => selectedFileLibraryIds.size,
+);
 
 function needsFreshExternalSources(value: string) {
-  return /最新|最近|近期|目前|当前|进展|现状|新闻|发布|更新|趋势|版本|today|latest|recent|current|release|update|trend|news/i.test(
+  return /最新|最近|近期|目前|当前|近\s*\d+\s*年|过去\s*\d+\s*年|进展|现状|新闻|发布|更新|趋势|发展趋势|版本|today|latest|recent|current|release|update|trend|news/i.test(
     value,
   );
 }
@@ -316,6 +350,10 @@ watch(
 
 onUnmounted(() => {
   if (activityTimer !== undefined) window.clearInterval(activityTimer);
+  if (copiedMessageResetTimer !== undefined)
+    window.clearTimeout(copiedMessageResetTimer);
+  if (copiedCodeResetTimer !== undefined)
+    window.clearTimeout(copiedCodeResetTimer);
 });
 const contextUsage = computed(() => activeThread.value.contextUsage);
 const tokenUsage = computed(() => activeThread.value.tokenUsage);
@@ -335,16 +373,14 @@ const latestAssistantMessageId = computed(
       .find((message) => message.role === "assistant")?.id || "",
 );
 const thinkingSteps = computed(() =>
-  processEvents.value.filter(
-    (event) => {
-      const feedback = event.meta?.modelFeedback;
-      return (
-        event.kind !== "chat" &&
-        typeof feedback === "string" &&
-        Boolean(feedback.trim())
-      );
-    },
-  ),
+  processEvents.value.filter((event) => {
+    const feedback = event.meta?.modelFeedback;
+    return (
+      event.kind !== "chat" &&
+      typeof feedback === "string" &&
+      Boolean(feedback.trim())
+    );
+  }),
 );
 const thinkingExpanded = ref(false);
 
@@ -427,7 +463,7 @@ function modelConfig(model: ProjectModelConfig | undefined) {
 
 function applyModelGenerationDefaults() {
   const config = modelConfig(activeModel.value);
-  const reasoning = String(config.reasoningEffort || "none");
+  const reasoning = String(config.reasoningEffort ?? "low").toLowerCase();
   Object.assign(generation, {
     maxTokens: Number(config.maxTokens ?? 4096),
     temperature: Number(config.temperature ?? 0.3),
@@ -437,7 +473,7 @@ function applyModelGenerationDefaults() {
     thinkingEnabled: reasoning !== "none",
     reasoningEffort: ["low", "medium", "high"].includes(reasoning)
       ? (reasoning as ChatGenerationForm["reasoningEffort"])
-      : "high",
+      : "low",
   });
 }
 
@@ -481,10 +517,64 @@ async function loadWebSearchConfig() {
   }
 }
 
-onMounted(loadModelOptions);
-onMounted(loadWebSearchConfig);
-onMounted(loadContextSources);
-onMounted(loadHistory);
+function projectAnalysisStorageKey() {
+  return `shinkou-project-analysis:${workspaceId.value}:${projectId.value}`;
+}
+
+function projectAnalysisPrompt(plan: Record<string, unknown>) {
+  const field = (key: string, label: string) => {
+    const value = String(plan[key] || "").trim();
+    return value ? `${label}：${value}` : "";
+  };
+  return [
+    "请基于以下已确认的企业项目定义，启动一次完整的项目分析工作流。",
+    field("objective", "项目目标"),
+    field("problem", "背景问题与机会"),
+    field("successMetrics", "成功指标"),
+    field("constraints", "约束与假设"),
+    field("owner", "项目负责人"),
+    field("deadline", "期望决策日期"),
+    "请先拆解分析计划，再按需检索项目资料和外部信息，完成市场/竞品、可行性、风险与执行路径分析，形成带来源的方案草案。最后列出需要我在后续对话中确认的关键问题，不要只给简短结论。",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function startProjectAnalysisFromPlanning() {
+  if (String(route.query.workflow || "") !== "project-analysis") return;
+  let plan: Record<string, unknown>;
+  try {
+    const raw = sessionStorage.getItem(projectAnalysisStorageKey());
+    if (!raw) return;
+    sessionStorage.removeItem(projectAnalysisStorageKey());
+    plan = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    notify("项目分析上下文读取失败，请返回规划页重试");
+    return;
+  }
+  if (!String(plan.objective || "").trim()) {
+    notify("项目目标为空，无法启动智能分析");
+    return;
+  }
+
+  createThread();
+  void sendMessage(projectAnalysisPrompt(plan), [], agentConfig.value);
+  await router.replace({
+    query: { ...route.query, workflow: undefined },
+  });
+}
+
+async function initializeAgentWorkspace() {
+  await Promise.all([
+    loadModelOptions(),
+    loadWebSearchConfig(),
+    loadContextSources(),
+    loadHistory(),
+  ]);
+  await startProjectAnalysisFromPlanning();
+}
+
+onMounted(() => void initializeAgentWorkspace());
 watch(projectId, (next, previous) => {
   if (next !== previous) {
     void loadModelOptions();
@@ -515,9 +605,50 @@ type MessageSegment = { text: string; citation?: MessageCitation };
 
 const messageMarkdown = new MarkdownIt({
   html: false,
-  breaks: true,
+  // Treat single newlines as soft wraps. Model output often breaks formulas
+  // across lines, which otherwise renders as a dense stack of line breaks.
+  breaks: false,
   linkify: true,
+}).use(texmath, {
+  engine: katex,
+  // Accept the forms commonly emitted by LLMs and used in Markdown docs:
+  // $...$, $$...$$, \(...\), \[...\], and begin/end environments.
+  delimiters: ["dollars", "brackets", "beg_end"],
+  katexOptions: {
+    throwOnError: false,
+    strict: "warn",
+  },
 });
+
+const defaultFenceRenderer = messageMarkdown.renderer.rules.fence;
+messageMarkdown.renderer.rules.fence = (
+  tokens,
+  index,
+  options,
+  env,
+  slf,
+) => {
+  const token = tokens[index];
+  const code = token?.content || "";
+  const language = (token?.info || "").trim().split(/\s+/)[0] || "code";
+  const renderedCode = defaultFenceRenderer
+    ? defaultFenceRenderer(tokens, index, options, env, slf)
+    : `<pre><code>${messageMarkdown.utils.escapeHtml(code)}</code></pre>`;
+  return `<div class="message-code-block">
+    <div class="message-code-toolbar">
+      <span class="message-code-language">${messageMarkdown.utils.escapeHtml(language)}</span>
+      <button type="button" class="message-code-copy" data-copy-code="${messageMarkdown.utils.escapeHtml(encodeURIComponent(code))}">
+        <span class="message-code-copy-label">复制代码</span>
+      </button>
+    </div>
+    ${renderedCode}
+  </div>`;
+};
+
+const renderedMessageCache = new Map<
+  string,
+  { content: string; citations: string; html: string }
+>();
 
 const citationMarkerPattern =
   /(?:\[([^\]\r\n]{1,100})\]|【([^】\r\n]{1,100})】)/g;
@@ -770,14 +901,93 @@ function citationTitle(citation: MessageCitation) {
 
 function renderMessageMarkdown(message: AgentMessage) {
   if (!message.content) return "";
+  const citationKey = (message.citations || [])
+    .map(
+      (citation) =>
+        `${citation.id}:${citation.url || ""}:${citation.title || ""}`,
+    )
+    .join("\u0001");
+  const cached = renderedMessageCache.get(message.id);
+  if (cached?.content === message.content && cached.citations === citationKey) {
+    return cached.html;
+  }
   const normalized = normalizeCitationLinks(
     normalizeAgentMarkdown(message.content),
     message,
   );
   const rendered = messageMarkdown.render(normalized, { message });
-  return DOMPurify.sanitize(rendered, {
-    ADD_ATTR: ["data-citation-id", "data-tooltip"],
+  const html = DOMPurify.sanitize(rendered, {
+    ADD_ATTR: ["data-citation-id", "data-tooltip", "data-copy-code"],
   });
+  renderedMessageCache.set(message.id, {
+    content: message.content,
+    citations: citationKey,
+    html,
+  });
+  if (renderedMessageCache.size > 256) {
+    const oldest = renderedMessageCache.keys().next().value;
+    if (oldest) renderedMessageCache.delete(oldest);
+  }
+  return html;
+}
+
+function isLikelyInlineMath(value: string) {
+  const expression = value.replace(/\s+/g, " ").trim();
+  if (!expression || expression.length > 160 || !/[A-Za-z]/.test(expression)) {
+    return false;
+  }
+
+  // Models often wrap short formulas in inline code instead of `$...$`.
+  // Convert only recognizable math-shaped spans so paths, commands, and
+  // ordinary code labels keep their code formatting.
+  if (/^[A-Za-z]$/.test(expression)) return true;
+  if (
+    /^(?:sin|cos|tan|cot|sec|csc|log|ln|exp|sqrt|max|min|abs)\s*\(/i.test(
+      expression,
+    )
+  ) {
+    return true;
+  }
+  if (/\\(?:frac|sqrt|sum|int|cdot|times|sin|cos|tan|log|ln|alpha|beta|pi)\b/.test(expression)) {
+    return true;
+  }
+
+  const mathCharacters = /^[A-Za-z0-9\s\\{}()[\]+\-*/=.,·×÷≤≥<>−^_]+$/;
+  const hasEquationSignal = /[=^_]/.test(expression);
+  const hasArithmeticSignal =
+    /[+\-*/]/.test(expression) &&
+    (/\d/.test(expression) || /\s[+\-*/]\s/.test(expression));
+  return (
+    (hasEquationSignal || hasArithmeticSignal) &&
+    mathCharacters.test(expression)
+  );
+}
+
+function normalizeInlineMathExpression(value: string) {
+  return value
+    .trim()
+    .replace(
+      /(?<!\\)\b(sin|cos|tan|cot|sec|csc|log|ln|exp|sqrt|max|min|abs)\b/gi,
+      "\\$1",
+    );
+}
+
+function normalizeInlineMathCodeSpans(value: string) {
+  return value.replace(
+    /(^|[^`])`([^`\r\n]+)`(?!`)/g,
+    (full, prefix: string, code: string) => {
+      if (prefix === "\\" || !isLikelyInlineMath(code)) return full;
+      return `${prefix}$${normalizeInlineMathExpression(code)}$`;
+    },
+  );
+}
+
+function normalizeMarkdownEntities(value: string) {
+  // Providers sometimes serialize ordinary spaces as HTML entities. Decode
+  // the common space forms before structural Markdown cleanup runs.
+  return value
+    .replace(/(?:&#x20;|&#xA0;|&#32;|&#160;|&nbsp;)/gi, " ")
+    .replace(/\u00a0/g, " ");
 }
 
 function normalizeAgentMarkdown(value: string) {
@@ -789,31 +999,166 @@ function normalizeAgentMarkdown(value: string) {
       return `\u0000SHINKOU_CODE_${index}\u0000`;
     },
   );
-  const normalized = protectedValue
+  const mathBlocks: string[] = [];
+  const source = normalizeMarkdownEntities(
+    protectedValue
+      .replace(/\\r\\n/g, "\n")
+      .replace(/\\n/g, "\n")
+      .replace(/\\(?=\r?\n)/g, ""),
+  );
+  const protectedMarkdown = normalizeInlineMathCodeSpans(source).replace(
+    /(\$\$[\s\S]*?\$\$|\$(?!\$)[^\n$]+?\$(?!\$)|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\\begin\{[^}]+\}[\s\S]*?\\end\{[^}]+\})/g,
+    (block) => {
+      const index = mathBlocks.push(block) - 1;
+      return `\u0000SHINKOU_MATH_${index}\u0000`;
+    },
+  );
+  const normalized = protectedMarkdown
     // Some providers return JSON-style line breaks instead of real newlines.
-    .replace(/\\r?\\n/g, "\n")
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
     // A stray backslash before a real newline is an escaping artifact, not content.
     .replace(/\\(?=\r?\n)/g, "")
     // Recover Markdown markers escaped by the model (\\#, \\*, \\**, \\[, …).
-    .replace(/\\([#>*_`~\-\[\]])/g, "$1")
+    .replace(/\\([#>*_`~\-\[\]+=])/g, "$1")
     // CommonMark requires whitespace after an ATX heading marker.
-    .replace(/^(#{1,6})(?=\S)/gm, "$1 ")
+    // Providers occasionally return escaped or full-width ATX headings.
+    // Normalize them before MarkdownIt sees the block, while fenced code is
+    // protected above and therefore remains byte-for-byte unchanged.
+    .replace(/(^|\n)[ \t]{0,3}＃(?=[ \t]*\S)/g, "$1#")
+    // Some providers concatenate a heading directly after the previous
+    // sentence, e.g. "上一段内容##一、说明". MarkdownIt cannot recognize
+    // an ATX heading in the middle of a paragraph, so restore the missing
+    // block boundary before normalizing the heading spacing below.
+    .replace(/([^\n])([ \t]*#{2,6})(?=[ \t]*\S)/g, "$1\n$2 ")
+    .replace(
+      /([^\n])([ \t]*#)(?=[ \t]*[一二三四五六七八九十百]+、)/g,
+      "$1\n$2 ",
+    )
+    .replace(/(^|\n)[ \t]{0,3}(#{1,6})(?=\S)/g, "$1$2 ")
+    // Models sometimes glue a list item to the previous sentence or heading,
+    // for example "...一元一次方程的求解- 体现：...".
+    .replace(/([^\n])\s*-\s+(?=[\u4e00-\u9fff])/g, "$1\n- ")
+    .replace(/([^\n])\s*\*\s+(?=[\u4e00-\u9fff])/g, "$1\n* ")
     // Recover list markers and common Chinese report section headings.
-    .replace(/^(\s*)([-+])(?=\S)/gm, "$1$2 ")
-    .replace(/^(\s*)\*(?=[^\s*])/gm, "$1* ")
-    .replace(/^(\s*)(\d+[.)])(?=\S)/gm, "$1$2 ")
-    .replace(/^([一二三四五六七八九十]+、)(?=\S)/gm, "## $1 ");
-  return normalized.replace(
-    /\u0000SHINKOU_CODE_(\d+)\u0000/g,
-    (_match, index) => {
-      return fencedBlocks[Number(index)] || "";
-    },
-  );
+    .replace(/(^|\n)([ \t]*)([-+])(?=\S)/g, "$1$2$3 ")
+    .replace(/(^|\n)([ \t]*)\*(?=[^\s*])/g, "$1$2* ")
+    .replace(/(^|\n)([ \t]*)(\d+[.)])(?=\S)/g, "$1$2$3 ")
+    .replace(/(^|\n)([ \t]*)([一二三四五六七八九十]+、)(?=\S)/g, "$1$2## $3 ")
+    // Final heading pass: tolerate arbitrary indentation and optional spaces
+    // after ##/### so lower-level headings are never shown as literal hashes.
+    .replace(/(^|\n)[ \t]*(#{1,6})[ \t]*(?=\S)/g, "$1$2 ");
+  return normalized
+    .replace(/^题目所需知识点解析(?=\S)/, "# 题目所需知识点解析\n\n")
+    .replace(
+      /(^|\n)(##\s+[^\n]{2,80}?知识点)(?=[^：:\n])/g,
+      "$1$2\n\n",
+    )
+    .replace(
+      /\u0000SHINKOU_MATH_(\d+)\u0000/g,
+      (_match, index) => mathBlocks[Number(index)] || "",
+    )
+    .replace(
+      /\u0000SHINKOU_CODE_(\d+)\u0000/g,
+      (_match, index) => fencedBlocks[Number(index)] || "",
+    );
+}
+
+async function writeTextToClipboard(value: string) {
+  if (!value.trim()) return false;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // Fall through to the legacy textarea path for non-secure contexts or
+    // browsers that deny the async clipboard permission.
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  } finally {
+    textarea.remove();
+  }
+  return copied;
+}
+
+function textContentForCopy(message: AgentMessage) {
+  if (message.role !== "assistant") return message.content.trim();
+  const container = document.createElement("div");
+  container.innerHTML = renderMessageMarkdown(message);
+  container
+    .querySelectorAll(".message-code-copy")
+    .forEach((button) => button.remove());
+  const text = (container.innerText || container.textContent || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return text || normalizeAgentMarkdown(message.content).trim();
+}
+
+async function copyMessage(message: AgentMessage) {
+  if (!(await writeTextToClipboard(textContentForCopy(message)))) {
+    notify("复制失败，请手动选择文本");
+    return;
+  }
+  copiedMessageId.value = message.id;
+  if (copiedMessageResetTimer !== undefined)
+    window.clearTimeout(copiedMessageResetTimer);
+  copiedMessageResetTimer = window.setTimeout(() => {
+    copiedMessageId.value = "";
+  }, 1_600);
+}
+
+async function copyCodeBlock(button: HTMLButtonElement) {
+  const encoded = button.dataset.copyCode;
+  if (!encoded) return;
+  let code = "";
+  try {
+    code = decodeURIComponent(encoded);
+  } catch {
+    notify("代码复制失败，请手动选择代码");
+    return;
+  }
+  if (!(await writeTextToClipboard(code))) {
+    notify("代码复制失败，请手动选择代码");
+    return;
+  }
+  const label = button.querySelector<HTMLElement>(".message-code-copy-label");
+  if (label) label.textContent = "已复制";
+  button.classList.add("is-copied");
+  if (copiedCodeResetTimer !== undefined)
+    window.clearTimeout(copiedCodeResetTimer);
+  copiedCodeResetTimer = window.setTimeout(() => {
+    if (label) label.textContent = "复制代码";
+    button.classList.remove("is-copied");
+  }, 1_600);
 }
 
 function openMessageCitation(event: MouseEvent, message: AgentMessage) {
   const target = event.target;
   if (!(target instanceof Element)) return;
+  const codeButton = target.closest<HTMLButtonElement>(
+    "button[data-copy-code]",
+  );
+  if (codeButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    void copyCodeBlock(codeButton);
+    return;
+  }
   const button = target.closest<HTMLButtonElement>("button[data-citation-id]");
   if (!button?.dataset.citationId) return;
 
@@ -904,21 +1249,210 @@ function openAttachmentPicker() {
   attachmentInput.value?.click();
 }
 
-function handleFilesSelected(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files || []);
-  files.forEach((file, index) => {
+function normalizeFileLibraryAttachment(
+  item: AgentAttachmentUploadResponse,
+): AgentAttachment {
+  return {
+    id: String(item.uploadId),
+    uploadId: item.uploadId,
+    name: item.name,
+    kind: item.kind,
+    mimeType: item.mimeType,
+    size: formatFileSize(item.size),
+    url: item.url,
+    createdAt: item.createdAt,
+  };
+}
+
+function isPendingFileLibraryAttachment(file: AgentAttachment) {
+  const fileId = String(file.uploadId || file.id);
+  return pendingAttachments.value.some(
+    (item) => String(item.uploadId || item.id) === fileId,
+  );
+}
+
+async function openFileLibrary() {
+  if (pendingAttachments.value.length >= MAX_ATTACHMENTS_PER_MESSAGE) {
+    notify(`一次最多引用 ${MAX_ATTACHMENTS_PER_MESSAGE} 个文件`);
+    return;
+  }
+  fileLibraryOpen.value = true;
+  fileLibraryQuery.value = "";
+  selectedFileLibraryIds.clear();
+  fileLibraryLoading.value = true;
+  try {
+    const remoteFiles = await agentApi.listAttachments(
+      workspaceId.value,
+      projectId.value,
+    );
+    fileLibraryFiles.value = remoteFiles.map(normalizeFileLibraryAttachment);
+  } catch (error) {
+    notify(error instanceof Error ? error.message : "文件库加载失败");
+  } finally {
+    fileLibraryLoading.value = false;
+  }
+}
+
+function toggleFileLibrarySelection(file: AgentAttachment) {
+  if (isPendingFileLibraryAttachment(file)) return;
+  const fileId = String(file.uploadId || file.id);
+  if (selectedFileLibraryIds.has(fileId)) {
+    selectedFileLibraryIds.delete(fileId);
+    return;
+  }
+  const availableSlots =
+    MAX_ATTACHMENTS_PER_MESSAGE - pendingAttachments.value.length;
+  if (selectedFileLibraryIds.size >= availableSlots) {
+    notify(`一次最多引用 ${MAX_ATTACHMENTS_PER_MESSAGE} 个文件`);
+    return;
+  }
+  selectedFileLibraryIds.add(fileId);
+}
+
+function confirmFileLibrarySelection() {
+  const availableSlots =
+    MAX_ATTACHMENTS_PER_MESSAGE - pendingAttachments.value.length;
+  const selectedFiles = fileLibraryFiles.value
+    .filter((file) => selectedFileLibraryIds.has(String(file.uploadId || file.id)))
+    .slice(0, availableSlots);
+  pendingAttachments.value.push(...selectedFiles);
+  selectedFileLibraryIds.clear();
+  fileLibraryOpen.value = false;
+}
+
+function closeFileLibrary() {
+  selectedFileLibraryIds.clear();
+  fileLibraryOpen.value = false;
+}
+
+function visibleMessageAttachments(message: AgentMessage) {
+  const attachments = message.attachments || [];
+  if (expandedAttachmentGroups.has(message.id)) return attachments;
+  return attachments.slice(0, ATTACHMENT_PREVIEW_LIMIT);
+}
+
+function toggleAttachmentGroup(messageId: string) {
+  if (expandedAttachmentGroups.has(messageId)) {
+    expandedAttachmentGroups.delete(messageId);
+  } else {
+    expandedAttachmentGroups.add(messageId);
+  }
+}
+
+function attachmentImageUrl(attachment: AgentAttachment) {
+  if (attachment.kind !== "image") return "";
+  return attachment.previewUrl || attachment.url || "";
+}
+
+function isImageAttachmentPreviewable(attachment: AgentAttachment) {
+  return Boolean(attachmentImageUrl(attachment));
+}
+
+function openMessageImagePreview(attachment: AgentAttachment) {
+  if (!isImageAttachmentPreviewable(attachment)) return;
+  messageImagePreview.value = attachment;
+  messageImagePreviewOpen.value = true;
+}
+
+function closeMessageImagePreview() {
+  messageImagePreviewOpen.value = false;
+  messageImagePreview.value = null;
+}
+
+function handleAttachmentClick(event: MouseEvent, attachment: AgentAttachment) {
+  if (!isImageAttachmentPreviewable(attachment)) return;
+  event.preventDefault();
+  openMessageImagePreview(attachment);
+}
+
+function attachmentId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return `attachment-${crypto.randomUUID()}`;
+  }
+  return `attachment-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function normalizePastedFile(file: File, index: number, stamp: number) {
+  const existingName = file.name?.trim();
+  if (existingName && existingName.toLowerCase() !== "blob") return file;
+
+  const extension = file.type.split("/").pop()?.split("+")[0] || "bin";
+  return new File([file], `粘贴附件-${stamp}-${index}.${extension}`, {
+    type: file.type || "application/octet-stream",
+    lastModified: file.lastModified || stamp,
+  });
+}
+
+function appendAttachmentFiles(files: File[]) {
+  const sizeValidFiles = files.filter(
+    (file) => file.size < MAX_SINGLE_FILE_BYTES,
+  );
+  const oversizedCount = files.length - sizeValidFiles.length;
+  const availableSlots = Math.max(
+    0,
+    MAX_ATTACHMENTS_PER_MESSAGE - pendingAttachments.value.length,
+  );
+  const acceptedFiles = sizeValidFiles.slice(0, availableSlots);
+  const tooManyCount = sizeValidFiles.length - acceptedFiles.length;
+  const rejectedMessages = [];
+  if (oversizedCount) {
+    rejectedMessages.push(`${oversizedCount} 个附件超过 256 MB，未添加`);
+  }
+  if (tooManyCount) {
+    rejectedMessages.push(
+      `一次最多上传 ${MAX_ATTACHMENTS_PER_MESSAGE} 个文件，${tooManyCount} 个附件未添加`,
+    );
+  }
+  if (rejectedMessages.length) {
+    notify(rejectedMessages.join("；"));
+  }
+  const stamp = Date.now();
+  acceptedFiles.forEach((file, index) => {
+    const normalizedFile = normalizePastedFile(file, index, stamp);
     pendingAttachments.value.push({
-      id: `attachment-${Date.now()}-${index}`,
-      name: file.name,
-      kind: detectAttachmentKind(file),
-      mimeType: file.type || "application/octet-stream",
-      size: formatFileSize(file.size),
-      url: URL.createObjectURL(file),
-      file,
+      id: attachmentId(),
+      name: normalizedFile.name,
+      kind: detectAttachmentKind(normalizedFile),
+      mimeType: normalizedFile.type || "application/octet-stream",
+      size: formatFileSize(normalizedFile.size),
+      url: URL.createObjectURL(normalizedFile),
+      file: normalizedFile,
     });
   });
+  return acceptedFiles.length;
+}
+
+function handleFilesSelected(event: Event) {
+  const input = event.target as HTMLInputElement;
+  appendAttachmentFiles(Array.from(input.files || []));
   input.value = "";
+}
+
+function handleComposerPaste(event: ClipboardEvent) {
+  const clipboard = event.clipboardData;
+  if (!clipboard) return;
+
+  // Prefer ClipboardEvent.files because ClipboardItem can expose the same
+  // file twice. If the browser only exposes an image/blob item, fall back to
+  // getAsFile so screenshots copied from Windows also work.
+  const files = Array.from(clipboard.files || []);
+  const clipboardFiles = files.length
+    ? files
+    : Array.from(clipboard.items || [])
+        .filter((item) => item.kind === "file")
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => Boolean(file));
+  if (!clipboardFiles.length) return;
+
+  event.preventDefault();
+  const addedCount = appendAttachmentFiles(clipboardFiles);
+  if (!addedCount) return;
+  const firstClipboardFile = clipboardFiles[0];
+  notify(
+    addedCount === 1
+      ? `已添加附件：${firstClipboardFile?.name || "粘贴内容"}`
+      : `已添加 ${addedCount} 个附件`,
+  );
 }
 
 function removePendingAttachment(id: string) {
@@ -1059,6 +1593,13 @@ async function handleSubmit() {
         };
       }),
     );
+    attachments.forEach((attachment) => {
+      if (attachment.url?.startsWith("blob:"))
+        URL.revokeObjectURL(attachment.url);
+    });
+    if (uploadedAttachments.some((attachment) => attachment.uploadId)) {
+      window.dispatchEvent(new Event("storage-quota-changed"));
+    }
     void sendMessage(
       draft.value.trim() || "请分析我上传的附件。",
       uploadedAttachments,
@@ -1115,7 +1656,7 @@ function exportConversation() {
   const body = messages.value
     .map(
       (message) =>
-        `## ${message.role === "assistant" ? message.modelName || "Shinkou Agent" : "用户"}\n\n${message.content}`,
+        `## ${message.role === "assistant" ? message.modelName || "Shinkou Agent" : "用户"}\n\n${normalizeAgentMarkdown(message.content).trim()}`,
     )
     .join("\n\n");
   const sources = sourceCitations.value.length
@@ -1134,8 +1675,12 @@ function exportConversation() {
   notify("已导出当前对话与引用记录");
 }
 
+let conversationScrollFrame: number | undefined;
+
 function scrollConversationToBottom() {
-  nextTick(() => {
+  if (conversationScrollFrame !== undefined) return;
+  conversationScrollFrame = window.requestAnimationFrame(() => {
+    conversationScrollFrame = undefined;
     const element = conversationScroll.value;
     if (element) element.scrollTop = element.scrollHeight;
   });
@@ -1144,13 +1689,18 @@ function scrollConversationToBottom() {
 watch(messages, scrollConversationToBottom, { deep: true });
 watch(events, scrollConversationToBottom, { deep: true });
 watch(selectedModelId, applyModelGenerationDefaults);
+
+onUnmounted(() => {
+  if (conversationScrollFrame !== undefined)
+    window.cancelAnimationFrame(conversationScrollFrame);
+});
 </script>
 
 <template>
   <PageHeader
     eyebrow="PROJECT / WORKBENCH"
     title="项目工作台"
-    subtitle="对话、资料、规划、审查和输出共享项目上下文，按需使用，不预设顺序"
+    subtitle="先完成项目定义，再由 Agent 分析形成方案，最后在对话、审查和导出中完成闭环。"
   >
     <template #action>
       <button
@@ -1174,52 +1724,14 @@ watch(selectedModelId, applyModelGenerationDefaults);
     />
 
     <div class="agent-shell">
-      <section class="workspace-shortcuts" aria-label="独立工作区入口">
-        <div class="shortcut-intro">
-          <span class="workflow-kicker">RESEARCH DESK</span>
-          <strong>工作台</strong>
-        </div>
-        <nav class="shortcut-grid" aria-label="项目独立模块">
-          <RouterLink
-            class="shortcut-card active"
-            :to="routeTo('project-agent-chat')"
-            ><MessageCircle :size="17" /><span
-              ><strong>对话</strong><small>获取信息与整理思路</small></span
-            ></RouterLink
-          >
-          <RouterLink class="shortcut-card" :to="routeTo('project-runs')"
-            ><Search :size="17" /><span
-              ><strong>搜索记录</strong><small>查看来源与证据</small></span
-            ></RouterLink
-          >
-          <RouterLink class="shortcut-card" :to="routeTo('project-assets')"
-            ><Database :size="17" /><span
-              ><strong>知识库</strong><small>管理项目资料</small></span
-            ></RouterLink
-          >
-          <RouterLink class="shortcut-card" :to="routeTo('project-planning')"
-            ><ListChecks :size="17" /><span
-              ><strong>规划</strong><small>整理目标与方案</small></span
-            ></RouterLink
-          >
-          <RouterLink class="shortcut-card" :to="routeTo('project-reports')"
-            ><FileText :size="17" /><span
-              ><strong>输出</strong><small>导出已确认内容</small></span
-            ></RouterLink
-          >
-          <RouterLink class="shortcut-card" :to="routeTo('project-overview')"
-            ><BarChart3 :size="17" /><span
-              ><strong>用量</strong><small>查看真实 Token 记录</small></span
-            ></RouterLink
-          >
-        </nav>
-      </section>
+      <ProjectWorkflow />
 
-      <section
+      <Teleport defer to="#agent-inspector-config">
+        <section
         class="agent-config-card"
         :class="{ 'is-open': configOpen }"
         aria-label="Agent 当前配置"
-      >
+        >
         <button
           class="agent-config-toggle"
           type="button"
@@ -1339,13 +1851,13 @@ watch(selectedModelId, applyModelGenerationDefaults);
             /></span>
           </button>
         </div>
-      </section>
+        </section>
 
-      <section
+        <section
         v-if="configOpen && generationOpen"
         class="agent-generation-panel"
         aria-label="本次对话生成参数"
-      >
+        >
         <div class="generation-heading">
           <div>
             <strong>本次对话生成参数</strong
@@ -1439,7 +1951,8 @@ watch(selectedModelId, applyModelGenerationDefaults);
         <p class="generation-note">
           系统会根据问题范围自动选择处理方式：复杂任务或明确要求时由主智能体协调多个子智能体，普通问题保持单智能体快速回答；需要多步核对时先整理步骤，必要时再检查回答质量。
         </p>
-      </section>
+        </section>
+      </Teleport>
 
       <div class="agent-workspace">
         <aside class="panel agent-thread-panel">
@@ -1591,6 +2104,18 @@ watch(selectedModelId, applyModelGenerationDefaults);
                 >
                   <div class="message-thinking-list">
                     <div
+                      v-if="isRunning && thinking"
+                      class="message-thinking-live"
+                    >
+                      <span class="message-thinking-index">思考</span>
+                      <span class="message-thinking-copy">
+                        <strong class="message-thinking-live-text">{{
+                          thinking
+                        }}</strong>
+                        <small>实时推理过程</small>
+                      </span>
+                    </div>
+                    <div
                       v-for="(event, index) in thinkingSteps"
                       :key="event.id + '-' + index + '-summary'"
                       class="message-thinking-step"
@@ -1610,16 +2135,20 @@ watch(selectedModelId, applyModelGenerationDefaults);
                         eventStatusLabel(event)
                       }}</span>
                     </div>
-                    <p v-if="!thinkingSteps.length" class="message-thinking-empty">
+                    <p
+                      v-if="!thinkingSteps.length"
+                      class="message-thinking-empty"
+                    >
                       正在准备执行步骤…
-                    </p>
-                    <p class="message-thinking-note">
-                      这里只展示搜索、工具和结果整理等执行摘要，不展示模型隐藏思维内容。
                     </p>
                   </div>
                 </div>
                 <div
                   class="message-bubble"
+                  :class="{
+                    'is-thinking':
+                      message.status === 'streaming' && !message.content,
+                  }"
                   @click="openMessageCitation($event, message)"
                 >
                   <div
@@ -1629,7 +2158,28 @@ watch(selectedModelId, applyModelGenerationDefaults);
                   <span
                     v-if="message.status === 'streaming'"
                     class="typing-caret"
+                    :class="{ 'thinking-caret': !message.content }"
                   />
+                </div>
+                <div
+                  v-if="message.content && message.status !== 'streaming'"
+                  class="message-copy-actions"
+                >
+                  <button
+                    class="message-copy-button"
+                    type="button"
+                    title="复制文本"
+                    @click.stop="copyMessage(message)"
+                  >
+                    <Check
+                      v-if="copiedMessageId === message.id"
+                      :size="13"
+                    />
+                    <Copy v-else :size="13" />
+                    <span>{{
+                      copiedMessageId === message.id ? "已复制" : "复制文本"
+                    }}</span>
+                  </button>
                 </div>
                 <div
                   v-if="message.media?.length"
@@ -1662,20 +2212,26 @@ watch(selectedModelId, applyModelGenerationDefaults);
                   :class="{ 'is-single': message.attachments.length === 1 }"
                   :open="message.attachments.length === 1"
                 >
-                  <summary
-                    v-if="message.attachments.length > 1"
-                    class="attachment-dropdown-summary"
-                  >
-                    <span><Paperclip :size="13" />文件</span
-                    ><strong>{{ message.attachments.length }}</strong
+                  <summary class="attachment-dropdown-summary">
+                    <span><Paperclip :size="13" />详情</span
+                    ><strong v-if="message.attachments.length > 1">{{
+                      message.attachments.length
+                    }}</strong
                     ><ChevronRight :size="13" />
                   </summary>
                   <div class="message-attachments">
-                    <article
-                      v-for="attachment in message.attachments"
+                    <component
+                      v-for="attachment in visibleMessageAttachments(message)"
                       :key="attachment.id"
+                      :is="isImageAttachmentPreviewable(attachment) ? 'button' : 'a'"
                       class="attachment-card"
                       :class="`attachment-${attachment.kind}`"
+                      :type="isImageAttachmentPreviewable(attachment) ? 'button' : undefined"
+                      :href="isImageAttachmentPreviewable(attachment) ? undefined : attachment.url || undefined"
+                      :target="isImageAttachmentPreviewable(attachment) ? undefined : '_blank'"
+                      rel="noreferrer"
+                      :title="isImageAttachmentPreviewable(attachment) ? `预览图片：${attachment.name}` : `打开附件：${attachment.name}`"
+                      @click="handleAttachmentClick($event, attachment)"
                     >
                       <div
                         v-if="
@@ -1687,40 +2243,6 @@ watch(selectedModelId, applyModelGenerationDefaults);
                         <img
                           :src="attachment.previewUrl || attachment.url"
                           :alt="attachment.name"
-                        />
-                      </div>
-                      <div
-                        v-else-if="
-                          attachment.kind === 'video' && attachment.url
-                        "
-                        class="attachment-media"
-                      >
-                        <video
-                          controls
-                          preload="metadata"
-                          :src="attachment.url"
-                          :aria-label="attachment.name"
-                        />
-                      </div>
-                      <div
-                        v-else-if="
-                          attachment.kind === 'audio' && attachment.url
-                        "
-                        class="attachment-media audio-media"
-                      >
-                        <audio
-                          controls
-                          :src="attachment.url"
-                          :aria-label="attachment.name"
-                        />
-                      </div>
-                      <div
-                        v-else-if="attachment.kind === 'pdf' && attachment.url"
-                        class="attachment-media pdf-media"
-                      >
-                        <iframe
-                          :src="attachment.url"
-                          :title="attachment.name"
                         />
                       </div>
                       <div v-else class="attachment-icon">
@@ -1738,15 +2260,19 @@ watch(selectedModelId, applyModelGenerationDefaults);
                           {{ attachment.size || "待上传" }}</small
                         >
                       </div>
-                      <a
-                        v-if="attachment.url"
-                        class="attachment-open"
-                        :href="attachment.previewUrl || attachment.url"
-                        target="_blank"
-                        rel="noreferrer"
-                        >在线打开</a
-                      >
-                    </article>
+                    </component>
+                    <button
+                      v-if="message.attachments.length > ATTACHMENT_PREVIEW_LIMIT"
+                      type="button"
+                      class="attachment-more"
+                      :aria-expanded="expandedAttachmentGroups.has(message.id)"
+                      @click.stop="toggleAttachmentGroup(message.id)"
+                    >
+                      <span v-if="expandedAttachmentGroups.has(message.id)">
+                        收起
+                      </span>
+                      <span v-else>+{{ message.attachments.length - ATTACHMENT_PREVIEW_LIMIT }}</span>
+                    </button>
                   </div>
                 </details>
                 <details
@@ -1781,15 +2307,6 @@ watch(selectedModelId, applyModelGenerationDefaults);
                         v-if="isWebCitation(citation)"
                         class="citation-actions"
                       >
-                        <a
-                          v-if="citation.url"
-                          class="citation-open-link"
-                          :href="citation.url"
-                          target="_blank"
-                          rel="noreferrer"
-                          @click.stop
-                          >打开来源</a
-                        >
                         <button
                           type="button"
                           class="citation-save-mini"
@@ -1845,7 +2362,11 @@ watch(selectedModelId, applyModelGenerationDefaults);
                 </button>
               </div>
             </div>
-            <form class="composer" @submit.prevent="handleSubmit">
+            <form
+              class="composer"
+              @submit.prevent="handleSubmit"
+              @paste="handleComposerPaste"
+            >
               <textarea
                 v-model="draft"
                 rows="3"
@@ -1863,6 +2384,15 @@ watch(selectedModelId, applyModelGenerationDefaults);
                     @click="openAttachmentPicker"
                   >
                     <Plus :size="18" />
+                  </button>
+                  <button
+                    type="button"
+                    class="composer-tool-button"
+                    aria-label="从文件库引用"
+                    title="从文件库引用"
+                    @click="openFileLibrary"
+                  >
+                    <FolderOpen :size="18" />
                   </button>
                   <span
                     ><Sparkles :size="13" />AI生成可能会犯错，请谨慎甄别</span
@@ -1913,6 +2443,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
         </section>
 
         <aside class="panel agent-inspector">
+          <div id="agent-inspector-config" class="agent-inspector-config" />
           <div class="agent-panel-heading inspector-heading">
             <div>
               <span class="agent-kicker">EXECUTION</span>
@@ -2143,6 +2674,107 @@ watch(selectedModelId, applyModelGenerationDefaults);
     </div>
   </div>
 
+  <Dialog
+    v-model:open="fileLibraryOpen"
+    @update:open="(open) => !open && closeFileLibrary()"
+  >
+    <DialogContent class="file-library-picker-dialog">
+      <DialogHeader>
+        <DialogTitle>从文件库引用</DialogTitle>
+        <DialogDescription>
+          选择已上传到当前项目文件库的文件。引用不会重复上传，也不会写入知识库。
+        </DialogDescription>
+      </DialogHeader>
+      <div class="file-library-picker-toolbar">
+        <input
+          v-model="fileLibraryQuery"
+          type="search"
+          placeholder="搜索文件名"
+          aria-label="搜索文件库文件"
+        />
+        <small
+          >已选择 {{ selectedFileLibraryCount }} 个，最多
+          {{ MAX_ATTACHMENTS_PER_MESSAGE }} 个</small
+        >
+      </div>
+      <div v-if="fileLibraryLoading" class="file-library-picker-empty">
+        正在加载文件库…
+      </div>
+      <div
+        v-else-if="!visibleFileLibraryFiles.length"
+        class="file-library-picker-empty"
+      >
+        {{ fileLibraryQuery ? "没有匹配的文件" : "文件库暂时为空" }}
+      </div>
+      <div v-else class="file-library-picker-list">
+        <button
+          v-for="file in visibleFileLibraryFiles"
+          :key="file.id"
+          type="button"
+          class="file-library-picker-item"
+          :class="{
+            selected: selectedFileLibraryIds.has(String(file.uploadId || file.id)),
+            disabled: isPendingFileLibraryAttachment(file),
+          }"
+          :disabled="isPendingFileLibraryAttachment(file)"
+          :aria-pressed="selectedFileLibraryIds.has(String(file.uploadId || file.id))"
+          @click="toggleFileLibrarySelection(file)"
+        >
+          <span class="file-library-picker-icon">
+            <img v-if="file.kind === 'image' && file.url" :src="file.url" :alt="file.name" />
+            <component v-else :is="attachmentIcon(file.kind)" :size="18" />
+          </span>
+          <span class="file-library-picker-copy">
+            <strong :title="file.name">{{ file.name }}</strong>
+            <small>{{ attachmentLabel(file.kind) }} · {{ file.size || "未知大小" }}</small>
+          </span>
+          <span class="file-library-picker-state">
+            <span v-if="isPendingFileLibraryAttachment(file)">已在本条消息</span>
+            <span v-else-if="selectedFileLibraryIds.has(String(file.uploadId || file.id))">已选择</span>
+          </span>
+        </button>
+      </div>
+      <DialogFooter>
+        <button class="button button-secondary" type="button" @click="closeFileLibrary">
+          取消
+        </button>
+        <button
+          class="button button-primary"
+          type="button"
+          :disabled="!selectedFileLibraryCount"
+          @click="confirmFileLibrarySelection"
+        >
+          引用 {{ selectedFileLibraryCount }} 个文件
+        </button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <Dialog
+    v-model:open="messageImagePreviewOpen"
+    @update:open="(open) => !open && closeMessageImagePreview()"
+  >
+    <DialogContent class="message-image-preview-dialog">
+      <DialogHeader>
+        <DialogTitle>{{ messageImagePreview?.name || "图片预览" }}</DialogTitle>
+        <DialogDescription>
+          图片附件预览
+          <template v-if="messageImagePreview?.size">
+            · {{ messageImagePreview.size }}
+          </template>
+        </DialogDescription>
+      </DialogHeader>
+      <div class="message-image-preview-stage">
+        <img
+          v-if="messageImagePreview && attachmentImageUrl(messageImagePreview)"
+          :src="attachmentImageUrl(messageImagePreview)"
+          :alt="messageImagePreview.name"
+        />
+        <span v-else>图片暂时无法预览</span>
+      </div>
+    </DialogContent>
+  </Dialog>
+
   <Dialog v-model:open="thinkingDialogOpen">
     <DialogContent class="thinking-settings-dialog">
       <DialogHeader>
@@ -2263,6 +2895,42 @@ watch(selectedModelId, applyModelGenerationDefaults);
     color-mix(in oklab, var(--teal) 6%, var(--surface)),
     var(--surface)
   );
+}
+
+.agent-inspector-config {
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.agent-inspector-config .agent-config-card {
+  padding: 0.75rem;
+  border: 0;
+  border-bottom: 0.0625rem solid var(--workspace-divider);
+  border-radius: 0;
+  background: color-mix(in oklab, var(--teal) 4%, var(--surface));
+}
+
+.agent-inspector-config .agent-config-items {
+  grid-template-columns: 1fr;
+}
+
+.agent-inspector-config .agent-config-item {
+  padding: 0.5rem 0.25rem;
+  border-top: 0.0625rem solid var(--workspace-divider);
+  border-left: 0;
+}
+
+.agent-inspector-config .agent-config-item:first-child {
+  border-top: 0;
+}
+
+.agent-inspector-config .agent-generation-panel {
+  margin: 0.75rem;
+  padding: 0.75rem;
+}
+
+.agent-inspector-config .generation-grid {
+  grid-template-columns: 1fr;
 }
 
 .agent-config-toggle {
@@ -3036,6 +3704,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
 }
 
 .message-row.user .message-body {
+  width: min(82%, 36rem);
   max-width: 82%;
   align-items: flex-end;
 }
@@ -3208,6 +3877,28 @@ watch(selectedModelId, applyModelGenerationDefaults);
   border-top: 0.0625rem solid var(--workspace-divider);
 }
 
+.message-thinking-live {
+  display: flex;
+  gap: 0.625rem;
+  margin: 0.375rem 0 0.5rem 0;
+  padding: 0.5rem 0.625rem;
+  border-radius: 0.25rem;
+  background: var(--surface-accent, rgba(18, 110, 130, 0.06));
+  border: 0.0625rem solid var(--workspace-border);
+}
+
+.message-thinking-live .message-thinking-index {
+  flex: none;
+  margin-top: 0.125rem;
+}
+
+.message-thinking-live-text {
+  white-space: pre-wrap;
+  color: var(--workspace-text);
+  font-weight: 400;
+  word-break: break-word;
+}
+
 .streaming-label {
   gap: 0.3125rem;
   color: var(--teal-dark);
@@ -3221,6 +3912,53 @@ watch(selectedModelId, applyModelGenerationDefaults);
   color: var(--workspace-text);
   font-size: 0.75rem;
   line-height: 1.8;
+}
+
+.message-bubble.is-thinking {
+  display: inline-flex;
+  min-width: 3.25rem;
+  min-height: 2.75rem;
+  align-items: center;
+}
+
+.message-copy-actions {
+  display: flex;
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.message-row.user .message-copy-actions {
+  justify-content: flex-end;
+}
+
+.message-copy-button,
+.message-code-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 0;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: var(--workspace-subtle);
+  font: inherit;
+  font-size: 0.6875rem;
+  cursor: pointer;
+  transition:
+    color 0.16s ease,
+    background 0.16s ease;
+}
+
+.message-copy-button {
+  padding: 0.2rem 0.3rem;
+}
+
+.message-copy-button:hover,
+.message-copy-button:focus-visible,
+.message-code-copy:hover,
+.message-code-copy:focus-visible,
+.message-code-copy.is-copied {
+  background: var(--agent-accent-surface-soft);
+  color: var(--teal-dark);
 }
 
 .message-media {
@@ -3275,11 +4013,59 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .message-markdown {
   overflow-wrap: anywhere;
   font-size: 0.875rem;
-  line-height: 1.8;
+  line-height: 1.95;
 }
 
 .message-markdown :deep(p) {
   margin: 0;
+}
+
+.message-markdown :deep(p:not(:last-child)) {
+  margin-bottom: 0.9rem;
+}
+
+.message-markdown :deep(.katex-display) {
+  max-width: 100%;
+  margin: 0.75rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.125rem 0.0625rem;
+}
+
+.message-markdown :deep(.katex) {
+  max-width: 100%;
+}
+
+.message-markdown :deep(.message-code-block) {
+  margin: 0.9rem 0;
+  overflow: hidden;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, #102326 92%, var(--surface-raised));
+}
+
+.message-markdown :deep(.message-code-toolbar) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2rem;
+  padding: 0.25rem 0.5rem 0.25rem 0.75rem;
+  border-bottom: 0.0625rem solid var(--workspace-border);
+  color: var(--workspace-subtle);
+  font-size: 0.6875rem;
+}
+
+.message-markdown :deep(.message-code-language) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-markdown :deep(.message-code-block pre) {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
 }
 
 .message-markdown :deep(p + p),
@@ -3287,13 +4073,13 @@ watch(selectedModelId, applyModelGenerationDefaults);
 .message-markdown :deep(ol + p),
 .message-markdown :deep(pre + p),
 .message-markdown :deep(blockquote + p) {
-  margin-top: 0.625rem;
+  margin-top: 0.9rem;
 }
 
 .message-markdown :deep(h1),
 .message-markdown :deep(h2),
 .message-markdown :deep(h3) {
-  margin: 1.15rem 0 0.55rem;
+  margin: 1.45rem 0 0.75rem;
   color: var(--workspace-text);
   font-weight: 720;
   line-height: 1.35;
@@ -3325,16 +4111,16 @@ watch(selectedModelId, applyModelGenerationDefaults);
 
 .message-markdown :deep(ul),
 .message-markdown :deep(ol) {
-  margin: 0.55rem 0;
+  margin: 0.85rem 0;
   padding-left: 1.25rem;
 }
 
 .message-markdown :deep(li + li) {
-  margin-top: 0.25rem;
+  margin-top: 0.4rem;
 }
 
 .message-markdown :deep(blockquote) {
-  margin: 0.5rem 0;
+  margin: 0.85rem 0;
   padding-left: 0.75rem;
   border-left: 0.1875rem solid var(--teal);
   color: var(--workspace-muted);
@@ -3406,7 +4192,13 @@ watch(selectedModelId, applyModelGenerationDefaults);
   margin-left: 0.125rem;
   vertical-align: text-bottom;
   background: var(--teal);
+  box-shadow: 0 0 0 0.1875rem color-mix(in oklab, var(--teal) 12%, transparent);
   animation: blink 0.8s steps(2, jump-none) infinite;
+}
+
+.typing-caret.thinking-caret {
+  margin-left: 0;
+  height: 1rem;
 }
 
 @keyframes blink {
@@ -4217,62 +5009,90 @@ watch(selectedModelId, applyModelGenerationDefaults);
 }
 
 .message-attachments {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: nowrap;
   gap: 0.5rem;
-  width: min(100%, 36rem);
+  width: 100%;
+  max-width: 36rem;
+  overflow-x: auto;
+  padding-bottom: 0.125rem;
+  scrollbar-gutter: stable;
 }
 
 .attachment-card {
+  flex: 0 0 min(11.5rem, calc(100% - 0.5rem));
   display: grid;
-  grid-template-columns: 2.125rem minmax(0, 1fr) auto;
+  grid-template-columns: 2.5rem minmax(0, 1fr);
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.5625rem;
   min-width: 0;
-  padding: 0.5rem;
+  min-height: 3.75rem;
+  padding: 0.5rem 0.625rem;
   border: 0.0625rem solid var(--workspace-border);
   border-radius: 0.5625rem;
   background: var(--surface-raised);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  appearance: none;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.attachment-card:hover {
+  border-color: var(--teal);
+  background: color-mix(in oklab, var(--teal) 5%, var(--surface-raised));
+}
+
+.message-image-preview-dialog {
+  width: min(64rem, calc(100vw - 2rem));
+}
+
+.message-image-preview-stage {
+  display: grid;
+  min-height: min(64vh, 38rem);
+  max-height: 72vh;
+  place-items: center;
+  overflow: auto;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.625rem;
+  background: var(--surface-raised);
+}
+
+.message-image-preview-stage img {
+  display: block;
+  max-width: 100%;
+  max-height: 68vh;
+  object-fit: contain;
+}
+
+.message-image-preview-stage span {
+  color: var(--workspace-muted);
 }
 
 .attachment-media {
   display: grid;
-  width: 2.125rem;
-  height: 2.125rem;
+  width: 2.5rem;
+  height: 2.5rem;
   place-items: center;
   overflow: hidden;
   border-radius: 0.375rem;
   background: #eaf5f3;
 }
 
-.attachment-media img,
-.attachment-media video {
+.attachment-media img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.attachment-media audio {
-  width: 16rem;
-  max-width: 100%;
-  height: 2rem;
-}
-
-.attachment-media.pdf-media {
-  width: 5rem;
-  height: 4rem;
-}
-
-.attachment-media.pdf-media iframe {
-  width: 100%;
-  height: 100%;
-  border: 0;
-}
-
 .attachment-icon {
   display: grid;
-  width: 2.125rem;
-  height: 2.125rem;
+  width: 2.5rem;
+  height: 2.5rem;
   place-items: center;
   border-radius: 0.375rem;
   background: #edf5ff;
@@ -4322,24 +5142,44 @@ watch(selectedModelId, applyModelGenerationDefaults);
   font-size: 0.75rem;
 }
 
-.attachment-open {
-  padding: 0.25rem 0.375rem;
-  border-radius: 0.3125rem;
+.attachment-more {
+  display: grid;
+  flex: 0 0 2.75rem;
+  min-height: 3.75rem;
+  place-items: center;
+  padding: 0.375rem;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.5625rem;
+  background: var(--surface-raised);
   color: var(--teal-dark);
+  font: inherit;
   font-size: 0.75rem;
-  text-decoration: none;
+  cursor: pointer;
 }
 
-.attachment-open:hover {
-  background: #e6f7f3;
+.attachment-more:hover {
+  border-color: var(--teal);
+  background: color-mix(in oklab, var(--teal) 5%, var(--surface-raised));
 }
 
 .attachment-dropdown {
-  width: min(100%, 36rem);
+  width: fit-content;
+  max-width: 100%;
+}
+
+.message-row.user .attachment-dropdown {
+  align-self: flex-end;
+  margin-left: auto;
+  margin-right: 0;
+}
+
+.message-row.user .attachment-dropdown-summary {
+  margin-left: auto;
 }
 
 .attachment-dropdown.is-single > .message-attachments {
   margin-top: 0;
+  overflow-x: visible;
 }
 
 .attachment-dropdown-summary {
@@ -4366,6 +5206,127 @@ watch(selectedModelId, applyModelGenerationDefaults);
   align-items: center;
   gap: 0.25rem;
 }
+
+.file-library-picker-dialog {
+  width: min(38rem, calc(100vw - 2rem));
+}
+
+.file-library-picker-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.file-library-picker-toolbar input {
+  min-width: 0;
+  flex: 1;
+  padding: 0.5625rem 0.6875rem;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.4375rem;
+  background: var(--surface-raised);
+  color: var(--workspace-text);
+  font: inherit;
+  font-size: 0.8125rem;
+}
+
+.file-library-picker-toolbar small {
+  flex: 0 0 auto;
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.file-library-picker-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  max-height: min(25rem, 50vh);
+  overflow-y: auto;
+  padding: 0.125rem;
+}
+
+.file-library-picker-item {
+  display: grid;
+  grid-template-columns: 2.25rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5625rem;
+  min-width: 0;
+  padding: 0.5rem;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.5rem;
+  background: var(--surface-raised);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-library-picker-item:hover:not(:disabled),
+.file-library-picker-item.selected {
+  border-color: var(--teal);
+  background: color-mix(in oklab, var(--teal) 7%, var(--surface-raised));
+}
+
+.file-library-picker-item:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.file-library-picker-icon {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 0.375rem;
+  background: #edf5ff;
+  color: #6076c5;
+}
+
+.file-library-picker-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.file-library-picker-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.125rem;
+}
+
+.file-library-picker-copy strong,
+.file-library-picker-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-library-picker-copy strong {
+  color: var(--workspace-text);
+  font-size: 0.75rem;
+}
+
+.file-library-picker-copy small,
+.file-library-picker-state {
+  color: var(--workspace-muted);
+  font-size: 0.6875rem;
+}
+
+.file-library-picker-state {
+  color: var(--teal-dark);
+  white-space: nowrap;
+}
+
+.file-library-picker-empty {
+  display: grid;
+  min-height: 8rem;
+  place-items: center;
+  color: var(--workspace-muted);
+  font-size: 0.8125rem;
+}
+
 .attachment-dropdown-summary strong {
   min-width: 1rem;
   color: var(--teal-dark);
@@ -4724,6 +5685,16 @@ watch(selectedModelId, applyModelGenerationDefaults);
   }
 
   .message-attachments {
+    max-width: 100%;
+  }
+
+  .file-library-picker-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .file-library-picker-list {
     grid-template-columns: 1fr;
   }
 
@@ -4745,110 +5716,7 @@ watch(selectedModelId, applyModelGenerationDefaults);
     grid-template-columns: 1fr;
   }
 }
-.workspace-shortcuts {
-  display: grid;
-  grid-template-columns: minmax(12rem, 0.82fr) minmax(0, 3.18fr);
-  align-items: center;
-  gap: 0.75rem;
-  flex: 0 0 auto;
-  padding: 0.75rem;
-  border-bottom: 0.0625rem solid var(--workspace-border);
-  background: linear-gradient(
-    110deg,
-    color-mix(in oklab, var(--teal) 6%, var(--surface)),
-    var(--surface)
-  );
-}
-
-.shortcut-intro {
-  display: grid;
-  gap: 0.1875rem;
-}
-
-.shortcut-intro strong {
-  color: var(--workspace-text);
-  font-size: 0.75rem;
-}
-
-.shortcut-intro small {
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-  line-height: 1.45;
-}
-
-.shortcut-grid {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 0.375rem;
-}
-
-.shortcut-card {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 0.4375rem;
-  padding: 0.5625rem 0.5rem;
-  border: 0.0625rem solid var(--workspace-border);
-  border-radius: 0.5rem;
-  background: var(--surface);
-  color: var(--workspace-muted);
-  text-decoration: none;
-  transition:
-    border-color 0.16s ease,
-    background 0.16s ease,
-    color 0.16s ease;
-}
-
-.shortcut-card:hover,
-.shortcut-card.active {
-  border-color: color-mix(in oklab, var(--teal) 45%, var(--workspace-border));
-  background: color-mix(in oklab, var(--teal) 9%, var(--surface));
-  color: var(--workspace-text);
-}
-
-.shortcut-card > svg {
-  flex: 0 0 auto;
-  color: var(--teal-dark);
-}
-
-.shortcut-card span {
-  display: grid;
-  min-width: 0;
-  gap: 0.125rem;
-}
-
-.shortcut-card strong,
-.shortcut-card small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.shortcut-card strong {
-  color: inherit;
-  font-size: 0.75rem;
-}
-
-.shortcut-card small {
-  color: var(--workspace-subtle);
-  font-size: 0.75rem;
-}
-
-@media (max-width: 75rem) {
-  .workspace-shortcuts {
-    grid-template-columns: 1fr;
-  }
-
-  .shortcut-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
 @media (max-width: 47.5rem) {
-  .shortcut-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .thread-delete {
     opacity: 1;
   }

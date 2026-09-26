@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.util.Base64;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -145,6 +146,14 @@ public class AiIndexingClient {
 
     public Map<String, Object> testWebSearch(Map<String, Object> webSearch) throws IOException {
         return post("/internal/web-search/test", webSearch);
+    }
+
+    public Map<String, Object> previewFile(String fileName, String mimeType, byte[] data) throws IOException {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("fileName", fileName == null ? "attachment" : fileName);
+        payload.put("mimeType", mimeType == null ? "application/octet-stream" : mimeType);
+        payload.put("data", Base64.getEncoder().encodeToString(data == null ? new byte[0] : data));
+        return post("/internal/files/preview", payload);
     }
 
     public Map<String, Object> validateWebSource(String url, String title, String excerpt) throws IOException {
