@@ -4,6 +4,7 @@ import {
   Archive,
   CheckCircle2,
   Clipboard,
+  ClipboardList,
   Download,
   Edit3,
   FileText,
@@ -31,7 +32,8 @@ import { reportsApi } from "@/api/reports";
 import { useRoute } from "vue-router";
 import { formatDateTime } from "@/lib/utils";
 
-const { reports, notify, workspaceId, projectId } = useWorkspace();
+const { reports, notify, workspaceId, projectId, router, routeTo } =
+  useWorkspace();
 const route = useRoute();
 const reportItems = reactive(reports);
 const filters = ["全部", "已发布", "草稿"];
@@ -203,6 +205,22 @@ async function copySummary() {
   } catch {
     notify("当前环境不支持复制");
   }
+}
+
+function createActionFromRecommendation() {
+  const report = selectedReport.value;
+  if (!report) return;
+  const title = report.recommendation.trim() || `跟进：${report.title}`;
+  const description = [
+    report.recommendationDetail.trim(),
+    `来源报告：${report.title} ${report.version}`.trim(),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  void router.push({
+    ...routeTo("project-action-items"),
+    query: { actionTitle: title, actionDescription: description },
+  });
 }
 </script>
 
@@ -397,6 +415,13 @@ async function copySummary() {
           <div>
             <strong>{{ selectedReport.recommendation }}</strong>
             <p>{{ selectedReport.recommendationDetail }}</p>
+            <button
+              class="text-button recommendation-action"
+              type="button"
+              @click="createActionFromRecommendation"
+            >
+              <ClipboardList :size="14" />转为行动项
+            </button>
           </div>
         </div>
         <div class="reader-footer-note">
@@ -765,6 +790,9 @@ async function copySummary() {
   margin: 0.25rem 0 0;
   color: var(--workspace-muted);
   font-size: 0.75rem;
+}
+.recommendation-action {
+  margin-top: 0.625rem;
 }
 .reader-footer-note {
   display: flex;

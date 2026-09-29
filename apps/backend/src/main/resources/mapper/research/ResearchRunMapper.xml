@@ -1,9 +1,26 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.cuupe.backend.modules.research.mapper.ResearchRunMapper">
-    <sql id="c">r.id,r.project_id,r.title,r.goal,r.status,r.priority,r.config,r.error_message,r.progress,r.current_step,r.duration_seconds,r.token_count,r.created_at,r.updated_at</sql>
+    <sql id="c">r.id,r.project_id,r.title,r.goal,r.status,r.priority,r.config,r.error_message,r.progress,r.current_step,r.duration_seconds,r.token_count,r.created_at,r.updated_at,r.started_at,r.finished_at</sql>
     <select id="findByProject" resultType="com.cuupe.backend.modules.research.entity.ResearchRun">SELECT <include refid="c"/> FROM research_runs r JOIN projects p ON p.id=r.project_id JOIN workspace_members wm ON wm.workspace_id=p.workspace_id AND wm.user_id=#{userId} AND wm.status='ACTIVE' WHERE r.project_id=#{projectId} AND p.status&lt;&gt;'DELETED' ORDER BY r.updated_at DESC</select>
     <select id="findById" resultType="com.cuupe.backend.modules.research.entity.ResearchRun">SELECT <include refid="c"/> FROM research_runs r JOIN projects p ON p.id=r.project_id JOIN workspace_members wm ON wm.workspace_id=p.workspace_id AND wm.user_id=#{userId} AND wm.status='ACTIVE' WHERE r.id=#{id} AND r.project_id=#{projectId} AND p.status&lt;&gt;'DELETED'</select>
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">INSERT INTO research_runs(project_id,title,goal,status,priority,config,created_by) VALUES(#{projectId},#{title},#{goal},'PENDING',#{priority},CAST(#{config} AS jsonb),#{createdBy})</insert>
     <update id="updateStatus">UPDATE research_runs SET status=#{status},progress=CASE WHEN #{status}='COMPLETED' THEN 100 WHEN #{status} IN ('FAILED','CANCELLED') THEN progress ELSE 0 END,current_step=CASE WHEN #{status}='COMPLETED' THEN 'COMPLETED' WHEN #{status}='FAILED' THEN 'FAILED' WHEN #{status}='CANCELLED' THEN 'CANCELLED' ELSE 'PENDING' END,updated_at=CURRENT_TIMESTAMP,started_at=CASE WHEN #{status}='RUNNING' THEN CURRENT_TIMESTAMP ELSE started_at END,finished_at=CASE WHEN #{status} IN ('CANCELLED','FAILED','COMPLETED') THEN CURRENT_TIMESTAMP ELSE finished_at END,duration_seconds=CASE WHEN #{status} IN ('CANCELLED','FAILED','COMPLETED') AND started_at IS NOT NULL THEN EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP-started_at))::INTEGER ELSE duration_seconds END WHERE id=#{id} AND project_id=#{projectId} AND EXISTS(SELECT 1 FROM projects p JOIN workspace_members wm ON wm.workspace_id=p.workspace_id WHERE p.id=#{projectId} AND wm.user_id=#{userId} AND wm.status='ACTIVE')</update>
+    <update id="updateRuntime">
+        UPDATE research_runs SET status=#{status},
+        progress=CASE WHEN #{status}='COMPLETED' THEN 100 ELSE COALESCE(#{progress},progress) END,
+        current_step=COALESCE(#{currentStep},current_step), error_message=COALESCE(#{errorMessage},error_message),
+        started_at=CASE WHEN #{status}='RUNNING' THEN COALESCE(started_at,CURRENT_TIMESTAMP) ELSE started_at END,
+        finished_at=CASE WHEN #{status} IN ('COMPLETED','FAILED','CANCELLED') THEN CURRENT_TIMESTAMP ELSE finished_at END,
+        duration_seconds=COALESCE(#{durationSeconds},CASE WHEN #{status} IN ('COMPLETED','FAILED','CANCELLED') AND started_at IS NOT NULL THEN EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP-started_at))::INTEGER ELSE duration_seconds END),
+        updated_at=CURRENT_TIMESTAMP
+        WHERE id=#{id} AND project_id=#{projectId} AND status NOT IN ('COMPLETED','FAILED','CANCELLED')
+        AND EXISTS(SELECT 1 FROM projects p JOIN workspace_members wm ON wm.workspace_id=p.workspace_id
+                   WHERE p.id=#{projectId} AND wm.user_id=#{userId} AND wm.status='ACTIVE')
+    </update>
+    <insert id="insertReport">
+        INSERT INTO reports(project_id,run_id,title,status,lead,summary,recommendation,recommendation_detail,content,citations,created_by)
+        SELECT #{projectId},#{id},#{title},'DRAFT',#{summary},#{summary},LEFT(#{recommendation},500),#{recommendation},#{content},#{citations},#{userId}
+        WHERE NOT EXISTS(SELECT 1 FROM reports WHERE run_id=#{id})
+    </insert>
 </mapper>

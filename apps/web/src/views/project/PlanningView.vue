@@ -19,6 +19,7 @@ import PageHeader from "@/components/common/PageHeader.vue";
 import ProjectWorkflow from "@/components/project/ProjectWorkflow.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { planningApi } from "@/api/planning";
+import { runsApi } from "@/api/runs";
 import { formatDateTime } from "@/lib/utils";
 
 const {
@@ -67,11 +68,25 @@ const evidenceCoverage = computed(() => {
   if (!assets.length) return "待补齐";
   return `${Math.round((indexedCount.value / assets.length) * 100)}%`;
 });
+const evaluationPassedCount = computed(
+  () => evaluationCases.filter((item) => item.status === "passed").length,
+);
+const evaluationFailedCount = computed(
+  () => evaluationCases.filter((item) => item.status === "failed").length,
+);
+const evaluationPendingCount = computed(
+  () => evaluationCases.filter((item) => item.status === "review").length,
+);
+const evaluationBaselinePassed = computed(
+  () =>
+    evaluationCases.length > 0 &&
+    evaluationPassedCount.value === evaluationCases.length,
+);
 const readinessChecks = computed(() => [
-  Boolean(form.objective.trim()),
-  Boolean(form.problem.trim()),
+  Boolean(form.objective.trim() && form.problem.trim()),
   indexedCount.value > 0,
   recentRuns.length > 0,
+  evaluationBaselinePassed.value,
   reports.length > 0,
 ]);
 const readiness = computed(
@@ -121,6 +136,15 @@ const reviewGates = computed(() => [
     status: reports.length ? "ready" : "pending",
   },
   {
+    key: "evaluation",
+    icon: FileCheck2,
+    title: "回归验证",
+    detail: evaluationCases.length
+      ? `${evaluationPassedCount.value}/${evaluationCases.length} 通过 · ${evaluationPendingCount.value} 待复核 · ${evaluationFailedCount.value} 未通过`
+      : "建立真实问题用例并完成检索或回答验证",
+    status: evaluationBaselinePassed.value ? "ready" : "pending",
+  },
+  {
     key: "signoff",
     icon: Users,
     title: "人工签署",
@@ -153,8 +177,14 @@ const comparisonDimensions = computed(() => [
   {
     title: "风险与反证",
     description: "哪些条件会让方案失效，是否存在相互冲突的来源",
-    status: evaluationCases.length ? "已有评估用例" : "待建立反证清单",
-    tone: evaluationCases.length ? "ready" : "pending",
+    status: evaluationCases.length
+      ? evaluationFailedCount.value
+        ? `${evaluationFailedCount.value} 个未通过`
+        : evaluationBaselinePassed.value
+          ? "回归验证通过"
+          : `${evaluationPendingCount.value} 个待复核`
+      : "待建立反证清单",
+    tone: evaluationBaselinePassed.value ? "ready" : "pending",
   },
 ]);
 
@@ -178,6 +208,11 @@ const planSections = computed(() => [
     title: "可行性与风险",
     detail: "技术、业务、成本和合规审查",
     done: reports.length > 0,
+  },
+  {
+    title: "回归验证",
+    detail: "用代表性问题检查知识库召回和回答边界",
+    done: evaluationBaselinePassed.value,
   },
   {
     title: "里程碑与行动项",
@@ -253,6 +288,18 @@ async function saveDraft() {
   }
 }
 
+function analysisGoal() {
+  const details = [
+    form.problem.trim() ? `背景问题与机会：${form.problem.trim()}` : "",
+    form.successMetrics.trim() ? `成功指标：${form.successMetrics.trim()}` : "",
+    form.constraints.trim() ? `约束与假设：${form.constraints.trim()}` : "",
+    form.owner.trim() ? `项目负责人：${form.owner.trim()}` : "",
+    form.deadline ? `期望决策日期：${form.deadline}` : "",
+  ].filter(Boolean);
+  const objective = form.objective.trim();
+  return details.length ? `${objective}。${details.join("。")}` : objective;
+}
+
 async function startAnalysis() {
   if (analysisStarting.value) return;
   if (!form.objective.trim()) {
@@ -262,15 +309,21 @@ async function startAnalysis() {
   analysisStarting.value = true;
   try {
     if (dirty.value && !(await saveDraft())) return;
-    sessionStorage.setItem(
-      `shinkou-project-analysis:${workspaceId.value}:${projectId.value}`,
-      JSON.stringify({ ...form }),
-    );
-    notify("项目定义已保存，正在启动智能分析");
-    await router.push({
-      ...routeTo("project-agent-chat"),
-      query: { workflow: "project-analysis" },
+    const run = await runsApi.create(workspaceId.value, projectId.value, {
+      goal: analysisGoal(),
     });
+    notify("分析已创建，正在进入分析过程");
+    const runId = String(run.id ?? run.runId ?? "");
+    await router.push({
+      ...routeTo("project-run-detail"),
+      params: { ...routeTo("project-run-detail").params, runId },
+    });
+  } catch (error) {
+    notify(
+      error instanceof Error
+        ? `智能分析启动失败：${error.message}`
+        : "智能分析启动失败，请稍后重试",
+    );
   } finally {
     analysisStarting.value = false;
   }
@@ -317,7 +370,7 @@ onMounted(() => void loadDraft());
               ? "保存规划草稿"
               : savedAt
                 ? "已保存"
-          : "尚未保存"
+                : "尚未保存"
         }}
       </button>
       <button
@@ -326,7 +379,9 @@ onMounted(() => void loadDraft());
         :disabled="analysisStarting || saving || planLoadFailed"
         @click="startAnalysis"
       >
-        <Search :size="16" />{{ analysisStarting ? "启动中..." : "保存并开始分析" }}
+        <Search :size="16" />{{
+          analysisStarting ? "启动中..." : "保存并开始分析"
+        }}
       </button>
     </template>
   </PageHeader>
@@ -367,11 +422,11 @@ onMounted(() => void loadDraft());
     <div class="step-list">
       <div
         v-for="(step, index) in [
-          '定义目标',
+          '项目定义',
           '搜集证据',
           '市场对比',
-          '可行性审查',
-          '形成计划书',
+          '回归验证',
+          '形成报告',
         ]"
         :key="step"
         class="step-item"

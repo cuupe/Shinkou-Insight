@@ -1,10 +1,16 @@
 <script setup lang="ts">
 import { RouterView } from "vue-router";
+import { watch } from "vue";
+import { useMediaQuery } from "@vueuse/core";
 import Sidebar from "@/components/navigation/Sidebar.vue";
 import Topbar from "@/components/navigation/Topbar.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
 
 const { mobileOpen } = useWorkspace();
+const narrowScreen = useMediaQuery("(max-width: 760px)");
+watch(narrowScreen, (narrow) => {
+  if (narrow) mobileOpen.value = false;
+}, { immediate: true });
 </script>
 
 <template>
@@ -742,11 +748,13 @@ const { mobileOpen } = useWorkspace();
 
 /* 规划与审查页由多个自然高度区块组成，不能套用工作台的等高 flex
    规则；否则表单、门禁列表和检查记录会在下一行开始前被裁掉。 */
+.app-shell .page-content:has(> .analysis-page),
 .app-shell .page-content:has(> .planning-steps),
 .app-shell .page-content:has(> .review-metrics) {
   overflow-y: auto;
 }
 
+.app-shell .page-content:has(> .analysis-page) > *,
 .app-shell .page-content:has(> .planning-steps) > *,
 .app-shell .page-content:has(> .review-metrics) > * {
   flex: 0 0 auto;

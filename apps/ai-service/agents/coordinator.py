@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from typing import Any
@@ -94,7 +95,7 @@ class AgentCoordinator:
             "planner",
             "plan.create",
             {"goal": goal, "output_language": state.get("output_language", "zh-CN")},
-            "Planner 拆解研究目标",
+            "拆解研究目标与约束",
         )
         persisted = self.repository.get(run_id)
         if persisted and persisted.plan_version and persisted.plan:
@@ -116,23 +117,30 @@ class AgentCoordinator:
 
         while True:
             await self._refresh_dynamic_plan(context, state)
-            research = await self._dispatch(
-                context,
-                state,
-                "internal_researcher",
-                "evidence.retrieve.internal",
-                {
-                    "goal": goal,
-                    "queries": state.get("queries", []),
-                    "evidence": state.get("evidence", []),
-                    "top_k": state.get("top_k", 8),
-                    "retrieval_mode": state.get("retrieval_mode", "HYBRID"),
-                    "use_reranker": state.get("use_reranker", False),
-                    "embedding_config": state.get("embedding_config"),
-                },
-                "Researcher 检索项目资料",
-            )
-            state.update(research)
+            # The primary plan owns the assignments. Independent retrieval
+            # questions execute in bounded parallel workers, then join before
+            # evidence evaluation; only returned results enter the shared state.
+            queries = list(dict.fromkeys(state.get("queries") or [goal]))[:4]
+            research_results = await asyncio.gather(*(
+                self._dispatch(
+                    context, state, "internal_researcher", "evidence.retrieve.internal",
+                    {
+                        "goal": goal, "queries": [query], "evidence": [],
+                        "_task_objective": query,
+                        "top_k": state.get("top_k", 8),
+                        "retrieval_mode": state.get("retrieval_mode", "HYBRID"),
+                        "use_reranker": state.get("use_reranker", False),
+                        "embedding_config": state.get("embedding_config"),
+                    },
+                    f"资料检索 · {index + 1}", refresh_plan=False,
+                ) for index, query in enumerate(queries)
+            ), return_exceptions=True)
+            merged = {item["id"]: item for item in state.get("evidence", [])}
+            for research in research_results:
+                if isinstance(research, BaseException):
+                    raise research
+                merged.update({item["id"]: item for item in research.get("evidence", [])})
+            state["evidence"] = list(merged.values())[:self.max_evidence]
             evaluation = await self._dispatch(
                 context,
                 state,
@@ -147,7 +155,7 @@ class AgentCoordinator:
                     "output_language": state.get("output_language", "zh-CN"),
                     "review_policy": state.get("review_policy", {}),
                 },
-                "Analyst 评估证据充分性",
+                "检查证据覆盖与缺口",
             )
             state.update(evaluation)
             action = state.get("evaluation", {}).get("next_action", "ENOUGH")
@@ -161,7 +169,7 @@ class AgentCoordinator:
                         "goal": goal,
                         "current_round": state.get("current_round", 0),
                     },
-                    "Query Agent 改写检索问题",
+                    "调整检索问题，补充证据",
                 )
                 state.update(rewritten)
                 continue
@@ -177,7 +185,7 @@ class AgentCoordinator:
                         "evidence": state.get("evidence", []),
                         "allow_web_search": state.get("allow_web_search", False),
                     },
-                    "Researcher 检索外部来源",
+                    "检索外部来源",
                 )
                 state.update(external)
             break
@@ -200,7 +208,7 @@ class AgentCoordinator:
                 "evidence": state.get("evidence", []),
                 "output_language": state.get("output_language", "zh-CN"),
             },
-            "Analyst 形成带引用发现",
+            "整理发现与引用依据",
         )
         state.update(findings)
 
@@ -218,7 +226,7 @@ class AgentCoordinator:
                     "review_attempt": attempt,
                     "review_result": state.get("review_result"),
                 },
-                "Writer 撰写研究报告",
+                "撰写分析报告",
                 attempt=attempt,
             )
             state.update(draft)
@@ -233,7 +241,7 @@ class AgentCoordinator:
                     "output_language": state.get("output_language", "zh-CN"),
                     "review_policy": state.get("review_policy", {}),
                 },
-                "Reviewer 审核引用与边界",
+                "核验报告引用与结论边界",
                 attempt=attempt,
             )
             state.update(review)
@@ -259,8 +267,10 @@ class AgentCoordinator:
         title: str,
         *,
         attempt: int = 0,
+        refresh_plan: bool = True,
     ) -> dict[str, Any]:
-        await self._refresh_dynamic_plan(context, state)
+        if refresh_plan:
+            await self._refresh_dynamic_plan(context, state)
         event_node = self._event_nodes.get(recipient, recipient.upper())
         await self._checkpoint(
             context.run_id,
@@ -268,7 +278,7 @@ class AgentCoordinator:
             title,
             self._progress.get(recipient, 0),
         )
-        dispatch_payload = dict(payload)
+        dispatch_payload = {**payload, "_task_title": title}
         if state.get("runtime_model"):
             dispatch_payload["_runtime_model"] = state["runtime_model"]
         if state.get("runtime_web_search"):
@@ -277,16 +287,51 @@ class AgentCoordinator:
             dispatch_payload["_tool_max_calls"] = state["tool_max_calls"]
         if state.get("disabled_tools"):
             dispatch_payload["_disabled_tools"] = state["disabled_tools"]
-        result = await self.bus.request(
-            run_id=context.run_id,
-            sender="research_coordinator",
-            recipient=recipient,
-            intent=intent,
-            payload=dispatch_payload,
-            context=context,
-            attempt=attempt,
+        if state.get("conversation_context") and dispatch_payload.get("goal"):
+            dispatch_payload["goal"] += "\n连续会话背景（供解析指代，不改变当前任务）：\n" + state["conversation_context"]
+        # Model streams may legitimately run longer than their per-read timeout
+        # while emitting reasoning tokens. Let the HTTP client's connect/read
+        # timeouts bound inactivity instead of cancelling an active stream at a
+        # fixed wall-clock deadline.
+        request_task = asyncio.create_task(
+            self.bus.request(
+                run_id=context.run_id,
+                sender="research_coordinator",
+                recipient=recipient,
+                intent=intent,
+                payload=dispatch_payload,
+                context=context,
+                attempt=attempt,
+            )
         )
+
+        async def report_waiting() -> None:
+            started = asyncio.get_running_loop().time()
+            while not request_task.done():
+                await asyncio.sleep(15)
+                if request_task.done():
+                    return
+                elapsed = int(asyncio.get_running_loop().time() - started)
+                await self.events.publish(context.run_id, "node.waiting", {
+                    "node": event_node,
+                    "title": title,
+                    "elapsedSeconds": elapsed,
+                    "detail": f"此步骤仍在执行，已等待 {elapsed} 秒；系统正在等待模型或工具返回完整结果。",
+                })
+
+        waiting_task = asyncio.create_task(report_waiting())
+        try:
+            result = await request_task
+        finally:
+            waiting_task.cancel()
+            await asyncio.gather(waiting_task, return_exceptions=True)
         if result.status != "SUCCEEDED":
+            await self.events.publish(context.run_id, "node.failed", {
+                "node": event_node, "title": title, "agent": recipient,
+                "detail": result.error or "子任务执行失败",
+            })
+            if self.repository.is_cancelled(context.run_id):
+                raise RunCancelled("run cancelled by caller")
             raise RuntimeError(result.error or f"agent failed: {recipient}")
         await self.events.publish(
             context.run_id,

@@ -42,9 +42,9 @@ async def lifespan(app: FastAPI):
 
     async def execute_queued(request):
         await container.runtime.execute(request)
-        run = container.repository.get(request.run_id)
-        if run and run.status == "FAILED":
-            raise RuntimeError(run.error_message or "research run failed")
+        # Runtime persists expected model/tool failures as terminal run state.
+        # Re-queueing that same request repeats the whole analysis and can incur
+        # duplicate provider charges; users retry explicitly with a new run ID.
 
     await task_queue.run_worker(execute_queued)
     try:

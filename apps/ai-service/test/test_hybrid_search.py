@@ -6,6 +6,7 @@ from rag.hybrid import (
     extract_search_terms,
     fuse_ranked_candidates,
 )
+from rag.keyword import asset_name_matches, explicit_file_names
 
 
 def test_chinese_query_produces_entity_ngrams_and_bounded_variants():
@@ -15,6 +16,34 @@ def test_chinese_query_produces_entity_ngrams_and_bounded_variants():
     assert "庖丁" in terms
     assert 1 <= len(variants) <= 3
     assert all(len(item) <= len("庖丁是什么时代的人，知识库中有记录吗") * 2 for item in variants)
+
+
+def test_english_query_ignores_common_words_and_citation_instructions():
+    terms = extract_search_terms(
+        "WHO headquarters location official website. Check this project knowledge base first; "
+        "if absent, search the official WHO site and cite it. If you cannot find an official "
+        "source, say so."
+    )
+
+    assert "who" not in terms
+    assert "if" not in terms
+    assert "and" not in terms
+    assert "you" not in terms
+    assert "an" not in terms
+    assert "cite" not in terms
+    assert "source" not in terms
+    assert "headquarters" in terms
+    assert "location" in terms
+
+
+def test_explicit_filename_is_extracted_and_matches_only_that_asset():
+    names = explicit_file_names("请总结 test.txt 的主要内容")
+
+    assert names == ["test.txt"]
+    assert asset_name_matches("test.txt", names)
+    assert asset_name_matches("项目资料/test.txt", names)
+    assert not asset_name_matches("not-test.txt", names)
+    assert not asset_name_matches("斗破苍穹.txt", names)
 
 
 def test_weighted_rrf_deduplicates_chunks_and_preserves_channel_scores():

@@ -5,7 +5,9 @@ from typing import Protocol, Sequence
 
 from embeddings.providers import EmbeddingProvider
 from models.schemas import Evidence
-from rag.hybrid import bm25_scores, build_query_variants, extract_search_terms
+from rag.hybrid import bm25_scores, build_query_variants
+from rag.keyword import asset_name_matches, explicit_file_names, fetch_keyword_rows
+from rag.reranker import LexicalReranker, retain_relevant_items
 
 
 class Retriever(Protocol):
@@ -67,6 +69,7 @@ class InMemoryRetriever:
     ) -> list[Evidence]:
         filters = filters or {}
         allowed_assets = {str(value) for value in filters.get("assetIds", [])}
+        file_names = explicit_file_names(question)
         candidates: list[dict] = []
         for chunk in self.chunks:
             if (
@@ -75,6 +78,10 @@ class InMemoryRetriever:
             ):
                 continue
             if allowed_assets and str(chunk.get("asset_id")) not in allowed_assets:
+                continue
+            if file_names and not asset_name_matches(
+                str(chunk.get("asset_name") or chunk.get("source_name") or ""), file_names
+            ):
                 continue
             candidates.append(chunk)
         variants = build_query_variants(question)
@@ -109,7 +116,7 @@ class InMemoryRetriever:
             # by returning the tenant-scoped best-effort candidates; Milvus
             # production retrieval always has dense recall for this case.
             matched = ranked
-        return [
+        items = [
             Evidence(
                 id=f"E{index}",
                 chunk_id=chunk["chunk_id"],
@@ -123,6 +130,10 @@ class InMemoryRetriever:
             )
             for index, (score, chunk) in enumerate(matched[:top_k], start=1)
         ]
+        if use_reranker:
+            reranked = await LexicalReranker().rerank(question, items)
+            return retain_relevant_items(question, reranked)
+        return items
 
 
 class PostgresKeywordRetriever:
@@ -168,32 +179,10 @@ class PostgresKeywordRetriever:
             raise RuntimeError("Postgres retriever has not been started")
         filters = filters or {}
         asset_ids = [int(value) for value in filters.get("assetIds", [])]
-        variants = build_query_variants(question)
-        terms = extract_search_terms(" ".join(variants), max_terms=64)
-        patterns: list[str] = []
-        for term in terms:
-            escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            patterns.append(f"%{escaped}%")
-        patterns = patterns or ["%__shinkou_no_keyword_match__%"]
-        sql = """
-            SELECT c.id, c.asset_id, a.name, c.page_number, c.section_title, c.content
-            FROM asset_chunks c
-            JOIN knowledge_assets a ON a.id = c.asset_id
-            JOIN projects p ON p.id = a.project_id
-            WHERE p.workspace_id = %s AND p.id = %s AND a.index_status = 'SUCCESS'
-              AND (c.search_vector @@ plainto_tsquery('simple', %s) OR c.content ILIKE ANY(%s))
-        """
-        params: list = [workspace_id, project_id, question, patterns]
-        if asset_ids:
-            sql += " AND c.asset_id = ANY(%s)"
-            params.append(asset_ids)
-        sql += " ORDER BY a.updated_at DESC, c.chunk_index LIMIT %s"
-        params.append(top_k)
-        async with self._pool.connection() as connection:
-            async with connection.cursor() as cursor:
-                await cursor.execute(sql, params)
-                rows = await cursor.fetchall()
-        return [
+        rows = await fetch_keyword_rows(
+            self._pool, workspace_id, project_id, question, asset_ids, top_k,
+        )
+        items = [
             Evidence(
                 id=f"E{index}",
                 chunk_id=row[0],
@@ -203,7 +192,12 @@ class PostgresKeywordRetriever:
                 section_title=row[4],
                 asset_id=row[1],
                 asset_name=row[2],
-                score=1.0,
+                score=float(row[6]),
+                keyword_score=float(row[6]),
             )
             for index, row in enumerate(rows, start=1)
         ]
+        if use_reranker:
+            reranked = await LexicalReranker().rerank(question, items)
+            return retain_relevant_items(question, reranked)
+        return items

@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
@@ -80,9 +81,11 @@ public class AgentController {
             @PathVariable Long projectId,
             @PathVariable String runId,
             @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId,
+            @RequestParam(value = "afterId", required = false) String afterId,
             Authentication authentication
     ) {
-        return agentService.subscribe(workspaceId, projectId, userId(authentication), runId, parseEventId(lastEventId));
+        return agentService.subscribe(workspaceId, projectId, userId(authentication), runId,
+                parseEventId(lastEventId == null || lastEventId.isBlank() ? afterId : lastEventId));
     }
 
     @PostMapping("/runs/{runId}/cancel")

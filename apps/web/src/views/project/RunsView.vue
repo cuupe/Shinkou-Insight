@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import {
   AlertCircle,
   ArrowRight,
@@ -41,6 +41,9 @@ const tasks = ref<QueueTask[]>([]);
 const searchQuery = ref("");
 const statusFilter = ref<"all" | QueueStatus>("all");
 const priorityFilter = ref("all");
+const syncError = ref("");
+let pollTimer: ReturnType<typeof setTimeout> | undefined;
+let loadVersion = 0;
 
 const queueStatusLabelMap: Record<QueueStatus, string> = {
   queued: "等待中",
@@ -57,7 +60,7 @@ function queueStatusLabel(status: QueueStatus) {
 function mapRun(run: ResearchRun): QueueTask {
   const rawStatus = String(run.status || "PENDING").toLowerCase();
   const status: QueueStatus =
-    rawStatus === "running"
+    rawStatus === "paused" ? "paused" : rawStatus === "running" || rawStatus === "cancelling"
       ? "running"
       : rawStatus === "completed"
         ? "completed"
@@ -83,20 +86,28 @@ function mapRun(run: ResearchRun): QueueTask {
     source: "research",
     projectName: selectedProject.value?.name || "—",
     time: formatDateTime(run.updatedAt || run.createdAt, "—"),
-    duration: String(run.duration || "—"),
-    tokens: String(run.tokens || "—"),
+    duration: run.durationSeconds == null ? "—" : `${run.durationSeconds} 秒`,
+    tokens: run.tokenCount == null ? "暂未返回" : Number(run.tokenCount).toLocaleString(),
   };
 }
 
-onMounted(async () => {
+async function loadRuns() {
+  clearTimeout(pollTimer);
+  const version = ++loadVersion;
   try {
-    tasks.value = (await runsApi.list(workspaceId.value, projectId.value)).map(
-      mapRun,
-    );
+    const result = await runsApi.list(workspaceId.value, projectId.value);
+    if (version !== loadVersion) return;
+    tasks.value = result.map(mapRun);
+    syncError.value = "";
   } catch (error) {
-    notify(error instanceof Error ? error.message : "任务队列加载失败");
+    if (version !== loadVersion) return;
+    syncError.value = error instanceof Error ? error.message : "分析记录同步失败";
+  } finally {
+    if (version === loadVersion) pollTimer = setTimeout(() => void loadRuns(), 4000);
   }
-});
+}
+watch(() => [workspaceId.value, projectId.value], () => { tasks.value = []; void loadRuns(); }, { immediate: true });
+onUnmounted(() => { loadVersion++; clearTimeout(pollTimer); });
 
 const filteredTasks = computed(() => {
   const query = searchQuery.value.trim().toLowerCase();
@@ -147,8 +158,8 @@ async function retryTask(task: QueueTask) {
       projectId.value,
       task.runId,
     );
-    Object.assign(task, mapRun(remote));
-    notify("任务已重新排队");
+    openTask(mapRun(remote));
+    notify("已创建新的分析，原记录已保留");
   } catch (error) {
     notify(error instanceof Error ? error.message : "任务重试失败");
   }
@@ -171,9 +182,9 @@ async function cancelQueuedTask(task: QueueTask) {
 
 <template>
   <PageHeader
-    eyebrow="PROJECT / AGENT QUEUE"
-    title="Agent 任务队列"
-    :subtitle="`${selectedProject?.name || '暂无项目'} · 统一查看 Agent 的等待、执行和结果状态`"
+    eyebrow="PROJECT / ANALYSIS"
+    title="智能分析记录"
+    :subtitle="`${selectedProject?.name || '暂无项目'} · 查看每次分析的进度、过程与结果`"
   >
   </PageHeader>
 
@@ -210,7 +221,7 @@ async function cancelQueuedTask(task: QueueTask) {
         <h2>执行任务</h2>
         <p>每个任务都会沿着规划、检索、核对和回答阶段推进。</p>
       </div>
-      <span class="queue-live-note"><i />状态自动更新</span>
+      <span class="queue-live-note" :title="syncError"><i />{{ syncError ? '同步中断，正在重试' : '每 4 秒同步状态' }}</span>
     </div>
     <div class="queue-toolbar">
       <label class="queue-search"

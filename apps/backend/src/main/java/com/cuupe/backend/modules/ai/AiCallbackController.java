@@ -1,6 +1,6 @@
 package com.cuupe.backend.modules.ai;
 
-import com.cuupe.backend.modules.research.mapper.ResearchRunMapper;
+import com.cuupe.backend.modules.research.service.ResearchRunProgressService;
 import com.cuupe.backend.modules.agent.service.AgentService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -9,7 +9,6 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
-import java.util.Set;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
@@ -17,7 +16,7 @@ import java.security.MessageDigest;
 @RequestMapping("/internal/ai")
 @RequiredArgsConstructor
 public class AiCallbackController {
-    private final ResearchRunMapper researchRunMapper;
+    private final ResearchRunProgressService researchProgress;
     private final AgentService agentService;
 
     @Value("${shinkou.ai.internal-api-key:local-dev-key}")
@@ -28,10 +27,8 @@ public class AiCallbackController {
         verify(apiKey);
         Long projectId = longValue(body.get("projectId"));
         Long userId = longValue(body.get("userId"));
-        String state = String.valueOf(body.getOrDefault("status", "RUNNING")).toUpperCase();
         if (projectId == null || userId == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "callback context missing");
-        if (!Set.of("RUNNING", "COMPLETED", "FAILED", "CANCELLED").contains(state)) return;
-        researchRunMapper.updateStatus(runId, projectId, userId, state);
+        researchProgress.accept(runId, projectId, userId, body);
     }
 
     @PostMapping("/agent-runs/{runKey}/callback")

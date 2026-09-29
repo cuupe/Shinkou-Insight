@@ -8,6 +8,7 @@ import {
   ClipboardList,
   Download,
   FolderOpen,
+  ListChecks,
   MessageCircle,
   ShieldCheck,
 } from "@lucide/vue";
@@ -38,6 +39,13 @@ const workflowSteps = [
     icon: MessageCircle,
   },
   {
+    label: "评估回归",
+    description: "用真实问题检查知识库回答",
+    route: "project-evaluation",
+    routes: ["project-evaluation"],
+    icon: BarChart3,
+  },
+  {
     label: "审查定稿",
     description: "核对证据、风险与责任",
     route: "project-review",
@@ -50,6 +58,13 @@ const workflowSteps = [
     route: "project-reports",
     routes: ["project-reports"],
     icon: Download,
+  },
+  {
+    label: "行动项落地",
+    description: "把建议分派并跟踪完成",
+    route: "project-action-items",
+    routes: ["project-action-items"],
+    icon: ListChecks,
   },
 ];
 
@@ -83,8 +98,8 @@ function stepClass(index: number) {
     <summary class="project-workflow-summary">
       <span class="project-workflow-summary-copy">
         <span class="project-workflow-kicker">PROJECT DELIVERY FLOW</span>
-        <strong>从项目输入到可交付成果</strong>
-        <small>先定义问题，再让 Agent 分析，最后由人确认、审查并导出。</small>
+        <strong>从项目输入到交付与跟进</strong>
+        <small>先定义问题并验证回答，再审查证据、发布成果并跟进建议。</small>
       </span>
       <span class="project-workflow-summary-side">
         <span v-if="activeStep" class="project-workflow-current">
@@ -237,6 +252,7 @@ function stepClass(index: number) {
   gap: 0.75rem;
   margin-top: 0.75rem;
   padding-top: 0.75rem;
+  overflow-x: auto;
   border-top: 0.0625rem solid
     color-mix(in oklab, var(--workspace-border) 75%, transparent);
 }
@@ -385,14 +401,10 @@ function stepClass(index: number) {
   color: var(--teal-dark);
 }
 
-@media (max-width: 60rem) {
-  .project-workflow {
-    overflow-x: auto;
-  }
-
+@media (max-width: 70rem) {
   .project-workflow-track,
   .project-workflow-support {
-    min-width: 53rem;
+    min-width: 68rem;
   }
 }
 

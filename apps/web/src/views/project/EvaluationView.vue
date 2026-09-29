@@ -6,13 +6,24 @@ import {
   CheckCircle2,
   CircleAlert,
   ClipboardCheck,
+  MessageCircle,
   Plus,
   RefreshCw,
   Target,
   Zap,
 } from "@lucide/vue";
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProjectWorkflow from "@/components/project/ProjectWorkflow.vue";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { evaluationApi } from "@/api/evaluation";
 import { statisticsApi } from "@/api/statistics";
@@ -24,12 +35,37 @@ const {
   workspaceId,
   projectId,
   statistics,
+  router,
+  routeTo,
 } = useWorkspace();
+const route = useRoute();
 const evaluationCases = reactive(evaluationSeed);
 const selectedCaseId = ref(evaluationCases[0]?.id ?? "");
 const statusFilter = ref("all");
 const isRunning = ref(false);
-const lastRunLabel = ref("尚未运行评估");
+const isUpdatingCase = ref(false);
+const lastRunLabel = ref("尚未同步评估数据");
+const caseDialogOpen = ref(false);
+const caseForm = reactive({ query: "", expectedAnswer: "" });
+
+watch(
+  () => evaluationCases.map((item) => item.id),
+  (ids) => {
+    const requestedCaseId = route.query.caseId;
+    if (typeof requestedCaseId === "string" && ids.includes(requestedCaseId)) {
+      selectedCaseId.value = requestedCaseId;
+    } else if (!selectedCaseId.value || !ids.includes(selectedCaseId.value)) {
+      selectedCaseId.value = ids[0] || "";
+    }
+  },
+  { immediate: true },
+);
+watch(
+  () => route.query.caseId,
+  (id) => {
+    if (typeof id === "string") selectedCaseId.value = id;
+  },
+);
 
 const statusLabels: Record<string, string> = {
   passed: "已通过",
@@ -109,7 +145,7 @@ const metricCards = computed(() => [
   {
     label: "通过用例",
     value: `${evaluationCases.filter((item) => item.status === "passed").length}/${evaluationCases.length}`,
-    change: "本轮评估结果",
+    change: "人工核验状态",
     icon: Zap,
     tone: "amber",
   },
@@ -165,19 +201,27 @@ function evaluationStatusLabel(status: string) {
   return statusLabels[status] || status;
 }
 
-async function createEvaluation() {
-  const query = window.prompt("请输入评估问题");
-  if (!query?.trim()) return;
+function createEvaluation() {
+  caseForm.query = "";
+  caseForm.expectedAnswer = "";
+  caseDialogOpen.value = true;
+}
 
+async function saveEvaluationCase() {
+  const query = caseForm.query.trim();
+  if (!query) return;
   try {
     const created = await evaluationApi.create(workspaceId.value, {
       projectId: projectId.value > 0 ? projectId.value : undefined,
-      query: query.trim(),
+      query,
+      expectedAnswer: caseForm.expectedAnswer.trim() || undefined,
     });
     const id = String(created.id ?? "—");
     evaluationCases.unshift({
       id,
-      query: String(created.query || query.trim()),
+      projectId: projectId.value > 0 ? projectId.value : undefined,
+      query: String(created.query || query),
+      expectedAnswer: String(created.expectedAnswer || caseForm.expectedAnswer.trim()),
       recall: created.recall == null ? "—" : `${String(created.recall)}%`,
       citation: created.citation == null ? "—" : `${String(created.citation)}%`,
       json: created.jsonScore == null ? "—" : `${String(created.jsonScore)}%`,
@@ -185,13 +229,14 @@ async function createEvaluation() {
     });
     selectedCaseId.value = id;
     statusFilter.value = "all";
+    caseDialogOpen.value = false;
     notify("评估用例已创建");
   } catch (error) {
     notify(error instanceof Error ? error.message : "评估用例创建失败");
   }
 }
 
-async function runEvaluation() {
+async function syncEvaluationData() {
   if (isRunning.value) return;
   isRunning.value = true;
   try {
@@ -211,6 +256,7 @@ async function runEvaluation() {
           projectId:
             item.projectId == null ? undefined : Number(item.projectId),
           query: String(item.query || ""),
+          expectedAnswer: String(item.expectedAnswer || ""),
           recall: item.recall == null ? "—" : `${String(item.recall)}%`,
           citation: item.citation == null ? "—" : `${String(item.citation)}%`,
           json: item.jsonScore == null ? "—" : `${String(item.jsonScore)}%`,
@@ -228,11 +274,58 @@ async function runEvaluation() {
     lastRunLabel.value = latest
       ? `最近同步：${formatDateTime(latest, "—")}`
       : "评估数据已同步";
-    notify("评估结果已同步");
+    notify("已有评估结果已同步");
   } catch (error) {
     notify(error instanceof Error ? error.message : "评估结果同步失败");
   } finally {
     isRunning.value = false;
+  }
+}
+
+function openSelectedCaseInPlayground() {
+  if (!selectedCase.value) return;
+  void router.push({
+    ...routeTo("project-playground"),
+    query: {
+      query: selectedCase.value.query,
+      evaluationCaseId: selectedCase.value.id,
+    },
+  });
+}
+
+function openSelectedCaseInAgent() {
+  if (!selectedCase.value) return;
+  void router.push({
+    ...routeTo("project-agent-chat"),
+    query: {
+      prompt: selectedCase.value.query,
+      evaluationCaseId: selectedCase.value.id,
+    },
+  });
+}
+
+async function updateSelectedCaseStatus(
+  status: "passed" | "review" | "failed",
+) {
+  const item = selectedCase.value;
+  if (!item || isUpdatingCase.value || item.status === status) return;
+  isUpdatingCase.value = true;
+  try {
+    const updated = await evaluationApi.update(workspaceId.value, item.id, {
+      status: status.toUpperCase(),
+    });
+    item.status = String(updated.status || status).toLowerCase();
+    notify(
+      status === "passed"
+        ? "用例已标记通过"
+        : status === "failed"
+          ? "用例已标记未通过"
+          : "用例已设为待复核",
+    );
+  } catch (error) {
+    notify(error instanceof Error ? error.message : "用例状态更新失败");
+  } finally {
+    isUpdatingCase.value = false;
   }
 }
 </script>
@@ -241,7 +334,7 @@ async function runEvaluation() {
   <PageHeader
     eyebrow="PROJECT / QUALITY"
     title="评估"
-    subtitle="用可重复的测试集衡量检索和回答质量"
+    subtitle="维护回归问题集，可分别检查知识库召回或 Agent（含联网搜索）回答"
   >
     <template #action>
       <button
@@ -254,6 +347,8 @@ async function runEvaluation() {
     </template>
   </PageHeader>
 
+  <ProjectWorkflow />
+
   <div class="evaluation-overview">
     <div class="evaluation-overview-copy">
       <div class="overview-status">
@@ -265,16 +360,16 @@ async function runEvaluation() {
       <p>
         {{
           evaluationCases.length
-            ? "以下指标根据后端返回的评估用例计算。"
-            : "创建评估用例后，这里会显示真实质量指标。"
+            ? "选择用例可单测知识库召回，也可进入 Agent 检查联网搜索与无依据时的回答边界。"
+            : "添加真实问题建立回归集，记录它应命中知识库、联网查找，还是明确答复缺少依据。"
         }}
       </p>
     </div>
     <div class="overview-run">
       <span>{{ lastRunLabel }}</span>
-      <button class="text-button" type="button" @click="runEvaluation">
+      <button class="text-button" type="button" :disabled="isRunning" @click="syncEvaluationData">
         <RefreshCw :size="14" :class="{ 'is-spinning': isRunning }" />{{
-          isRunning ? "运行中…" : "重新运行"
+          isRunning ? "同步中…" : "同步已有结果"
         }}
       </button>
     </div>
@@ -416,9 +511,9 @@ async function runEvaluation() {
         class="button button-secondary button-sm"
         type="button"
         :disabled="isRunning"
-        @click="runEvaluation"
+        @click="syncEvaluationData"
       >
-        <BarChart3 :size="15" />{{ isRunning ? "评估中…" : "运行评估" }}
+        <RefreshCw :size="15" />{{ isRunning ? "同步中…" : "同步已有结果" }}
       </button>
     </div>
     <div class="table-toolbar">
@@ -470,17 +565,105 @@ async function runEvaluation() {
   </section>
 
   <div v-if="selectedCase" class="selected-case">
-    <span class="selected-case-icon"><CheckCircle2 :size="17" /></span>
+    <span class="selected-case-icon"><ClipboardCheck :size="17" /></span>
     <div>
       <small>当前选中用例 · {{ selectedCase.id }}</small
       ><strong>{{ displayQuery(selectedCase) }}</strong>
+      <p v-if="selectedCase.expectedAnswer" class="selected-case-expected">
+        验收标准：{{ selectedCase.expectedAnswer }}
+      </p>
     </div>
     <span
       class="selected-case-status"
       :class="`status-${selectedCase.status}`"
       >{{ evaluationStatusLabel(selectedCase.status) }}</span
     >
+    <button
+      class="button button-secondary button-sm"
+      type="button"
+      @click="openSelectedCaseInPlayground"
+    >
+      <ArrowRight :size="14" />载入 Playground 检索
+    </button>
+    <button
+      class="button button-primary button-sm"
+      type="button"
+      @click="openSelectedCaseInAgent"
+    >
+      <MessageCircle :size="14" />带入 Agent 验证
+    </button>
+    <button
+      class="button button-primary button-sm"
+      type="button"
+      :disabled="isUpdatingCase || selectedCase.status === 'passed'"
+      @click="updateSelectedCaseStatus('passed')"
+    >
+      <CheckCircle2 :size="14" />标记通过
+    </button>
+    <button
+      class="button button-secondary button-sm"
+      type="button"
+      :disabled="isUpdatingCase || selectedCase.status === 'failed'"
+      @click="updateSelectedCaseStatus('failed')"
+    >
+      <CircleAlert :size="14" />标记未通过
+    </button>
+    <button
+      v-if="selectedCase.status !== 'review'"
+      class="text-button"
+      type="button"
+      :disabled="isUpdatingCase"
+      @click="updateSelectedCaseStatus('review')"
+    >
+      重新复核
+    </button>
   </div>
+
+  <Dialog v-model:open="caseDialogOpen">
+    <DialogContent class="evaluation-case-dialog">
+      <DialogHeader>
+        <DialogTitle>新建评估用例</DialogTitle>
+        <DialogDescription>
+          记录真实问题和验收边界，之后可分别载入知识库检索或 Agent 完整流程验证。
+        </DialogDescription>
+      </DialogHeader>
+      <div class="evaluation-case-form">
+        <label>
+          测试问题
+          <textarea
+            v-model="caseForm.query"
+            rows="3"
+            placeholder="例如：整理公司差旅报销的住宿标准"
+          />
+        </label>
+        <label>
+          期望答案或验收标准（可选）
+          <textarea
+            v-model="caseForm.expectedAnswer"
+            rows="4"
+            placeholder="如：应命中项目资料；应联网查找最新来源；没有可信来源时应明确说无法确认。"
+          />
+        </label>
+      </div>
+      <DialogFooter>
+        <button
+          class="button button-secondary"
+          type="button"
+          @click="caseDialogOpen = false"
+        >
+          取消
+        </button>
+        <button
+          class="button button-primary"
+          type="button"
+          :disabled="!caseForm.query.trim()"
+          @click="saveEvaluationCase"
+        >
+          <Plus :size="15" />保存用例
+        </button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>
 
 <style scoped>
@@ -930,6 +1113,7 @@ async function runEvaluation() {
 }
 .selected-case {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.6875rem;
   margin-top: 0.875rem;
@@ -967,6 +1151,13 @@ async function runEvaluation() {
   margin-top: 0.1875rem;
   color: var(--workspace-text);
   font-size: 0.8125rem;
+}
+.selected-case-expected {
+  margin: 0.25rem 0 0;
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  white-space: pre-line;
 }
 .selected-case-status {
   margin-left: auto;
@@ -1116,6 +1307,36 @@ async function runEvaluation() {
 .trend-panel,
 .quality-panel {
   min-height: 24rem;
+}
+.evaluation-case-dialog {
+  max-width: 40rem !important;
+}
+.evaluation-case-form {
+  display: grid;
+  gap: 0.875rem;
+}
+.evaluation-case-form label {
+  display: grid;
+  gap: 0.375rem;
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+}
+.evaluation-case-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.5rem;
+  outline: 0;
+  padding: 0.625rem 0.75rem;
+  background: var(--surface-soft);
+  color: var(--workspace-text);
+  font: inherit;
+  font-size: 0.8125rem;
+}
+.evaluation-case-form textarea:focus {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 0.1875rem color-mix(in oklab, var(--teal) 16%, transparent);
 }
 .quality-trend-content {
   display: flex;

@@ -12,7 +12,16 @@
     <update id="markIndexing">UPDATE knowledge_assets SET parse_status='PROCESSING', index_status='INDEXING', progress=10, chunk_count=0, error_message=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=#{id} AND project_id=#{projectId}</update>
     <update id="markIndexed">UPDATE knowledge_assets SET parse_status='SUCCESS', index_status='SUCCESS', progress=100, chunk_count=(SELECT COUNT(1) FROM asset_chunks WHERE asset_id=#{id}), error_message=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=#{id} AND project_id=#{projectId}</update>
     <update id="markIndexFailed">UPDATE knowledge_assets SET parse_status='FAILED', index_status='FAILED', error_message=#{message}, updated_at=CURRENT_TIMESTAMP WHERE id=#{id} AND project_id=#{projectId}</update>
-    <select id="findChunks" resultType="map">SELECT c.id, c.chunk_index AS "index", c.content, c.page_number AS "pageNumber", c.section_title AS "sectionTitle" FROM asset_chunks c JOIN knowledge_assets a ON a.id=c.asset_id JOIN projects p ON p.id=a.project_id JOIN workspace_members wm ON wm.workspace_id=p.workspace_id AND wm.user_id=#{userId} AND wm.status='ACTIVE' WHERE c.asset_id=#{assetId} AND a.project_id=#{projectId} ORDER BY c.chunk_index</select>
+    <select id="findChunks" resultType="map">
+        SELECT c.id, c.chunk_index AS "index", c.content, c.page_number AS "pageNumber", c.section_title AS "sectionTitle"
+        FROM asset_chunks c JOIN knowledge_assets a ON a.id=c.asset_id
+        JOIN projects p ON p.id=a.project_id
+        JOIN workspace_members wm ON wm.workspace_id=p.workspace_id AND wm.user_id=#{userId} AND wm.status='ACTIVE'
+        WHERE c.asset_id=#{assetId} AND a.project_id=#{projectId}
+        <if test="chunkId != null">AND c.id=#{chunkId}</if>
+        <if test="pageNumber != null">AND c.page_number=#{pageNumber}</if>
+        ORDER BY c.chunk_index LIMIT #{limit} OFFSET #{offset}
+    </select>
     <delete id="deleteChunks">DELETE FROM asset_chunks WHERE asset_id=#{assetId}</delete>
     <insert id="insertChunk">INSERT INTO asset_chunks(asset_id,chunk_index,content) VALUES(#{assetId},#{chunkIndex},#{content})</insert>
 </mapper>

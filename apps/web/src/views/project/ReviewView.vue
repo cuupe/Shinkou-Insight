@@ -86,6 +86,15 @@ const indexedCount = computed(
 const enabledRuleCount = computed(
   () => rules.filter((rule) => rule.enabled).length,
 );
+const failedEvaluationCount = computed(
+  () => evaluationCases.filter((item) => item.status === "failed").length,
+);
+const pendingEvaluationCount = computed(
+  () => evaluationCases.filter((item) => item.status === "review").length,
+);
+const passedEvaluationCount = computed(
+  () => evaluationCases.filter((item) => item.status === "passed").length,
+);
 const projectName = computed(() => selectedProject.value?.name || "当前项目");
 
 const checks = computed(() => [
@@ -120,9 +129,13 @@ const checks = computed(() => [
     key: "evaluation",
     title: "反证与回归用例",
     detail: evaluationCases.length
-      ? `${evaluationCases.length} 个评估用例可用于回归`
+      ? `${passedEvaluationCount.value}/${evaluationCases.length} 个用例已通过 · ${pendingEvaluationCount.value} 个待复核 · ${failedEvaluationCount.value} 个未通过`
       : "尚未建立反证用例",
-    status: evaluationCases.length ? "review" : "blocked",
+    status: !evaluationCases.length || failedEvaluationCount.value
+      ? "blocked"
+      : pendingEvaluationCount.value
+        ? "review"
+        : "ready",
     icon: FileCheck2,
   },
   {
@@ -139,6 +152,7 @@ const checks = computed(() => [
 const statusCopy: Record<string, string> = {
   blocked: "阻断",
   review: "待核验",
+  ready: "已通过",
   pending: "待签署",
 };
 
@@ -662,6 +676,10 @@ onMounted(loadGovernance);
   color: #a87520;
   background: #fff4df;
 }
+.check-icon.ready {
+  color: var(--teal-dark);
+  background: color-mix(in oklab, var(--teal) 14%, var(--surface));
+}
 .check-icon.pending {
   color: #6d7c81;
   background: var(--surface-soft);
@@ -699,6 +717,10 @@ onMounted(loadGovernance);
 .check-status.review {
   color: #a87520;
   background: #fff4df;
+}
+.check-status.ready {
+  color: var(--teal-dark);
+  background: color-mix(in oklab, var(--teal) 14%, var(--surface));
 }
 .check-status.pending {
   color: #6d7c81;

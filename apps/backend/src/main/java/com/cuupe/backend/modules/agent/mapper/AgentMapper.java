@@ -22,6 +22,7 @@ public interface AgentMapper {
     int deleteThread(@Param("id") Long id, @Param("workspaceId") Long workspaceId, @Param("projectId") Long projectId, @Param("userId") Long userId);
     int insertMessage(AgentMessage message);
     List<AgentMessage> findMessages(@Param("threadId") Long threadId, @Param("projectId") Long projectId, @Param("userId") Long userId);
+    List<AgentMessage> findContextMessages(@Param("threadId") Long threadId, @Param("projectId") Long projectId, @Param("userId") Long userId, @Param("beforeMessageId") Long beforeMessageId);
     AgentMessage findFirstUserMessage(@Param("threadId") Long threadId, @Param("projectId") Long projectId, @Param("userId") Long userId);
     String findMessageKey(@Param("id") Long id);
     String findMessageAttachments(@Param("id") Long id);

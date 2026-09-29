@@ -1,4 +1,10 @@
 import { computed, reactive, ref } from "vue";
+import {
+  applyMessageProgress,
+  elapsedMs,
+  finishMessageProgress,
+  mergeEvent,
+} from "@/utils/agentProgress";
 import { agentApi } from "@/api/agent";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { useAgentQueue } from "@/composables/useAgentQueue";
@@ -19,6 +25,7 @@ import type {
 } from "@/api/types";
 
 type AgentRunCallbacks = {
+  onProgress?: (event: AgentStreamEvent) => void;
   onAccepted?: (runId: string | number) => void;
   onRunStarted?: (data?: AgentRunMetrics) => void;
   onEvent: (event: AgentEvent) => void;
@@ -45,6 +52,7 @@ type AgentTransport = {
       attachments?: AgentAttachment[];
       config?: AgentRunConfig;
       contextMessages?: AgentContextMessage[];
+      resume?: { runId: string; afterEventId?: string };
     },
     callbacks: AgentRunCallbacks,
   ) => Promise<AgentRunAccepted>;
@@ -65,7 +73,7 @@ type ThreadState = AgentThreadSummary & {
   runFinishedAt?: string;
   runDurationMs?: number;
   draft: string;
-  thinking: string;
+  lastEventId?: string;
 };
 
 const threadStates = reactive<Record<string, ThreadState>>({});
@@ -87,9 +95,9 @@ const emptyThread: ThreadState = {
   runFinishedAt: undefined,
   runDurationMs: undefined,
   draft: "",
-  thinking: "",
 };
 const threadOrder = ref<string[]>([]);
+let historyKey = "";
 const activeThreadId = ref<string | null>(null);
 const orphanDraft = ref("");
 const draft = computed<string>({
@@ -117,6 +125,7 @@ type ActiveRunControl = {
   remoteRunId: string | null;
   cancelRequested: boolean;
   cancelPromise?: Promise<void>;
+  accepted?: Promise<void>;
 };
 
 function cancelRemoteRun(
@@ -175,27 +184,38 @@ function summarizeThreadTitle(value: string) {
 function createHttpTransport(): AgentTransport {
   return {
     async run(context, callbacks) {
-      const accepted = await agentApi.sendMessage(
-        context.workspaceId,
-        context.projectId,
-        {
-          threadId: context.threadId,
-          messageId: context.messageId,
-          content: context.content,
-          ...(context.config || {}),
-          attachments: context.attachments?.map(
-            ({ url, previewUrl, file, ...attachment }) => attachment,
-          ),
-          contextMessages: context.contextMessages?.map(
-            ({ attachments, ...message }) => ({
-              ...message,
-              attachments: attachments?.map(
-                ({ url, previewUrl, file, ...attachment }) => attachment,
-              ),
-            }),
-          ),
-        },
-      );
+      const accepted: AgentRunAccepted = context.resume
+        ? {
+            runId: context.resume.runId,
+            messageId: context.messageId,
+            status: "RUNNING",
+            eventsUrl:
+              agentApi.eventsUrl(
+                context.workspaceId,
+                context.projectId,
+                context.resume.runId,
+              ) +
+              (context.resume.afterEventId
+                ? `?afterId=${encodeURIComponent(context.resume.afterEventId)}`
+                : ""),
+          }
+        : await agentApi.sendMessage(context.workspaceId, context.projectId, {
+            threadId: context.threadId,
+            messageId: context.messageId,
+            content: context.content,
+            ...(context.config || {}),
+            attachments: context.attachments?.map(
+              ({ url, previewUrl, file, ...attachment }) => attachment,
+            ),
+            contextMessages: context.contextMessages?.map(
+              ({ attachments, ...message }) => ({
+                ...message,
+                attachments: attachments?.map(
+                  ({ url, previewUrl, file, ...attachment }) => attachment,
+                ),
+              }),
+            ),
+          });
       callbacks.onAccepted?.(accepted.runId);
       const eventSource = new EventSource(
         accepted.eventsUrl ||
@@ -237,6 +257,7 @@ function createHttpTransport(): AgentTransport {
             // mutate the already finalized assistant message.
             return;
           }
+          callbacks.onProgress?.(event);
           handleStreamEvent(event, callbacks, resolve, reject, eventSource);
         };
         eventSource.onopen = clearRetryTimer;
@@ -268,8 +289,7 @@ function handleStreamEvent(
     });
   }
   if (event.type === "event.updated") callbacks.onEvent(event.event);
-  if (event.type === "thinking.delta")
-    callbacks.onThinking?.(event.messageId, event.delta);
+  // Private provider reasoning is never forwarded to presentation callbacks.
   if (event.type === "message.delta")
     callbacks.onDelta(event.messageId, event.delta);
   if (event.type === "message.replace")
@@ -296,6 +316,7 @@ function handleStreamEvent(
       usage: event.usage || event.data?.usage,
       contextCompression:
         event.contextCompression || event.data?.contextCompression,
+      multiAgent: event.multiAgent || event.data?.multiAgent,
     });
     eventSource.close();
     resolve();
@@ -327,7 +348,6 @@ export function useAgentWorkspace() {
   const hasRunningThread = computed(() =>
     threadOrder.value.some((id) => threadStates[id]?.status === "running"),
   );
-  let historyKey = "";
 
   async function loadHistory() {
     if (projectId.value <= 0) return;
@@ -368,16 +388,123 @@ export function useAgentWorkspace() {
           runStartedAt: stored.runStartedAt,
           runFinishedAt: stored.runFinishedAt,
           runDurationMs: stored.runDurationMs,
-          // Drafts and live thinking are local UI state and are intentionally
-          // not persisted in the thread API response.
+          // Execution metadata is restored on each message; drafts stay local.
           draft: "",
-          thinking: "",
         };
         threadOrder.value.push(stored.id);
       });
       activeThreadId.value = threadOrder.value[0] || null;
+      for (const id of threadOrder.value) {
+        const thread = threadStates[id];
+        if (thread?.status === "running" && thread.runId)
+          void resumeThread(thread);
+      }
     } catch {
-      // History is optional for a new project; the empty state remains truthful.
+      historyKey = "";
+      // A failed history request may be retried on the next mount.
+    }
+  }
+
+  async function resumeThread(thread: ThreadState) {
+    const message = [...thread.messages]
+      .reverse()
+      .find((item) => item.role === "assistant" && item.status === "streaming");
+    if (!message || !thread.runId) return;
+    const token = (threadRunTokens.get(thread.id) || 0) + 1;
+    threadRunTokens.set(thread.id, token);
+    runControls.set(thread.id, {
+      token,
+      remoteRunId: thread.runId,
+      cancelRequested: false,
+    });
+    const current = () => threadRunTokens.get(thread.id) === token;
+    try {
+      await transport.run(
+        {
+          workspaceId: workspaceId.value,
+          projectId: projectId.value,
+          threadId: thread.id,
+          messageId: message.id,
+          content: "",
+          resume: {
+            runId: thread.runId,
+            afterEventId: message.lastEventId || thread.lastEventId,
+          },
+        },
+        {
+          onProgress: (event) => {
+            if (!current()) return;
+            applyMessageProgress(message, event);
+            thread.lastEventId = event.eventId || thread.lastEventId;
+            thread.runStartedAt = message.runStartedAt || thread.runStartedAt;
+            thread.runFinishedAt = message.runFinishedAt;
+            thread.runDurationMs = message.runDurationMs;
+            if (event.type === "run.completed" || event.type === "run.failed")
+              thread.events = message.events || [];
+          },
+          onEvent: (event) => {
+            if (current()) {
+              updateEvent(thread, event);
+              rememberEvent(thread, event);
+            }
+          },
+          onDelta: (id, delta) => {
+            if (current() && id === message.id) message.content += delta;
+          },
+          onReplace: (id, content) => {
+            if (current() && id === message.id) message.content = content;
+          },
+          onCitation: (citation) => {
+            if (
+              current() &&
+              !message.citations?.some((item) => item.id === citation.id)
+            ) {
+              (message.citations ||= []).push(citation);
+              thread.citations.push(citation);
+            }
+          },
+          onMedia: (id, media) => {
+            if (current() && id === message.id)
+              (message.media ||= []).push(media);
+          },
+          onArtifact: (id, artifact) => {
+            if (
+              current() &&
+              id === message.id &&
+              !message.attachments?.some((item) => item.id === artifact.id)
+            )
+              (message.attachments ||= []).push(artifact);
+          },
+          onComplete: () => {
+            if (current()) message.status = "completed";
+          },
+          onError: () => {},
+          onRunCompleted: (data) => {
+            if (current()) {
+              thread.tokenUsage = data?.usage || thread.tokenUsage;
+              thread.contextUsage =
+                data?.contextCompression || thread.contextUsage;
+            }
+          },
+        },
+      );
+      if (current()) {
+        thread.status = "completed";
+        message.status = "completed";
+      }
+    } catch (error) {
+      if (current()) {
+        thread.status = "failed";
+        message.status = "failed";
+        finishMessageProgress(message, "failed");
+        thread.events = message.events || [];
+        thread.runFinishedAt = message.runFinishedAt;
+        thread.runDurationMs = message.runDurationMs;
+        if (activeThreadId.value === thread.id)
+          composerError.value = String(error);
+      }
+    } finally {
+      if (current()) runControls.delete(thread.id);
     }
   }
 
@@ -432,7 +559,6 @@ export function useAgentWorkspace() {
       runFinishedAt: undefined,
       runDurationMs: undefined,
       draft: "",
-      thinking: "",
       persisted: false,
     };
     threadOrder.value.unshift(id);
@@ -443,10 +569,7 @@ export function useAgentWorkspace() {
 
   function updateEvent(thread: ThreadState, nextEvent: AgentEvent) {
     if (!nextEvent?.id) return;
-    const current = thread.events;
-    const index = current.findIndex((event) => event.id === nextEvent.id);
-    if (index >= 0) current[index] = nextEvent;
-    else current.push(nextEvent);
+    mergeEvent(thread.events, nextEvent, new Date().toISOString());
   }
 
   function rememberEvent(thread: ThreadState, nextEvent: AgentEvent) {
@@ -485,7 +608,9 @@ export function useAgentWorkspace() {
     }
     const messageId = `message-${Date.now()}`;
     const createdAt = new Date().toISOString();
-    const assistantMessage: AgentMessage = {
+    // Stream callbacks must mutate the proxy so each display frame invalidates
+    // the rendered Markdown, even when no other run events arrive.
+    const assistantMessage = reactive<AgentMessage>({
       id: messageId,
       role: "assistant",
       content: "",
@@ -494,9 +619,15 @@ export function useAgentWorkspace() {
       status: "streaming",
       citations: [],
       media: [],
-    };
+      thinking: "",
+      runStartedAt: createdAt,
+      events: [],
+      agentTasks: [],
+    });
     const contextMessages: AgentContextMessage[] = thread.messages
-      .filter((message) => message.content.trim() || message.attachments?.length)
+      .filter(
+        (message) => message.content.trim() || message.attachments?.length,
+      )
       .map((message) => ({
         role: message.role,
         content:
@@ -531,11 +662,10 @@ export function useAgentWorkspace() {
     thread.events.splice(0);
     thread.eventHistory.splice(0);
     thread.citations.splice(0);
-    thread.thinking = "";
     thread.status = "running";
     // Only a backend-issued run ID is safe to send to the cancel endpoint.
     thread.runId = null;
-    thread.runStartedAt = undefined;
+    thread.runStartedAt = createdAt;
     thread.runFinishedAt = undefined;
     thread.runDurationMs = undefined;
     const queueTask = enqueueTask({
@@ -551,10 +681,14 @@ export function useAgentWorkspace() {
     });
     const token = (threadRunTokens.get(thread.id) || 0) + 1;
     threadRunTokens.set(thread.id, token);
+    let resolveAccepted!: () => void;
     const runControl: ActiveRunControl = {
       token,
       remoteRunId: null,
       cancelRequested: false,
+      accepted: new Promise<void>((resolve) => {
+        resolveAccepted = resolve;
+      }),
     };
     runControls.set(thread.id, runControl);
     const isCurrentRun = () => threadRunTokens.get(thread.id) === token;
@@ -594,8 +728,7 @@ export function useAgentWorkspace() {
       resolveDisplayDone();
     };
     const abortDisplay = () => {
-      if (displayFrame !== undefined)
-        window.cancelAnimationFrame(displayFrame);
+      if (displayFrame !== undefined) window.cancelAnimationFrame(displayFrame);
       displayFrame = undefined;
       pendingDelta = "";
       streamEnded = true;
@@ -650,22 +783,24 @@ export function useAgentWorkspace() {
           contextMessages,
         },
         {
+          onProgress: (event) => {
+            if (!isCurrentRun()) return;
+            applyMessageProgress(assistantMessage, event);
+            thread.lastEventId = event.eventId || thread.lastEventId;
+            if (event.type === "run.completed" || event.type === "run.failed")
+              thread.events = assistantMessage.events || [];
+          },
           onAccepted: (acceptedRunId) => {
             thread.persisted = true;
             runControl.remoteRunId = String(acceptedRunId);
-            if (runControl.cancelRequested) {
-              void cancelRemoteRun(
-                runControl,
-                workspaceId.value,
-                projectId.value,
-              ).catch(() => undefined);
-            } else if (isCurrentRun()) {
+            resolveAccepted();
+            if (isCurrentRun()) {
               thread.runId = String(acceptedRunId);
             }
           },
           onRunStarted: (data) => {
             if (!isCurrentRun()) return;
-            thread.runStartedAt = data?.startedAt;
+            thread.runStartedAt = data?.startedAt || thread.runStartedAt;
             thread.runFinishedAt = undefined;
             thread.runDurationMs = undefined;
           },
@@ -688,10 +823,6 @@ export function useAgentWorkspace() {
           onDelta: (id, delta) => {
             if (!isCurrentRun() || id !== messageId) return;
             enqueueDelta(delta);
-          },
-          onThinking: (id, delta) => {
-            if (!isCurrentRun() || id !== messageId) return;
-            thread.thinking += delta;
           },
           onReplace: (id, content) => {
             if (!isCurrentRun() || id !== messageId) return;
@@ -765,11 +896,23 @@ export function useAgentWorkspace() {
       }
       endDisplay();
       await displayDone;
-      if (isCurrentRun()) thread.status = "completed";
+      if (isCurrentRun()) {
+        thread.status = "completed";
+        thread.runFinishedAt =
+          assistantMessage.runFinishedAt || new Date().toISOString();
+        thread.runDurationMs =
+          assistantMessage.runDurationMs ??
+          elapsedMs(thread.runStartedAt, thread.runFinishedAt, Date.now());
+      }
     } catch (error) {
+      resolveAccepted();
       abortDisplay();
       if (isCurrentRun()) {
         thread.status = "failed";
+        finishMessageProgress(assistantMessage, "failed");
+        thread.events = assistantMessage.events || [];
+        thread.runFinishedAt = assistantMessage.runFinishedAt;
+        thread.runDurationMs = assistantMessage.runDurationMs;
         updateTask(queueTask.id, {
           status: "failed",
           currentStep: "运行失败，需要重试",
@@ -794,31 +937,60 @@ export function useAgentWorkspace() {
   async function stopRun() {
     if (!isRunning.value) return;
     const thread = activeThread.value;
+    if (cancellingThreads.has(thread.id)) return;
     cancellingThreads.add(thread.id);
     const control = runControls.get(thread.id);
     const currentToken = threadRunTokens.get(thread.id) || 0;
-    if (control && control.token === currentToken) {
-      control.cancelRequested = true;
-      void cancelRemoteRun(control, workspaceId.value, projectId.value).catch(
-        () => undefined,
-      );
-    } else if (thread.runId) {
-      void agentApi
-        .cancelRun(workspaceId.value, projectId.value, thread.runId)
-        .catch(() => undefined);
+    const cancelWorkspaceId = workspaceId.value;
+    const cancelProjectId = projectId.value;
+    try {
+      if (control && control.token === currentToken) {
+        control.cancelRequested = true;
+        await control.accepted;
+        await cancelRemoteRun(control, cancelWorkspaceId, cancelProjectId);
+      } else if (thread.runId) {
+        await agentApi.cancelRun(
+          cancelWorkspaceId,
+          cancelProjectId,
+          thread.runId,
+        );
+      }
+    } catch (error) {
+      if (control) {
+        control.cancelRequested = false;
+        control.cancelPromise = undefined;
+      }
+      if (activeThreadId.value === thread.id)
+        composerError.value =
+          error instanceof Error ? error.message : "暂停失败，请重试";
+      return;
+    } finally {
+      cancellingThreads.delete(thread.id);
     }
-    // Unlock the composer immediately. If the POST is still pending, its
-    // onAccepted callback will cancel the real backend run asynchronously.
+    // SSE may already have delivered the terminal snapshot while the cancel
+    // request was in flight. Never overwrite that authoritative final state.
+    if (
+      threadRunTokens.get(thread.id) !== currentToken ||
+      thread.status !== "running"
+    )
+      return;
     threadRunTokens.set(thread.id, currentToken + 1);
     runControls.delete(thread.id);
     thread.status = "completed";
-    thread.runId = null;
+    thread.runFinishedAt = new Date().toISOString();
+    thread.runDurationMs = elapsedMs(
+      thread.runStartedAt,
+      thread.runFinishedAt,
+      Date.now(),
+    );
     if (thread.queueTaskId) pauseTask(thread.queueTaskId);
     const stoppedMessage = thread.messages.at(-1);
     if (
       stoppedMessage?.role === "assistant" &&
       stoppedMessage.status === "streaming"
     ) {
+      finishMessageProgress(stoppedMessage, "cancelled", thread.runFinishedAt);
+      thread.events = stoppedMessage.events || [];
       stoppedMessage.status = "completed";
       stoppedMessage.content += "\n\n已由你暂停本次运行。";
     }
@@ -835,7 +1007,6 @@ export function useAgentWorkspace() {
     eventHistory: computed(() => activeThread.value.eventHistory),
     citations,
     draft,
-    thinking: computed(() => activeThread.value.thinking),
     composerError,
     isRunning,
     hasRunningThread,

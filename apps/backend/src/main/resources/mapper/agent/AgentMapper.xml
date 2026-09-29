@@ -71,6 +71,20 @@
         WHERE m.thread_id = #{threadId} AND t.project_id = #{projectId}
         ORDER BY m.created_at, m.id
     </select>
+    <select id="findContextMessages" resultType="com.cuupe.backend.modules.agent.entity.AgentMessage">
+        SELECT * FROM (
+            SELECT m.id, m.thread_id, m.client_message_id, m.role, m.content, m.model_name,
+                   m.status, m.attachments::text AS attachments, m.created_at
+            FROM agent_messages m
+            JOIN agent_threads t ON t.id = m.thread_id
+            JOIN workspace_members wm ON wm.workspace_id = t.workspace_id
+                AND wm.user_id = #{userId} AND wm.status = 'ACTIVE'
+            WHERE m.thread_id = #{threadId} AND t.project_id = #{projectId}
+                AND m.id &lt; #{beforeMessageId}
+                AND (m.role = 'USER' OR (m.role = 'ASSISTANT' AND m.status = 'COMPLETED'))
+            ORDER BY m.id DESC LIMIT 200
+        ) history ORDER BY id
+    </select>
     <select id="findFirstUserMessage" resultType="com.cuupe.backend.modules.agent.entity.AgentMessage">
         SELECT m.id, m.thread_id, m.client_message_id, m.role, m.content, m.model_name,
                m.status,
