@@ -64,6 +64,7 @@ shinkou:
     base-url: ${SHINKOU_AI_SERVICE_URL:http://localhost:8003}
     internal-api-key: ${SHINKOU_AI_INTERNAL_API_KEY:local-dev-key}
     callback-base-url: ${SHINKOU_AI_CALLBACK_BASE_URL:http://localhost:8080}
+    indexing-timeout-seconds: ${SHINKOU_AI_INDEXING_TIMEOUT_SECONDS:600}
   security:
     environment: ${SHINKOU_ENVIRONMENT:development}
     # Vite 默认使用 5173，4173/4174 用于本地预览或端口自动切换。

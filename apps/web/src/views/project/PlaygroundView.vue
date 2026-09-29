@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import {
+  AlertTriangle,
   ArrowRight,
   CheckCircle2,
+  ClipboardCheck,
   FileText,
   Search,
   SlidersHorizontal,
 } from "@lucide/vue";
-import { ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import PageHeader from "@/components/common/PageHeader.vue";
 import {
   Dialog,
@@ -25,6 +28,8 @@ import {
 } from "@/components/ui/select";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { retrievalApi } from "@/api/retrieval";
+import { evaluationApi } from "@/api/evaluation";
+import { getApiErrorMessage } from "@/api/core";
 import type { KnowledgeSearchItem } from "@/api/types";
 const {
   playgroundQuery,
@@ -34,7 +39,11 @@ const {
   notify,
   workspaceId,
   projectId,
+  evaluationCases,
+  router,
+  routeTo,
 } = useWorkspace();
+const route = useRoute();
 type RetrievalResult = {
   rank: number;
   source: string;
@@ -53,6 +62,8 @@ const retrievalModes = [
 ];
 const retrievalResults = ref<RetrievalResult[]>([]);
 const isSearching = ref(false);
+const searchError = ref("");
+const hasSearched = ref(false);
 const selectedRank = ref<number | null>(null);
 const parameterOpen = ref(false);
 const parameterMode = ref(retrievalMode.value);
@@ -60,6 +71,30 @@ const parameterTopK = ref(topK.value);
 const parameterRerank = ref(rerank.value);
 const evidenceOpen = ref(false);
 const selectedResult = ref<RetrievalResult | null>(null);
+const matchingEvaluationCase = computed(() =>
+  evaluationCases.find(
+    (item) => item.query === playgroundQuery.value.trim(),
+  ),
+);
+const evaluationCaseId = computed(() => {
+  const id = route.query.evaluationCaseId;
+  const routedCase =
+    typeof id === "string"
+      ? evaluationCases.find((item) => item.id === id)
+      : undefined;
+  return routedCase?.query === playgroundQuery.value.trim()
+    ? routedCase.id
+    : matchingEvaluationCase.value?.id || "";
+});
+const queryAlreadySaved = computed(() => Boolean(matchingEvaluationCase.value));
+
+watch(
+  () => route.query.query,
+  (query) => {
+    if (typeof query === "string") playgroundQuery.value = query;
+  },
+  { immediate: true },
+);
 
 function formatScore(value: unknown) {
   const score = Number(value);
@@ -92,6 +127,11 @@ async function runSearch() {
     return;
   }
   isSearching.value = true;
+  searchError.value = "";
+  hasSearched.value = true;
+  retrievalResults.value = [];
+  evidenceOpen.value = false;
+  selectedResult.value = null;
   selectedRank.value = null;
   try {
     const response = await retrievalApi.search(
@@ -112,10 +152,42 @@ async function runSearch() {
     );
   } catch (error) {
     retrievalResults.value = [];
-    notify(error instanceof Error ? error.message : "检索失败，请稍后重试");
+    searchError.value = getApiErrorMessage(error, "检索失败，请检查知识库服务连接后重试");
+    notify(searchError.value);
   } finally {
     isSearching.value = false;
   }
+}
+
+async function saveAsEvaluationCase() {
+  const query = playgroundQuery.value.trim();
+  if (!query || projectId.value <= 0 || queryAlreadySaved.value) return;
+  try {
+    const created = await evaluationApi.create(workspaceId.value, {
+      projectId: projectId.value,
+      query,
+    });
+    evaluationCases.unshift({
+      id: String(created.id),
+      projectId: projectId.value,
+      query: String(created.query || query),
+      expectedAnswer: String(created.expectedAnswer || ""),
+      recall: created.recall == null ? "—" : `${String(created.recall)}%`,
+      citation: created.citation == null ? "—" : `${String(created.citation)}%`,
+      json: created.jsonScore == null ? "—" : `${String(created.jsonScore)}%`,
+      status: String(created.status || "review").toLowerCase(),
+    });
+    notify("当前问题已保存为评估用例");
+  } catch (error) {
+    notify(error instanceof Error ? error.message : "评估用例保存失败");
+  }
+}
+
+function returnToEvaluation() {
+  void router.push({
+    ...routeTo("project-evaluation"),
+    query: evaluationCaseId.value ? { caseId: evaluationCaseId.value } : {},
+  });
 }
 
 function openParameters() {
@@ -176,9 +248,29 @@ function openEvidence(result: RetrievalResult) {
           调整参数 <SlidersHorizontal :size="14" />
         </button>
       </div>
-      <button class="button button-primary" type="button" @click="runSearch">
+      <button class="button button-primary" type="button" :disabled="isSearching || !playgroundQuery.trim()" @click="runSearch">
         <Search :size="16" />{{ isSearching ? "检索中..." : "运行检索" }}
       </button>
+      <div class="playground-evaluation-actions">
+        <button
+          class="button button-secondary"
+          type="button"
+          :disabled="!playgroundQuery.trim() || queryAlreadySaved"
+          @click="saveAsEvaluationCase"
+        >
+          <ClipboardCheck :size="15" />{{
+            queryAlreadySaved ? "已在评估集中" : "保存为评估用例"
+          }}
+        </button>
+        <button
+          v-if="evaluationCaseId"
+          class="text-button"
+          type="button"
+          @click="returnToEvaluation"
+        >
+          返回评估集 <ArrowRight :size="14" />
+        </button>
+      </div>
     </section>
     <section class="panel retrieval-results">
       <div class="panel-heading">
@@ -218,13 +310,15 @@ function openEvidence(result: RetrievalResult) {
         v-if="!retrievalResults.length"
         class="empty-state panel-empty-state retrieval-empty"
       >
-        <Search :size="20" />
-        <strong>{{ isSearching ? "正在检索知识库" : "暂无召回结果" }}</strong>
+        <AlertTriangle v-if="searchError" :size="20" />
+        <Search v-else :size="20" />
+        <strong>{{ isSearching ? "正在检索知识库" : searchError ? "检索失败" : hasSearched ? "未找到匹配片段" : "等待检索" }}</strong>
         <span>{{
           isSearching
-            ? "检索完成后会在这里显示后端返回的证据片段。"
-            : "输入问题并运行检索；没有命中时保持真实空状态。"
+            ? "正在查询索引并整理证据，请稍候。"
+            : searchError || (hasSearched ? "请调整关键词，并确认资料已成功建立索引。" : "输入问题并运行检索，结果将在这里显示。")
         }}</span>
+        <button v-if="searchError" class="button button-secondary" type="button" @click="runSearch">重新检索</button>
       </div>
     </section>
   </div>
@@ -633,6 +727,13 @@ function openEvidence(result: RetrievalResult) {
 }
 .playground-query > .button {
   width: 100%;
+}
+.playground-evaluation-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.625rem;
+  margin-top: 0.625rem;
 }
 .retrieval-results {
   min-width: 0;

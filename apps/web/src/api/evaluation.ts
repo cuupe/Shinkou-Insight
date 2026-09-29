@@ -16,4 +16,15 @@ export const evaluationApi = {
         payload,
       ),
     ),
+  update: (
+    workspaceId: number | string,
+    id: number | string,
+    payload: Record<string, unknown>,
+  ) =>
+    unwrap<EvaluationRun>(
+      anet.patch<ApiResponse<EvaluationRun>>(
+        `${workspacePath(workspaceId)}/evaluation-cases/${id}`,
+        payload,
+      ),
+    ),
 };

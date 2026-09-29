@@ -25,7 +25,7 @@ from core.events import EventBus
 from core.repository import InMemoryRunRepository
 from graph.store import GraphEdge, GraphNode
 from models.llm import MockModelGateway, ModelStreamChunk
-from models.schemas import ChatMessage, Evidence, ExecuteRunRequest, ModelChatResult, ReflectionResult, ResearchConfig, TokenUsage
+from models.schemas import ChatMessage, Evidence, ExecuteRunRequest, ModelChatResult, ModelGenerationConfig, ReflectionResult, ResearchConfig, TokenUsage
 from rag.retriever import InMemoryRetriever
 from tools.knowledge import KnowledgeTool
 from tools.registry import ToolRegistry, ToolSpec
@@ -108,7 +108,7 @@ def test_aggregate_usage_keeps_the_model_used_by_the_run():
     assert result.model == "model-a"
 
 
-def test_unrelated_chat_context_is_filtered_without_a_model_call():
+def test_context_is_not_discarded_by_keyword_mismatch():
     selected, stats = _select_chat_context(
         [
             {"role": "user", "content": "项目使用 PostgreSQL，连接池上限是 20。"},
@@ -117,8 +117,8 @@ def test_unrelated_chat_context_is_filtered_without_a_model_call():
         "乎古哀是什么时代的人？",
     )
 
-    assert selected == []
-    assert stats == {"providedContextMessages": 2, "selectedContextMessages": 0, "filteredMessages": 2}
+    assert len(selected) == 2
+    assert stats == {"providedContextMessages": 2, "selectedContextMessages": 2, "filteredMessages": 0}
 
 
 def test_related_chat_context_keeps_the_user_assistant_pair():
@@ -463,7 +463,7 @@ async def test_chat_simple_project_fact_uses_one_answer_call():
 
 
 @pytest.mark.asyncio
-async def test_chat_does_not_forward_unrelated_history_to_the_answer_model():
+async def test_chat_preserves_ordered_history_for_the_answer_model():
     model = ReflectingModelGateway()
     runtime, repository = make_runtime(model)
     request = ExecuteRunRequest(
@@ -482,11 +482,11 @@ async def test_chat_does_not_forward_unrelated_history_to_the_answer_model():
     await runtime.execute(request)
 
     assert model.chat_calls == 1
-    assert all("PostgreSQL" not in message["content"] for message in model.chat_messages[0])
+    assert any("PostgreSQL" in message["content"] for message in model.chat_messages[0])
     completion = next(
         event for event in repository.list_events("chat-context-filter-1") if event.event_type == "run.completed"
     )
-    assert completion.payload["contextCompression"]["filteredMessages"] == 2
+    assert completion.payload["contextCompression"]["filteredMessages"] == 0
 
 
 def test_chat_knowledge_search_is_on_demand():
@@ -533,7 +533,7 @@ def test_chat_strategy_router_matches_request_shape():
     assert _select_chat_strategy(forced) == "REFLECTION"
 
 
-def test_fast_chat_disables_expensive_reasoning_for_simple_direct_questions():
+def test_fast_chat_honors_reasoning_configuration_for_simple_questions():
     request = ExecuteRunRequest(
         run_id="fast-chat",
         workspace_id=1,
@@ -542,6 +542,11 @@ def test_fast_chat_disables_expensive_reasoning_for_simple_direct_questions():
     )
 
     assert _is_fast_chat_request(request, request.goal, "DIRECT") is True
+    generation = _fast_chat_generation(request, MockModelGateway())
+    assert generation.reasoning_effort == "high"
+    assert generation.max_tokens == 4096
+
+    request.config.generation = ModelGenerationConfig(reasoning_effort="none")
     generation = _fast_chat_generation(request, MockModelGateway())
     assert generation.reasoning_effort == "none"
     assert generation.max_tokens == 1_536
@@ -609,6 +614,59 @@ async def test_chat_multi_agent_path_coordinates_child_agents():
     assert coordination and coordination[-1].payload.get("fallback") is not True
     completion = next(event for event in events if event.event_type == "run.completed")
     assert completion.payload["multiAgent"]["enabled"] is True
+    assignments = [event.payload["task"] for event in events if event.event_type == "agent.message.sent"]
+    assert all(task["parentId"] == request.run_id + ":primary" and task["objective"] for task in assignments)
+    assert len({task["id"] for task in assignments}) == len(assignments)
+    primary = [event.payload["task"] for event in events if event.event_type == "agent.task.updated"]
+    assert primary[0]["status"] == "running"
+    assert primary[-1]["status"] == "completed"
+    assert primary[-1]["durationMs"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_reasoning_events_precede_the_answer_and_include_timing():
+    class ThinkingGateway(MockModelGateway):
+        async def stream(self, messages, **kwargs):
+            yield ModelStreamChunk(thinking="检查输入条件。")
+            yield ModelStreamChunk(thinking="\n确认结果。")
+            yield ModelStreamChunk(delta="## 计算结果\n\n2")
+
+    runtime, repository = make_runtime(ThinkingGateway())
+    request = ExecuteRunRequest(run_id="thinking-order", workspace_id=1, project_id=1, goal="请解释递归的概念",
+                                agent_message_id="thinking-answer", config=ResearchConfig(multi_agent_mode="OFF", reflection_enabled=False))
+    await runtime.execute(request)
+    events = repository.list_events(request.run_id)
+    types = [event.event_type for event in events]
+    assert types.index("thinking.started") < types.index("thinking.completed") < types.index("message.delta")
+    thought = "".join(event.payload["delta"] for event in events if event.event_type == "thinking.delta")
+    assert thought == ""
+    assert "检查输入条件" not in str([event.payload for event in events])
+    timing = next(event.payload for event in events if event.event_type == "thinking.completed")
+    assert timing["durationMs"] >= 0 and timing["finishedAt"] >= timing["startedAt"]
+    assert not any(event.event_type.startswith("agent.") for event in events)
+
+
+@pytest.mark.asyncio
+async def test_failed_delegation_has_failed_task_and_explicit_fallback():
+    class FailingPlanner(MockModelGateway):
+        async def structured(self, *args, **kwargs):
+            raise RuntimeError("structured model unavailable")
+
+    runtime, repository = make_runtime(FailingPlanner())
+    request = ExecuteRunRequest(run_id="delegation-failure", workspace_id=1, project_id=1,
+                                goal="请多个智能体检查数据库部署方案", agent_message_id="fallback-answer",
+                                config=ResearchConfig(multi_agent_mode="ON", strategy="DIRECT", reflection_enabled=False))
+    await runtime.execute(request)
+    events = repository.list_events(request.run_id)
+    failed = [event.payload["task"] for event in events if event.event_type == "agent.failed"]
+    assert failed and failed[0]["status"] == "failed"
+    assert "structured model unavailable" in failed[0]["error"]
+    assert not any(event.event_type == "agent.completed" for event in events)
+    completion = next(event for event in events if event.event_type == "run.completed")
+    assert completion.payload["multiAgent"]["fallback"] is True
+    assert completion.payload["multiAgent"]["enabled"] is False
+    assert any(event.event_type == "node.failed" for event in events)
+    await runtime.close()
 
 
 @pytest.mark.asyncio
@@ -656,6 +714,43 @@ async def test_chat_react_path_records_bounded_actions():
     assert search_steps
     assert any(event.payload.get("strategy") == "REACT" for event in search_steps)
     assert any(event.event_type == "evidence.added" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_chat_knowledge_trace_calls_results_candidates_until_content_is_checked():
+    class CandidateRetriever:
+        async def retrieve(self, **kwargs):
+            return [Evidence(
+                id="E1",
+                chunk_id=101,
+                source_name="vocabulary.txt",
+                content="An unrelated vocabulary entry.",
+            )]
+
+    runtime, repository = make_runtime()
+    runtime.tools = ToolRegistry()
+    runtime.tools.register(
+        ToolSpec(name="search_knowledge", permission="READ"),
+        KnowledgeTool(CandidateRetriever()).search_knowledge,
+    )
+    request = ExecuteRunRequest(
+        run_id="chat-candidate-trace",
+        workspace_id=1,
+        project_id=1,
+        goal="WHO headquarters location",
+        agent_message_id="message-candidate-trace",
+        config=ResearchConfig(use_reranker=False),
+    )
+    run = await runtime.accept(request)
+
+    await runtime._search_internal(request, run, request.goal)
+
+    completed = next(
+        event for event in repository.list_events(request.run_id)
+        if event.event_type == "tool.completed" and event.payload.get("tool") == "search_knowledge"
+    )
+    assert completed.payload["count"] == 1
+    assert completed.payload["detail"] == "检索返回 1 条候选资料，需核验内容是否相关"
 
 
 @pytest.mark.asyncio
@@ -797,14 +892,14 @@ async def test_chat_skips_reflection_for_simple_prompt():
 
     await runtime.execute(request)
 
-    assert model.chat_calls == 1
+    assert model.chat_calls == 0
     assert model.structured_calls == 0
     reflection = [
         event for event in repository.list_events("chat-simple-1")
         if event.event_type == "node.completed" and event.payload.get("node") == "REFLECTION"
     ]
     assert reflection and reflection[0].payload["skipped"] is True
-    assert "节省 token" in reflection[0].payload["detail"]
+    assert "计算器" in reflection[0].payload["detail"]
 
 
 @pytest.mark.asyncio

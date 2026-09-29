@@ -283,7 +283,23 @@ export type AgentEventKind =
   | "synthesis"
   | "reflection";
 
-export type AgentEventStatus = "pending" | "running" | "completed" | "failed";
+export type AgentEventStatus =
+  "pending" | "running" | "completed" | "failed" | "cancelled";
+
+export interface AgentTask {
+  id: string;
+  parentId?: string;
+  agent: string;
+  title: string;
+  objective: string;
+  status: AgentEventStatus;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  summary?: string;
+  error?: string;
+  transport?: string;
+}
 
 export interface AgentCitation {
   id: string;
@@ -360,6 +376,23 @@ export interface AgentMessage {
   citations?: AgentCitation[];
   attachments?: AgentAttachment[];
   media?: AgentMedia[];
+  /** Reasoning text actually returned by the configured provider. */
+  thinking?: string;
+  /** Seconds spent on the reasoning phase, when it was observed. */
+  thinkingSeconds?: number;
+  thinkingStartedAt?: string;
+  thinkingFinishedAt?: string;
+  thinkingDurationMs?: number;
+  answerStartedAt?: string;
+  runId?: string;
+  runStartedAt?: string;
+  runFinishedAt?: string;
+  runDurationMs?: number;
+  runStatus?: string;
+  lastEventId?: string;
+  events?: AgentEvent[];
+  agentTasks?: AgentTask[];
+  multiAgent?: AgentRunMetrics["multiAgent"];
 }
 
 export interface AgentContextMessage {
@@ -400,6 +433,7 @@ export interface AgentThreadHistory extends AgentThreadSummary {
   runStartedAt?: string;
   runFinishedAt?: string;
   runDurationMs?: number;
+  lastEventId?: string;
 }
 
 export interface AgentSendMessagePayload {
@@ -464,7 +498,7 @@ export interface AgentRunMetrics {
   delta?: boolean;
 }
 
-export type AgentStreamEvent = { eventId?: string } & (
+export type AgentStreamEvent = { eventId?: string; timestamp?: string } & (
   | {
       type: "run.started";
       runId: string;
@@ -472,6 +506,20 @@ export type AgentStreamEvent = { eventId?: string } & (
       data?: AgentRunMetrics;
     }
   | { type: "event.updated"; runId: string; event: AgentEvent }
+  | {
+      type: "agent.task.updated";
+      runId: string;
+      messageId: string;
+      task: AgentTask;
+    }
+  | {
+      type: "thinking.started" | "thinking.completed";
+      runId: string;
+      messageId: string;
+      startedAt?: string;
+      finishedAt?: string;
+      durationMs?: number;
+    }
   | {
       type: "thinking.delta";
       runId: string;
@@ -510,12 +558,15 @@ export type AgentStreamEvent = { eventId?: string } & (
       durationMs?: number;
       usage?: TokenUsage;
       contextCompression?: ContextCompression;
+      multiAgent?: AgentRunMetrics["multiAgent"];
+      status?: string;
     }
   | {
       type: "run.failed";
       runId: string;
       message: string;
       startedAt?: string;
+      finishedAt?: string;
       durationMs?: number;
     }
 );

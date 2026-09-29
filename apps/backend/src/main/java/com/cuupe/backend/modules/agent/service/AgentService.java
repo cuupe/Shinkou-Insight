@@ -13,6 +13,10 @@ import com.cuupe.backend.modules.agent.entity.AgentTokenUsage;
 import com.cuupe.backend.modules.agent.mapper.AgentMapper;
 import com.cuupe.backend.modules.ai.AiIndexingClient;
 import com.cuupe.backend.modules.ai.RuntimeConfigResolver;
+import com.cuupe.backend.modules.project.entity.Project;
+import com.cuupe.backend.modules.project.entity.ProjectPlan;
+import com.cuupe.backend.modules.project.mapper.ProjectMapper;
+import com.cuupe.backend.modules.project.mapper.ProjectPlanMapper;
 import com.cuupe.backend.modules.workspace.entity.Workspace;
 import com.cuupe.backend.modules.workspace.mapper.WorkspaceMapper;
 import com.cuupe.backend.modules.storage.ObjectStorageService;
@@ -22,6 +26,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.springframework.web.multipart.MultipartFile;
 import tools.jackson.databind.ObjectMapper;
@@ -49,7 +55,10 @@ public class AgentService {
     private final AiIndexingClient aiClient;
     private final RuntimeConfigResolver runtimeConfigResolver;
     private final WorkspaceMapper workspaceMapper;
+    private final ProjectMapper projectMapper;
+    private final ProjectPlanMapper projectPlanMapper;
     private final Map<String, CopyOnWriteArrayList<SseEmitter>> subscribers = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, Object>> stepSnapshots = new ConcurrentHashMap<>();
     private final Set<String> streamedMessageRuns = ConcurrentHashMap.newKeySet();
     private final Map<String, Set<String>> receivedUpstreamEvents = new ConcurrentHashMap<>();
     private final Map<String, Object> callbackLocks = new ConcurrentHashMap<>();
@@ -126,7 +135,7 @@ public class AgentService {
                 if (message.getModelName() != null && !message.getModelName().isBlank()) {
                     item.put("modelName", message.getModelName());
                 }
-                item.put("status", "FAILED".equalsIgnoreCase(message.getStatus()) ? "failed" : "completed");
+                item.put("status", "STREAMING".equalsIgnoreCase(message.getStatus()) ? "streaming" : "FAILED".equalsIgnoreCase(message.getStatus()) ? "failed" : "completed");
                 item.put("createdAt", message.getCreatedAt());
                 try {
                     item.put("attachments", objectMapper.readValue(message.getAttachments() == null ? "[]" : message.getAttachments(), List.class));
@@ -146,9 +155,18 @@ public class AgentService {
             for (AgentRun run : runs) {
                 String messageKey = findMessageKey(run.getAssistantMessageId());
                 if (messageKey == null) continue;
+                Map<String, Object> answer = messages.stream().filter(entry -> messageKey.equals(entry.get("id"))).findFirst().orElse(new LinkedHashMap<>());
+                answer.put("runId", run.getRunKey());
+                if (run.getStartedAt() != null) answer.put("runStartedAt", run.getStartedAt().toString());
+                if (run.getFinishedAt() != null) {
+                    answer.put("runFinishedAt", run.getFinishedAt().toString());
+                    if (run.getStartedAt() != null) answer.put("runDurationMs", Math.max(0L, Duration.between(run.getStartedAt(), run.getFinishedAt()).toMillis()));
+                }
                 for (AgentRunEvent event : mapper.findEvents(run.getRunKey(), null)) {
                     try {
                         Map<String, Object> payload = objectMapper.readValue(event.getPayload(), Map.class);
+                        AgentProgress.apply(answer, event.getEventType(), payload);
+                        answer.put("lastEventId", String.valueOf(event.getId()));
                         boolean latest = latestRun != null && run.getRunKey().equals(latestRun.getRunKey());
                         if (latest && "event.updated".equals(event.getEventType())) {
                             Object rawEvent = payload.get("event");
@@ -241,6 +259,14 @@ public class AgentService {
                     item.put("runDurationMs", Math.max(0L, Duration.between(latestRun.getStartedAt(), latestRun.getFinishedAt()).toMillis()));
                 }
             }
+            if (latestRun != null) {
+                messages.stream().filter(message -> latestRun.getRunKey().equals(message.get("runId"))).findFirst().ifPresent(answer -> {
+                    for (String key : List.of("runStartedAt", "runFinishedAt", "runDurationMs", "lastEventId", "multiAgent")) {
+                        AgentProgress.copy(answer, item, key, key);
+                    }
+                    AgentProgress.copy(answer, item, "events", "events");
+                });
+            }
             if (tokenUsage != null) item.put("tokenUsage", tokenUsage);
             if (contextUsage != null) item.put("contextUsage", contextUsage);
             result.add(item);
@@ -266,6 +292,12 @@ public class AgentService {
     }
 
     public SseEmitter subscribe(Long workspaceId, Long projectId, Long userId, String runKey, Long afterId) {
+        synchronized (callbackLocks.computeIfAbsent(runKey, ignored -> new Object())) {
+            return subscribeLocked(workspaceId, projectId, userId, runKey, afterId);
+        }
+    }
+
+    private SseEmitter subscribeLocked(Long workspaceId, Long projectId, Long userId, String runKey, Long afterId) {
         AgentRun run = mapper.findRun(runKey, projectId, userId);
         if (run == null) throw new ApiException(HttpStatus.NOT_FOUND, "AGENT_RUN_NOT_FOUND", "Agent 运行不存在或无权访问");
 
@@ -380,6 +412,19 @@ public class AgentService {
         Map<String, Object> payload = body.get("payload") instanceof Map<?, ?> value
                 ? (Map<String, Object>) value : Map.of();
         try {
+            if (eventType.startsWith("agent.") && payload.get("task") instanceof Map<?, ?>) {
+                publish(run, "agent.task.updated", Map.of("type", "agent.task.updated", "runId", runKey,
+                        "messageId", findMessageKey(run.getAssistantMessageId()), "task", payload.get("task")));
+                return;
+            }
+            if ("thinking.started".equals(eventType) || "thinking.completed".equals(eventType)) {
+                Map<String, Object> thinking = new LinkedHashMap<>(payload);
+                thinking.put("type", eventType);
+                thinking.put("runId", runKey);
+                thinking.put("messageId", findMessageKey(run.getAssistantMessageId()));
+                publish(run, eventType, thinking);
+                return;
+            }
             if ("run.started".equals(eventType)) {
                 Map<String, Object> started = new LinkedHashMap<>();
                 started.put("type", "run.started");
@@ -398,9 +443,15 @@ public class AgentService {
                 publish(run, "usage.updated", usage);
                 return;
             }
+            if (Set.of("model.requested", "model.tool_call", "model.tool_result").contains(eventType)) {
+                // Keep the model-visible catalog and correlated tool observations
+                // in the durable run trace without rendering them as an answer.
+                publish(run, eventType, new LinkedHashMap<>(payload));
+                return;
+            }
             if (eventType.startsWith("node.")) {
                 String node = String.valueOf(payload.getOrDefault("node", "agent"));
-                String status = eventType.endsWith("started") ? "running" : "completed";
+                String status = eventType.endsWith("failed") || Boolean.TRUE.equals(payload.get("failed")) ? "failed" : eventType.endsWith("started") ? "running" : "completed";
                 String kind = "ATTACHMENT_ANALYSIS".equalsIgnoreCase(node) ? "file" : node.toLowerCase(Locale.ROOT);
                 publishStep(run, kind, String.valueOf(payload.getOrDefault("title", node)), String.valueOf(payload.getOrDefault("detail", "")), status, payload);
                 return;
@@ -415,7 +466,7 @@ public class AgentService {
                 } else {
                     detail = String.valueOf(payload.getOrDefault("query", ""));
                 }
-                publishStep(run, "tool", "调用 " + tool, detail, eventType.endsWith("started") ? "running" : "completed");
+                publishStep(run, "tool", "调用 " + tool, detail, eventType.endsWith("failed") ? "failed" : eventType.endsWith("started") ? "running" : "completed", payload);
                 return;
             }
             if ("evidence.added".equals(eventType)) {
@@ -431,21 +482,13 @@ public class AgentService {
                 return;
             }
             if ("thinking.delta".equals(eventType)) {
-                String thinking = String.valueOf(payload.getOrDefault("delta", ""));
-                if (!thinking.isBlank()) {
-                    publish(run, "thinking.delta", Map.of(
-                            "type", "thinking.delta",
-                            "runId", runKey,
-                            "messageId", findMessageKey(run.getAssistantMessageId()),
-                            "delta", thinking
-                    ));
-                }
+                // Compatibility with older Python workers: never persist private reasoning.
                 return;
             }
             if ("message.delta".equals(eventType)) {
                 String messageId = findMessageKey(run.getAssistantMessageId());
                 String delta = String.valueOf(payload.getOrDefault("delta", ""));
-                if (!delta.isBlank()) {
+                if (!delta.isEmpty()) {
                     streamedMessageRuns.add(runKey);
                     publish(run, "message.delta", Map.of(
                             "type", "message.delta",
@@ -484,10 +527,9 @@ public class AgentService {
                 String answer = formatReport(payload.get("report"));
                 saveTokenUsage(run, body, payload);
                 mapper.updateMessage(run.getAssistantMessageId(), answer, "COMPLETED");
-                if (!streamedMessageRuns.remove(runKey)) {
-                    // Compatibility fallback for an older AI service that does not emit deltas.
-                    publish(run, "message.delta", Map.of("type", "message.delta", "runId", runKey, "messageId", findMessageKey(run.getAssistantMessageId()), "delta", answer));
-                }
+                streamedMessageRuns.remove(runKey);
+                publish(run, "message.replace", Map.of("type", "message.replace", "runId", runKey,
+                        "messageId", findMessageKey(run.getAssistantMessageId()), "content", answer));
                 publish(run, "message.completed", Map.of("type", "message.completed", "runId", runKey, "messageId", findMessageKey(run.getAssistantMessageId())));
                 mapper.updateRun(run.getId(), "COMPLETED", null);
                 Map<String, Object> completion = new LinkedHashMap<>();
@@ -497,6 +539,7 @@ public class AgentService {
                 if (payload.get("contextCompression") != null) completion.put("contextCompression", payload.get("contextCompression"));
                 if (payload.get("startedAt") != null) completion.put("startedAt", payload.get("startedAt"));
                 if (payload.get("durationMs") != null) completion.put("durationMs", payload.get("durationMs"));
+                completion.put("finishedAt", payload.getOrDefault("finishedAt", java.time.Instant.now().toString()));
                 if (payload.get("strategy") != null) completion.put("strategy", payload.get("strategy"));
                 if (payload.get("multiAgent") != null) completion.put("multiAgent", payload.get("multiAgent"));
                 publish(run, "run.completed", completion);
@@ -507,10 +550,16 @@ public class AgentService {
             }
             if ("run.failed".equals(eventType)) {
                 String message = String.valueOf(payload.getOrDefault("message", "Agent 运行失败"));
-                mapper.updateMessage(run.getAssistantMessageId(), message, "FAILED");
+                String partial = String.valueOf(replayProgress(runKey).getOrDefault("content", ""));
+                String answer = partial.isBlank() ? message : partial + "\n\n运行失败：" + message;
+                mapper.updateMessage(run.getAssistantMessageId(), answer, "FAILED");
+                publish(run, "message.replace", Map.of("type", "message.replace", "runId", runKey,
+                        "messageId", findMessageKey(run.getAssistantMessageId()), "content", answer));
                 mapper.updateRun(run.getId(), "FAILED", message);
                 streamedMessageRuns.remove(runKey);
-                publish(run, "run.failed", Map.of("type", "run.failed", "runId", runKey, "message", message));
+                Map<String, Object> failed = new LinkedHashMap<>(payload);
+                failed.putAll(Map.of("type", "run.failed", "runId", runKey, "message", message, "finishedAt", java.time.Instant.now().toString()));
+                publish(run, "run.failed", failed);
                 completeSubscribers(runKey);
                 receivedUpstreamEvents.remove(runKey);
                 callbackLocks.remove(runKey);
@@ -524,6 +573,12 @@ public class AgentService {
     }
 
     public void cancel(Long workspaceId, Long projectId, Long userId, String runKey) {
+        synchronized (callbackLocks.computeIfAbsent(runKey, ignored -> new Object())) {
+            cancelLocked(workspaceId, projectId, userId, runKey);
+        }
+    }
+
+    private void cancelLocked(Long workspaceId, Long projectId, Long userId, String runKey) {
         if (!mapper.hasProjectAccess(workspaceId, projectId, userId)) {
             throw new ApiException(HttpStatus.NOT_FOUND, "PROJECT_NOT_FOUND", "项目不存在或无权访问");
         }
@@ -544,20 +599,38 @@ public class AgentService {
         } catch (Exception exception) {
             throw new ApiException(HttpStatus.BAD_GATEWAY, "AGENT_CANCEL_FAILED", "Agent 运行取消失败");
         }
-        mapper.updateMessage(run.getAssistantMessageId(), "本次运行已取消。", "COMPLETED");
+        Map<String, Object> progress = replayProgress(runKey);
+        String partial = String.valueOf(progress.getOrDefault("content", ""));
+        String answer = partial + (partial.isBlank() ? "" : "\n\n") + "已由你暂停本次运行。";
+        mapper.updateMessage(run.getAssistantMessageId(), answer, "COMPLETED");
         mapper.updateRun(run.getId(), "CANCELLED", null);
         streamedMessageRuns.remove(runKey);
         receivedUpstreamEvents.remove(runKey);
         callbackLocks.remove(runKey);
         try {
             String messageId = findMessageKey(run.getAssistantMessageId());
-            publish(run, "message.delta", Map.of("type", "message.delta", "runId", runKey, "messageId", messageId, "delta", "本次运行已取消。"));
+            publish(run, "message.replace", Map.of("type", "message.replace", "runId", runKey, "messageId", messageId, "content", answer));
             publish(run, "message.completed", Map.of("type", "message.completed", "runId", runKey, "messageId", messageId));
-            publish(run, "run.completed", Map.of("type", "run.completed", "runId", runKey));
+            Map<String, Object> completion = new LinkedHashMap<>();
+            completion.putAll(Map.of("type", "run.completed", "runId", runKey, "status", "CANCELLED", "finishedAt", java.time.Instant.now().toString()));
+            AgentProgress.copy(progress, completion, "runStartedAt", "startedAt");
+            publish(run, "run.completed", completion);
         } catch (IOException exception) {
             completeSubscribers(runKey);
         }
         completeSubscribers(runKey);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> replayProgress(String runKey) {
+        Map<String, Object> progress = new LinkedHashMap<>();
+        progress.put("status", "streaming");
+        for (AgentRunEvent event : mapper.findEvents(runKey, null)) {
+            try {
+                AgentProgress.apply(progress, event.getEventType(), objectMapper.readValue(event.getPayload(), Map.class));
+            } catch (Exception ignored) { /* Preserve readable events from older runs. */ }
+        }
+        return progress;
     }
 
     public java.io.InputStream openAttachment(AgentAttachment attachment) throws Exception {
@@ -603,8 +676,12 @@ public class AgentService {
                 if (!generation.isEmpty()) config.put("generation", generation);
             }
             applyGenerationOverrides(runtime, request);
+            // Anchor history to this user turn. Client state may be stale after a
+            // reload/retry, and a later turn must never enter this run's context.
+            List<Map<String, Object>> storedContext = storedContextMessages(run, projectId, userId);
             List<Map<String, Object>> trustedContextMessages = contextMessagePayload(
-                    workspaceId, projectId, userId, request.getContextMessages());
+                    workspaceId, projectId, userId, storedContext);
+            Map<String, Object> projectContext = projectContext(workspaceId, projectId, userId);
             aiClient.executeAgentRun(
                     run.getRunKey(),
                     workspaceId,
@@ -614,13 +691,14 @@ public class AgentService {
                     query,
                     config,
                     runtime,
+                    projectContext,
                     trustedContextMessages,
                     attachmentPayload(
                             workspaceId,
                             projectId,
                             userId,
                             request.getAttachments(),
-                            request.getContextMessages()));
+                            storedContext));
         } catch (Exception exception) {
             String message = exception.getMessage() == null ? "Agent 运行失败" : shortText(exception.getMessage(), 900);
             mapper.updateMessage(run.getAssistantMessageId(), message, "FAILED");
@@ -632,6 +710,36 @@ public class AgentService {
             }
             completeSubscribers(run.getRunKey());
         }
+    }
+
+    private Map<String, Object> projectContext(Long workspaceId, Long projectId, Long userId) {
+        Project project = projectMapper.findAccessibleById(workspaceId, projectId, userId);
+        if (project == null) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "PROJECT_NOT_FOUND", "项目不存在或无权访问");
+        }
+
+        Map<String, Object> context = new LinkedHashMap<>();
+        putText(context, "name", project.getName(), 120);
+        putText(context, "code", project.getCode(), 80);
+        putText(context, "description", project.getDescription(), 500);
+        putText(context, "status", project.getStatus(), 40);
+
+        ProjectPlan plan = projectPlanMapper.findByProject(workspaceId, projectId);
+        if (plan != null) {
+            putText(context, "objective", plan.getObjective(), 4_000);
+            putText(context, "problem", plan.getProblem(), 4_000);
+            putText(context, "successMetrics", plan.getSuccessMetrics(), 4_000);
+            putText(context, "constraints", plan.getConstraints(), 4_000);
+            putText(context, "owner", plan.getOwner(), 120);
+            if (plan.getDeadline() != null) context.put("deadline", plan.getDeadline().toString());
+        }
+        return context;
+    }
+
+    private void putText(Map<String, Object> target, String key, String value, int maxLength) {
+        if (value == null || value.isBlank()) return;
+        String normalized = value.trim();
+        target.put(key, normalized.length() <= maxLength ? normalized : normalized.substring(0, maxLength));
     }
 
     @SuppressWarnings("unchecked")
@@ -713,7 +821,13 @@ public class AgentService {
 
     private void publishStep(AgentRun run, String kind, String title, String detail, String status, Map<String, Object> metadata) throws IOException {
         Map<String, Object> event = new LinkedHashMap<>();
-        event.put("id", run.getRunKey() + "-" + kind);
+        String key = run.getRunKey() + ":" + kind + ":" + title;
+        if (metadata.get("callId") != null) key += ":" + metadata.get("callId");
+        Map<String, Object> previous = stepSnapshots.get(key);
+        boolean continuing = previous != null && ("running".equals(previous.get("status")) || !"running".equals(status));
+        event.put("id", continuing ? previous.get("id") : key + ":" + UUID.randomUUID());
+        event.put("startedAt", continuing ? previous.get("startedAt") : java.time.Instant.now().toString());
+        if (!"running".equals(status)) event.put("completedAt", java.time.Instant.now().toString());
         event.put("kind", kind);
         event.put("title", title);
         event.put("detail", detail);
@@ -724,7 +838,9 @@ public class AgentService {
         meta.remove("title");
         meta.remove("detail");
         if (!meta.isEmpty()) event.put("meta", meta);
-        publish(run, "event.updated", Map.of("type", "event.updated", "runId", run.getRunKey(), "event", event));
+        stepSnapshots.put(key, event);
+        publish(run, "event.updated", Map.of("type", "event.updated", "runId", run.getRunKey(),
+                "messageId", findMessageKey(run.getAssistantMessageId()), "event", event));
     }
 
     private void publishCitation(AgentRun run, Object raw) throws IOException {
@@ -955,6 +1071,8 @@ public class AgentService {
     }
 
     private void publish(AgentRun run, String eventType, Map<String, Object> payload) throws IOException {
+        payload = new LinkedHashMap<>(payload);
+        payload.putIfAbsent("timestamp", java.time.Instant.now().toString());
         AgentRunEvent event = new AgentRunEvent();
         event.setRunId(run.getId());
         event.setEventType(eventType);
@@ -964,13 +1082,15 @@ public class AgentService {
             throw new IOException("Agent 事件序列化失败", exception);
         }
         mapper.insertEvent(event);
-        for (SseEmitter emitter : subscribers.getOrDefault(run.getRunKey(), new CopyOnWriteArrayList<>())) {
-            try {
-                send(emitter, event);
-            } catch (IOException exception) {
-                removeSubscriber(run.getRunKey(), emitter);
+        afterCommit(() -> {
+            for (SseEmitter emitter : subscribers.getOrDefault(run.getRunKey(), new CopyOnWriteArrayList<>())) {
+                try {
+                    send(emitter, event);
+                } catch (IOException exception) {
+                    removeSubscriber(run.getRunKey(), emitter);
+                }
             }
-        }
+        });
     }
 
     @SuppressWarnings("unchecked")
@@ -989,8 +1109,24 @@ public class AgentService {
     }
 
     private void completeSubscribers(String runKey) {
-        CopyOnWriteArrayList<SseEmitter> current = subscribers.remove(runKey);
-        if (current != null) current.forEach(SseEmitter::complete);
+        afterCommit(() -> {
+            stepSnapshots.keySet().removeIf(key -> key.startsWith(runKey + ":"));
+            CopyOnWriteArrayList<SseEmitter> current = subscribers.remove(runKey);
+            if (current != null) current.forEach(SseEmitter::complete);
+        });
+    }
+
+    // A client may reload immediately after seeing an event. Persist the event
+    // before publishing its cursor, including the terminal snapshot and close.
+    private void afterCommit(Runnable action) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()
+                && TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { action.run(); }
+            });
+        } else {
+            action.run();
+        }
     }
 
     private void removeSubscriber(String runKey, SseEmitter emitter) {
@@ -1057,6 +1193,24 @@ public class AgentService {
         if (Set.of("xls", "xlsx", "ods", "csv").contains(extension)) return "spreadsheet";
         if (Set.of("ppt", "pptx", "odp").contains(extension)) return "presentation";
         return "file";
+    }
+
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> storedContextMessages(AgentRun run, Long projectId, Long userId) {
+        List<Map<String, Object>> result = new java.util.ArrayList<>();
+        for (AgentMessage message : mapper.findContextMessages(run.getThreadId(), projectId, userId, run.getUserMessageId())) {
+            if (message.getId() >= run.getUserMessageId()) continue;
+            boolean user = "USER".equals(message.getRole());
+            if (!user && !("ASSISTANT".equals(message.getRole()) && "COMPLETED".equals(message.getStatus()))) continue;
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("role", user ? "user" : "assistant");
+            item.put("content", message.getContent() == null ? "" : message.getContent());
+            try {
+                item.put("attachments", objectMapper.readValue(message.getAttachments() == null ? "[]" : message.getAttachments(), List.class));
+            } catch (Exception ignored) { item.put("attachments", List.of()); }
+            result.add(item);
+        }
+        return result;
     }
 
     private List<Map<String, Object>> contextMessagePayload(

@@ -144,6 +144,8 @@ GET    /api/workspaces/{workspaceId}/projects/{projectId}/assets/{assetId}/chunk
 GET    /api/workspaces/{workspaceId}/projects/{projectId}/assets/{assetId}/content
 ```
 
+Chunk 查询支持分页：`page` 默认 1，`pageSize` 默认 30、最大 100。可传 `chunkId` 或 `pageNumber` 直接定位引用片段。资料详情页只在打开 Chunk 列表时读取当前页，原文预览按最多 24,000 个字符分段显示。对于修复编码识别前已经错误入库的文本资料，需要在详情页点击“重新索引”以重新解析原文件。
+
 ## 7. Knowledge Search
 
 ### 7.1 检索 Playground

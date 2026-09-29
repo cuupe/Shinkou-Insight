@@ -74,6 +74,7 @@ IMAGE_EXTENSIONS = {
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac", ".opus"}
 VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v"}
 OFFICE_CONVERSION_EXTENSIONS = {".doc", ".xls", ".ppt", ".odt", ".ods", ".odp", ".rtf"}
+TEXT_ENCODING_SAMPLE_BYTES = 256 * 1024
 
 
 @dataclass(slots=True)
@@ -160,11 +161,11 @@ class DocumentParser:
             kind = "video" if suffix in VIDEO_EXTENSIONS else "audio"
             return self._media(data, file_name, kind=kind)
         if suffix == ".json":
-            text = data.decode("utf-8", errors="replace")
+            text = self._decode_text(data)
         elif suffix in {".html", ".htm"}:
             text = self._html(data)
         else:
-            text = data.decode("utf-8-sig", errors="replace")
+            text = self._decode_text(data)
         return ParsedDocument(
             [self._document(self._clean(text), file_name=file_name)],
             metadata={"kind": "text"},
@@ -440,7 +441,7 @@ class DocumentParser:
         )
 
     def _csv(self, data: bytes, file_name: str) -> ParsedDocument:
-        rows = csv.reader(io.StringIO(data.decode("utf-8-sig", errors="replace")))
+        rows = csv.reader(io.StringIO(self._decode_text(data)))
         text = "\n".join("\t".join(row) for row in rows)
         return ParsedDocument(
             [self._document(self._clean(text), file_name=file_name)],
@@ -450,7 +451,7 @@ class DocumentParser:
     def _image(self, data: bytes, file_name: str) -> ParsedDocument:
         if Path(file_name).suffix.casefold() == ".svg":
             text = self._clean(
-                re.sub(r"<[^>]+>", " ", data.decode("utf-8", errors="replace"))
+                re.sub(r"<[^>]+>", " ", self._decode_text(data))
             )
             return ParsedDocument(
                 [self._document(text, file_name=file_name)],
@@ -765,12 +766,57 @@ class DocumentParser:
             ]
 
     def _html(self, data: bytes) -> str:
+        decoded = self._decode_text(data)
         try:
             from bs4 import BeautifulSoup
 
-            return BeautifulSoup(data, "html.parser").get_text("\n")
+            return BeautifulSoup(decoded, "html.parser").get_text("\n")
         except ImportError:
-            return re.sub(r"<[^>]+>", " ", data.decode("utf-8", errors="replace"))
+            return re.sub(r"<[^>]+>", " ", decoded)
+
+    @staticmethod
+    def _decode_text(data: bytes) -> str:
+        """Decode Unicode text and common Windows/Chinese legacy encodings."""
+
+        if data.startswith((b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")):
+            return data.decode("utf-32", errors="replace")
+        if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+            return data.decode("utf-16", errors="replace")
+        if data.startswith(b"\xef\xbb\xbf"):
+            return data[3:].decode("utf-8", errors="replace")
+
+        try:
+            return data.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            pass
+
+        # Some Windows exporters produce BOM-less UTF-16. Look for its usual
+        # alternating NUL pattern before asking the detector to guess.
+        sample = data[:TEXT_ENCODING_SAMPLE_BYTES]
+        if len(sample) >= 4:
+            odd_nuls = sum(sample[index] == 0 for index in range(1, len(sample), 2))
+            even_nuls = sum(sample[index] == 0 for index in range(0, len(sample), 2))
+            half = len(sample) / 2
+            if odd_nuls / half > 0.3:
+                return data.decode("utf-16-le", errors="replace")
+            if even_nuls / half > 0.3:
+                return data.decode("utf-16-be", errors="replace")
+
+        try:
+            from charset_normalizer import from_bytes
+
+            match = from_bytes(sample).best()
+            if match and match.encoding:
+                return data.decode(match.encoding, errors="replace")
+        except (ImportError, LookupError, ValueError):
+            pass
+
+        # GB18030 is a strict superset of the GBK encodings used by many
+        # Simplified Chinese Windows applications.
+        try:
+            return data.decode("gb18030", errors="strict")
+        except UnicodeDecodeError:
+            return data.decode("utf-8", errors="replace")
 
     def _document(
         self,

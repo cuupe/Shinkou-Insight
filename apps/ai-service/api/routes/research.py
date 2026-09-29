@@ -49,7 +49,7 @@ async def execute_run(
 async def cancel_run(run_id: str, http_request: Request) -> dict[str, str]:
     if not await http_request.app.state.runtime.cancel(run_id):
         raise HTTPException(404, "research run not found")
-    return {"runId": run_id, "status": "CANCELLING"}
+    return {"runId": run_id, "status": http_request.app.state.repository.get(run_id).status}
 
 
 @router.get("/internal/research/runs/{run_id}", dependencies=[Depends(verify_internal_api_key)])
@@ -57,6 +57,21 @@ async def get_run(run_id: str, http_request: Request) -> dict[str, Any]:
     run = http_request.app.state.repository.get(run_id)
     if not run:
         raise HTTPException(404, "research run not found")
+    # Expose observable work, not model reasoning or private tool inputs.
+    history = http_request.app.state.events.history(run_id)
+    visible_types = {"run.started", "run.queued", "run.completed", "run.failed", "run.cancelled",
+                     "node.started", "node.completed", "node.failed", "plan.created", "plan.updated",
+                     "node.waiting",
+                     "plan.step.started", "plan.step.completed", "plan.step.failed", "agent.started",
+                     "agent.completed", "agent.failed", "agent.cancelled"}
+    events = [{"id": event.event_id, "type": event.event_type, "timestamp": event.timestamp,
+               "node": event.payload.get("node"), "title": event.payload.get("title"),
+               "detail": event.payload.get("detail") or event.payload.get("message"),
+               "task": event.payload.get("task")}
+              for event in history if event.event_type in visible_types][-100:]
+    started = next((event for event in reversed(history) if event.event_type == "run.started"), None)
+    finished = next((event for event in reversed(history)
+                     if event.event_type in {"run.completed", "run.failed", "run.cancelled"}), None)
     return {
         "runId": run.run_id,
         "status": run.status,
@@ -74,6 +89,12 @@ async def get_run(run_id: str, http_request: Request) -> dict[str, Any]:
         "paused": run.paused,
         "reviewResult": run.review_result,
         "queueTaskId": run.queue_task_id,
+        "events": events,
+        "startedAt": started.timestamp if started else None,
+        "finishedAt": finished.timestamp if finished else None,
+        "durationSeconds": (finished.payload.get("durationMs", 0) / 1000) if finished else None,
+        "lastActivityAt": history[-1].timestamp if history else run.updated_at,
+        "tokenCount": run.token_count or None,
     }
 
 

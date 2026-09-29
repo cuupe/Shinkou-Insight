@@ -84,8 +84,14 @@ public class ResearchRunController {
         Map<String, Object> detail = new LinkedHashMap<>(objectMapper.convertValue(run, Map.class));
         try {
             detail.putAll(aiClient.runDetail(String.valueOf(runId)));
+            detail.put("runtimeAvailable", true);
+            // A late runtime snapshot must not resurrect a cancelled/failed run.
+            if (List.of("CANCELLED", "FAILED").contains(run.getStatus())) {
+                detail.put("status", run.getStatus());
+                if (run.getErrorMessage() != null) detail.put("errorMessage", run.getErrorMessage());
+            }
         } catch (Exception ignored) {
-            // The Java record remains available while the AI service is restarting.
+            detail.put("runtimeAvailable", false);
         }
         return Result.success(detail);
     }
@@ -93,7 +99,12 @@ public class ResearchRunController {
     @PostMapping("/{runId}/cancel")
     public Result<ResearchRun> cancel(@PathVariable Long workspaceId, @PathVariable Long projectId, @PathVariable Long runId, Authentication auth) {
         Long userId = userId(auth);
-        Result<ResearchRun> result = change(runId, projectId, userId, "CANCELLED");
+        ResearchRun existing = required(runId, projectId, userId);
+        if (List.of("COMPLETED", "FAILED", "CANCELLED").contains(existing.getStatus())) {
+            return Result.success(existing);
+        }
+        mapper.updateRuntime(runId, projectId, userId, "CANCELLED", null, "已取消", null, null);
+        Result<ResearchRun> result = Result.success(required(runId, projectId, userId));
         auditLogService.record(workspaceId, projectId, userId, "RESEARCH_RUN_CANCELLED", "RESEARCH_RUN", runId);
         Thread.startVirtualThread(() -> { try { aiClient.cancelRun(runId); } catch (Exception ignored) { } });
         return result;
@@ -102,11 +113,15 @@ public class ResearchRunController {
     @PostMapping("/{runId}/retry")
     public Result<ResearchRun> retry(@PathVariable Long workspaceId, @PathVariable Long projectId, @PathVariable Long runId, Authentication auth) {
         Long userId = userId(auth);
-        Result<ResearchRun> result = change(runId, projectId, userId, "PENDING");
-        auditLogService.record(workspaceId, projectId, userId, "RESEARCH_RUN_RETRIED", "RESEARCH_RUN", runId);
         ResearchRun run = required(runId, projectId, userId);
-        dispatch(run, workspaceId, userId, readConfig(run.getConfig()));
-        return result;
+        if (!List.of("FAILED", "CANCELLED").contains(run.getStatus())) {
+            throw new ApiException(HttpStatus.CONFLICT, "RUN_NOT_RETRYABLE", "只有失败或已取消的分析可以重试");
+        }
+        auditLogService.record(workspaceId, projectId, userId, "RESEARCH_RUN_RETRIED", "RESEARCH_RUN", runId);
+        Map<String, Object> body = new LinkedHashMap<>(readConfig(run.getConfig()));
+        body.put("goal", run.getGoal());
+        body.put("priority", run.getPriority());
+        return create(workspaceId, projectId, body, auth);
     }
 
     @PatchMapping("/{runId}/plan")
@@ -142,12 +157,6 @@ public class ResearchRunController {
         }
     }
 
-    private Result<ResearchRun> change(Long id, Long projectId, Long userId, String status) {
-        required(id, projectId, userId);
-        if (mapper.updateStatus(id, projectId, userId, status) == 0) throw notFound();
-        return Result.success(mapper.findById(id, projectId, userId));
-    }
-
     private void dispatch(ResearchRun run, Long workspaceId, Long userId, Map<String, Object> requestConfig) {
         Long resolvedWorkspaceId = workspaceId;
         Thread.startVirtualThread(() -> {
@@ -157,7 +166,8 @@ public class ResearchRunController {
                 config.putAll(agentPolicy(resolvedWorkspaceId, run.getProjectId(), userId));
                 aiClient.executeRun(run.getId(), resolvedWorkspaceId, run.getProjectId(), userId, run.getGoal(), objectMapper.writeValueAsString(config), runtime);
             } catch (Exception exception) {
-                mapper.updateStatus(run.getId(), run.getProjectId(), userId, "FAILED");
+                mapper.updateRuntime(run.getId(), run.getProjectId(), userId, "FAILED", null,
+                        "启动分析失败", "分析服务启动失败，请检查模型配置和服务连接后重试。", null);
             }
         });
     }

@@ -1,808 +1,275 @@
 <script setup lang="ts">
-import { ArrowLeft, Copy, FileText, Pause, Play, Plus, X } from "@lucide/vue";
-import { computed, onMounted, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { ArrowLeft, ArrowRight, Check, CircleAlert, Clock3, Copy, Database, FileText, LoaderCircle, Pause, Play, Plus, RefreshCw, Square } from "@lucide/vue";
 import { useRoute, useRouter } from "vue-router";
+import PageHeader from "@/components/common/PageHeader.vue";
+import ProjectWorkflow from "@/components/project/ProjectWorkflow.vue";
 import { useWorkspace } from "@/composables/useWorkspace";
+import { useResearchRun } from "@/composables/useResearchRun";
 import { runsApi } from "@/api/runs";
 import type { ResearchPlanStep } from "@/api/types";
-import PageHeader from "@/components/common/PageHeader.vue";
-import { formatDateTime } from "@/lib/utils";
+import { researchElapsed, researchErrorHelp, researchEvents, researchReport, researchStageIndex, researchStages, researchSummary } from "@/utils/researchRun";
+
 const router = useRouter();
 const route = useRoute();
-const { notify, statusClass, statusLabel, workspaceId, projectId } =
-  useWorkspace();
-const selectedEvidence = ref(-1);
-
-type RunInfo = {
-  id: string;
-  title: string;
-  project: string;
-  status: string;
-  statusLabel: string;
-  time: string;
-  goal: string;
-  duration: string;
-  tokens: string;
-  progress: number;
-  errorMessage: string;
-  planVersion: number;
-  paused: boolean;
-};
-
-const run = ref<RunInfo>({
-  id: String(route.params.runId),
-  title: "调研任务",
-  project: "—",
-  status: "pending",
-  statusLabel: "等待执行",
-  time: "",
-  goal: "",
-  duration: "—",
-  tokens: "—",
-  progress: 0,
-  errorMessage: "",
-  planVersion: 0,
-  paused: false,
+const { notify, routeTo, selectedProject, workspaceId, projectId } = useWorkspace();
+const { run, active, loading, error, lastSynced, now, refresh } = useResearchRun();
+const busy = ref(false);
+const selectedEvidence = ref("");
+const newStep = ref({ objective: "", action: "SEARCH_INTERNAL" as ResearchPlanStep["action"], query: "" });
+const status = computed(() => String(run.value?.status || "PENDING").toUpperCase());
+const labels: Record<string, string> = { PENDING: "等待执行", QUEUED: "排队中", RUNNING: "分析中", PAUSED: "已请求暂停", CANCELLING: "正在取消", COMPLETED: "分析完成", FAILED: "分析失败", CANCELLED: "已取消" };
+const statusText = computed(() => labels[status.value] || status.value);
+const progress = computed(() => Math.min(100, Math.max(0, Number(run.value?.progress) || 0)));
+const events = computed(() => researchEvents(run.value));
+const latestWait = computed(() => [...events.value].reverse().find(event => event.type === "node.waiting" && (!event.node || event.node === run.value?.currentNode))?.detail || "");
+const stageIndex = computed(() => researchStageIndex(run.value));
+const elapsed = computed(() => researchElapsed(run.value, now.value));
+const planData = computed(() => run.value?.plan as { summary?: string; steps?: ResearchPlanStep[] } | undefined);
+const plan = computed(() => Array.isArray(planData.value?.steps) ? planData.value.steps : []);
+const report = computed(() => researchReport(run.value));
+const summary = computed(() => researchSummary(run.value));
+const reportSections = computed(() => Array.isArray(report.value?.sections) ? report.value.sections as { title?: string; content?: string }[] : []);
+const recommendations = computed(() => Array.isArray(report.value?.recommendations) ? report.value.recommendations : []);
+const limitations = computed(() => Array.isArray(report.value?.limitations) ? report.value.limitations : []);
+const editable = computed(() => active.value && status.value !== "CANCELLING");
+const disconnected = computed(() => Boolean(error.value) || run.value?.runtimeAvailable === false);
+const sinceActivity = computed(() => {
+  const timestamp = run.value?.lastActivityAt || events.value.at(-1)?.timestamp || run.value?.startedAt;
+  return typeof timestamp === "string" ? Math.max(0, Math.floor((now.value - Date.parse(timestamp)) / 1000)) : 0;
 });
-
-const plan = ref<ResearchPlanStep[]>([]);
-const planSummary = ref("");
-const planVersion = ref(0);
-const planSaving = ref(false);
-const newStep = ref({
-  objective: "",
-  action: "SEARCH_INTERNAL" as ResearchPlanStep["action"],
-  query: "",
+const waiting = computed(() => active.value && status.value !== "PAUSED" && sinceActivity.value >= 30);
+const tasks = computed(() => {
+  const result = new Map<string, NonNullable<(typeof events.value)[number]["task"]>>();
+  for (const event of events.value) if (event.task) result.set(event.task.id, event.task);
+  return [...result.values()].map(task => ({ ...task,
+    status: !active.value && ["pending", "running"].includes(task.status) ? "interrupted" : task.status,
+  }));
 });
-
-type EvidenceItem = {
-  code: string;
-  title: string;
-  source: string;
-  assetId: string;
-  excerpt: string;
-  pageNumber: number | string | null;
-};
-const evidence = ref<EvidenceItem[]>([]);
-const evidenceExcerpt = ref("");
-const copied = ref(false);
-
-const metrics = computed(() => [
-  { label: "当前状态", value: run.value.statusLabel },
-  { label: "执行进度", value: `${run.value.progress}%` },
-  { label: "运行时长", value: run.value.duration },
-  { label: "消耗 Tokens", value: run.value.tokens },
-]);
-
-const summaryText = computed(() => {
-  if (run.value.status === "failed")
-    return run.value.errorMessage || "调研执行失败，可以在任务队列中重试。";
-  if (run.value.goal) return `调研目标：${run.value.goal}`;
-  return "调研完成后，这里会展示结论摘要。";
+const activityTitle = computed(() => {
+  if (disconnected.value) return "暂时无法同步分析状态";
+  if (status.value === "FAILED") return "本次分析未完成";
+  if (status.value === "COMPLETED") return "分析已完成，可以检查结论与证据";
+  if (status.value === "CANCELLED") return "本次分析已取消";
+  if (status.value === "PAUSED") return "已请求暂停，将在当前步骤结束后等待";
+  return String(run.value?.currentStep || "等待分析服务接收任务");
 });
-
-function selectEvidence(index: number) {
-  const item = evidence.value[index];
-  if (!item) return;
-  selectedEvidence.value = index;
-  evidenceExcerpt.value = item.excerpt || "当前证据没有可展示的摘录。";
-}
-
-async function copySelectedEvidence() {
-  if (!evidenceExcerpt.value) return;
-  try {
-    await navigator.clipboard.writeText(evidenceExcerpt.value);
-    copied.value = true;
-    window.setTimeout(() => {
-      copied.value = false;
-    }, 1800);
-  } catch {
-    notify("复制失败，请手动选择引用内容");
-  }
-}
-
-onMounted(async () => {
-  const runId = String(route.params.runId);
-  try {
-    const [detail] = await Promise.all([
-      runsApi.detail(workspaceId.value, projectId.value, runId),
-    ]);
-    const status = String(detail.status || "PENDING").toLowerCase();
-    run.value = {
-      id: String(detail.id ?? runId),
-      title: String(detail.title || detail.goal || "未命名调研"),
-      project: "—",
-      status,
-      statusLabel: statusLabel(status),
-      time: formatDateTime(detail.updatedAt || detail.createdAt, ""),
-      goal: String(detail.goal || ""),
-      duration: String(detail.duration || "—"),
-      tokens: String(detail.tokens || "—"),
-      progress: Math.min(100, Math.max(0, Number(detail.progress || 0))),
-      errorMessage: String(detail.errorMessage || ""),
-      planVersion: Number(detail.planVersion || 0),
-      paused: Boolean(detail.paused),
-    };
-    const rawPlan = (detail.plan || {}) as {
-      summary?: string;
-      steps?: ResearchPlanStep[];
-    };
-    plan.value = Array.isArray(rawPlan.steps)
-      ? rawPlan.steps.map((step) => ({ ...step }))
-      : [];
-    planSummary.value = String(rawPlan.summary || "");
-    planVersion.value = Number(detail.planVersion || 0);
-    const detailRecord = detail as unknown as Record<string, unknown>;
-    const rawEvidence = Array.isArray(detailRecord.evidence)
-      ? detailRecord.evidence
-      : [];
-    evidence.value = rawEvidence.map((raw, index) => {
-      const item = (raw || {}) as Record<string, unknown>;
-      const sourceName = String(
-        item.source_name ??
-          item.sourceName ??
-          item.asset_name ??
-          item.assetName ??
-          "项目资料",
-      );
-      const pageNumber = (item.page_number ?? item.pageNumber ?? null) as
-        number | string | null;
-      const pageLabel =
-        pageNumber != null && String(pageNumber) !== ""
-          ? `第${pageNumber}页`
-          : "";
-      return {
-        code: String(
-          item.id ??
-            item.chunk_id ??
-            item.chunkId ??
-            `E${String(index + 1).padStart(2, "2")}`,
-        ),
-        title: String(
-          item.section_title ??
-            item.sectionTitle ??
-            item.asset_name ??
-            item.assetName ??
-            sourceName,
-        ),
-        source: [sourceName, pageLabel].filter(Boolean).join(" · "),
-        assetId: String(item.asset_id ?? item.assetId ?? ""),
-        excerpt: String(item.content ?? item.excerpt ?? ""),
-        pageNumber,
-      };
-    });
-  } catch (error) {
-    notify(error instanceof Error ? error.message : "运行详情加载失败");
-  }
+const evidence = computed(() => {
+  const raw = Array.isArray(run.value?.evidence) ? run.value.evidence as Record<string, unknown>[] : [];
+  return raw.map((item, index) => ({
+    id: String(item.id || item.chunk_id || index),
+    title: String(item.source_name || item.sourceName || item.asset_name || "项目资料"),
+    section: String(item.section_title || item.sectionTitle || ""),
+    excerpt: String(item.content || item.excerpt || ""),
+    page: item.page_number || item.pageNumber,
+  }));
 });
+const selected = computed(() => evidence.value.find(item => item.id === selectedEvidence.value));
+const errorMessage = computed(() => String(run.value?.errorMessage || "分析服务没有返回具体错误。"));
+const history = computed(() => events.value.filter(event => event.type.startsWith("node.") || event.type.startsWith("run.")).slice(-18).reverse());
+const historyLabels: Record<string, string> = { "run.started": "开始分析", "run.queued": "已进入执行队列", "run.completed": "分析完成", "run.failed": "分析失败", "run.cancelled": "已取消", "node.started": "开始", "node.waiting": "等待模型或工具返回", "node.completed": "完成", "node.failed": "失败" };
+function time(value: string) { return new Date(value).toLocaleTimeString("zh-CN", { hour12: false }); }
+function go(name: string) { void router.push(routeTo(name)); }
+watch(() => route.params.runId, () => { selectedEvidence.value = ""; newStep.value = { objective: "", action: "SEARCH_INTERNAL", query: "" }; });
 
-async function appendPlanStep() {
-  const objective = newStep.value.objective.trim();
-  if (!objective || planSaving.value) return;
-  planSaving.value = true;
+async function control(action: "retry" | "cancel" | "pause" | "append") {
+  if (busy.value || !run.value) return;
+  busy.value = true;
   try {
-    const response = await runsApi.updatePlan(
-      workspaceId.value,
-      projectId.value,
-      String(route.params.runId),
-      {
-        mode: "APPEND",
-        expectedVersion: planVersion.value,
-        steps: [
-          {
-            id: `U${Date.now()}`,
-            objective,
-            action: newStep.value.action,
-            query: newStep.value.query.trim() || objective,
-          },
-        ],
-      },
-    );
-    const updated = (response.plan || {}) as {
-      summary?: string;
-      steps?: ResearchPlanStep[];
-    };
-    plan.value = Array.isArray(updated.steps) ? updated.steps : plan.value;
-    planSummary.value = String(updated.summary || planSummary.value);
-    planVersion.value = Number(response.planVersion || planVersion.value + 1);
-    newStep.value = { objective: "", action: "SEARCH_INTERNAL", query: "" };
-    notify("计划步骤已加入，任务会在下一个安全检查点执行");
-  } catch (error) {
-    notify(
-      error instanceof Error
-        ? error.message
-        : "计划更新失败，可能已被其他人修改",
-    );
-  } finally {
-    planSaving.value = false;
-  }
+    const runId = String(route.params.runId);
+    if (action === "retry") {
+      const next = await runsApi.retry(workspaceId.value, projectId.value, runId);
+      await router.push({ ...routeTo("project-run-detail"), params: { ...routeTo("project-run-detail").params, runId: String(next.id || next.runId) } });
+      notify("已重新开始分析，原记录已保留");
+    } else if (action === "cancel") {
+      await runsApi.cancel(workspaceId.value, projectId.value, runId);
+      await refresh();
+    } else {
+      await runsApi.updatePlan(workspaceId.value, projectId.value, runId, {
+        expectedVersion: Number(run.value.planVersion || 0),
+        mode: action === "append" ? "APPEND" : run.value.paused ? "RESUME" : "PAUSE",
+        ...(action === "append" ? { steps: [{ id: `U${Date.now()}`, ...newStep.value, objective: newStep.value.objective.trim(), query: newStep.value.query.trim() || newStep.value.objective.trim() }] } : {}),
+      });
+      if (action === "append") newStep.value = { objective: "", action: "SEARCH_INTERNAL", query: "" };
+      await refresh();
+    }
+  } catch (cause) { notify(cause instanceof Error ? cause.message : "操作失败，请重试"); }
+  finally { busy.value = false; }
 }
-
-async function togglePlanPause() {
-  if (planSaving.value) return;
-  planSaving.value = true;
-  try {
-    const response = await runsApi.updatePlan(
-      workspaceId.value,
-      projectId.value,
-      String(route.params.runId),
-      {
-        mode: run.value.paused ? "RESUME" : "PAUSE",
-        expectedVersion: planVersion.value,
-      },
-    );
-    run.value.paused = Boolean(response.paused);
-    notify(run.value.paused ? "任务已请求暂停" : "任务已恢复执行");
-  } catch (error) {
-    notify(error instanceof Error ? error.message : "任务控制失败");
-  } finally {
-    planSaving.value = false;
-  }
+async function copyEvidence() {
+  try { await navigator.clipboard.writeText(selected.value?.excerpt || ""); notify("引用已复制"); }
+  catch { notify("复制失败，请手动选择引用内容"); }
 }
-
-function exportSummary() {
-  const content = `# ${run.value.title}\n\n${summaryText.value}\n`;
-  const url = URL.createObjectURL(
-    new Blob([content], { type: "text/markdown" }),
-  );
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `${run.value.title}.md`;
-  link.click();
-  URL.revokeObjectURL(url);
-  notify("摘要已导出");
+function exportReport() {
+  const content = [`# ${report.value?.title || "分析报告"}`, summary.value,
+    ...reportSections.value.map(section => `## ${section.title || "分析"}\n\n${section.content || ""}`),
+    "## 建议", ...recommendations.value.map(value => `- ${value}`), "## 限制与待确认事项", ...limitations.value.map(value => `- ${value}`)].join("\n\n");
+  const url = URL.createObjectURL(new Blob([content], { type: "text/markdown;charset=utf-8" }));
+  const link = document.createElement("a"); link.href = url; link.download = `分析报告-${route.params.runId}.md`; link.click(); URL.revokeObjectURL(url);
 }
 </script>
 
 <template>
-  <button class="text-button back-button" type="button" @click="router.back()">
-    <ArrowLeft :size="15" />返回 Agent 任务队列
-  </button>
-  <PageHeader
-    eyebrow="AGENT / TASK DETAIL"
-    :title="run.title"
-    :subtitle="`${run.id} · ${run.project} · ${run.time}`"
-  >
-    <template #action>
-      <span class="status-badge" :class="statusClass(run.status)"
-        ><i />{{ run.statusLabel }}</span
-      >
+  <div class="analysis-page">
+    <PageHeader eyebrow="PROJECT / ANALYSIS" title="智能分析" :subtitle="`${selectedProject?.name || '当前项目'} · 从规划输入到可审查的分析结果`" />
+    <div class="analysis-nav">
+      <button class="text-button" @click="go('project-planning')"><ArrowLeft :size="15" />返回规划输入</button>
+      <button class="text-button" @click="go('project-runs')">分析记录<ArrowRight :size="14" /></button>
+    </div>
+    <ProjectWorkflow />
+    <div v-if="loading && !run" class="analysis-loading" role="status"><LoaderCircle class="spin" :size="22" />正在读取分析进度…</div>
+    <div v-else-if="!run" class="analysis-notice is-error" role="alert"><CircleAlert :size="20" /><div><strong>分析详情加载失败</strong><p>{{ error }}</p><button class="text-button" @click="refresh">重新连接</button></div></div>
+    <template v-if="run">
+      <header class="analysis-heading">
+        <div><h1>项目智能分析 <span class="analysis-status" :class="status.toLowerCase()">{{ statusText }}</span></h1><p>{{ selectedProject?.name || '当前项目' }} · 分析 #{{ run.id || run.runId }}<span v-if="lastSynced"> · {{ disconnected ? '同步中断' : active ? '每 2 秒同步' : '记录已同步' }}</span></p></div>
+        <div class="analysis-actions">
+          <template v-if="editable"><button class="button button-secondary button-sm" :disabled="busy || disconnected" @click="control('pause')"><Play v-if="run.paused" :size="14" /><Pause v-else :size="14" />{{ run.paused ? '继续分析' : '暂停' }}</button><button class="button button-secondary button-sm" :disabled="busy" @click="control('cancel')"><Square :size="13" />取消</button></template>
+          <button v-if="['FAILED','CANCELLED'].includes(status)" class="button button-primary button-sm" :disabled="busy" @click="control('retry')"><RefreshCw :size="14" />重新分析</button>
+          <button v-if="status === 'COMPLETED'" class="button button-primary button-sm" @click="go('project-review')">进入审查<ArrowRight :size="14" /></button>
+        </div>
+      </header>
+      <section class="analysis-progress" :class="{ 'has-error': status === 'FAILED' }" aria-label="分析进度">
+        <div class="analysis-current" role="status" aria-live="polite">
+          <span class="activity-icon"><CircleAlert v-if="status === 'FAILED' || disconnected" :size="23" /><Check v-else-if="status === 'COMPLETED'" :size="23" /><LoaderCircle v-else-if="active && status !== 'PAUSED'" class="spin" :size="23" /><Pause v-else :size="23" /></span>
+          <div><strong>{{ activityTitle }}</strong><p>{{ disconnected ? '暂时无法取得实时数据，正在自动重连。下方保留最后一次已知状态。' : status === 'FAILED' ? researchErrorHelp(errorMessage) : active ? latestWait || researchStages[stageIndex]?.description || '任务已创建，正在等待执行。你可以离开此页，稍后回来继续查看。' : status === 'COMPLETED' ? '自动分析结果仍需人工确认；请同时检查引用和限制。' : '规划输入与已有分析记录已保留。' }}</p></div>
+          <strong class="progress-number">{{ progress }}<small>%</small></strong>
+        </div>
+        <div class="analysis-progress-track" role="progressbar" aria-label="阶段进度" :aria-valuenow="progress" aria-valuemin="0" aria-valuemax="100"><span :style="{ width: `${progress}%` }" /></div>
+        <ol class="analysis-stages"><li v-for="(stage,index) in researchStages" :key="stage.title" :class="{ done: index < stageIndex, current: index === stageIndex, failed: index === stageIndex && status === 'FAILED' }"><span><Check v-if="index < stageIndex" :size="14" /><CircleAlert v-else-if="index === stageIndex && status === 'FAILED'" :size="14" /><template v-else>{{ index + 1 }}</template></span><div><strong>{{ stage.title }}</strong><small>{{ index < stageIndex ? '已完成' : index === stageIndex ? statusText : '待执行' }}</small></div></li></ol>
+        <div class="analysis-stats"><span><Clock3 :size="14" />已运行 <b>{{ elapsed }}</b></span><span><Database :size="14" />已收集 <b>{{ evidence.length }} 条证据</b></span><span>Token <b>{{ run.tokenCount == null ? '暂未返回' : Number(run.tokenCount).toLocaleString() }}</b></span><span class="progress-note">进度随执行阶段更新</span></div>
+      </section>
+      <div v-if="waiting && !disconnected" class="analysis-notice" role="status"><Clock3 :size="19" /><div><strong>当前步骤已 {{ sinceActivity }} 秒没有新的执行结果</strong><p>正在等待模型或工具返回，尚未完成此步骤。你可以继续等待，也可以取消后检查模型配置。</p></div><button class="text-button" @click="go('settings-models')">模型设置<ArrowRight :size="14" /></button></div>
+      <div v-if="status === 'FAILED'" class="analysis-notice is-error" role="alert"><CircleAlert :size="20" /><div><strong>失败原因</strong><p>{{ errorMessage }}</p></div><button class="text-button" @click="go('settings-models')">检查模型连接</button></div>
+      <div class="analysis-columns">
+        <div class="analysis-main">
+          <section class="analysis-section">
+            <div class="section-title"><div><h2>执行过程</h2><p>记录实际分配的任务与返回结果</p></div><span>{{ tasks.length }} 项任务</span></div>
+            <ol v-if="tasks.length" class="analysis-tasks"><li v-for="task in tasks" :key="task.id" :class="task.status"><span class="task-marker"><Check v-if="task.status === 'completed'" :size="15" /><CircleAlert v-else-if="['failed','interrupted'].includes(task.status)" :size="15" /><LoaderCircle v-else-if="task.status === 'running'" class="spin" :size="15" /><Clock3 v-else :size="15" /></span><div><strong>{{ task.title }}</strong><p>{{ task.error || task.summary || (task.status === 'running' ? '正在执行，等待返回结果…' : task.status === 'interrupted' ? '分析已停止' : '等待执行') }}</p></div><small>{{ task.durationMs != null ? `${Math.max(1,Math.round(task.durationMs / 1000))} 秒` : task.status === 'running' ? '进行中' : '' }}</small></li></ol>
+            <div v-else class="analysis-empty"><Clock3 :size="23" /><strong>{{ active ? '等待第一项任务' : '没有可用的任务轨迹' }}</strong><p>{{ active ? '分析服务开始处理后，这里会展示目标拆解、检索、撰写和核验的实际过程。' : '可查看下方执行日志或重新发起分析。' }}</p></div>
+            <details v-if="history.length" class="analysis-log"><summary>执行日志 · {{ history.length }} 条最近事件</summary><ol><li v-for="event in history" :key="event.id"><time>{{ time(event.timestamp) }}</time><span>{{ event.title || historyLabels[event.type] || event.type }}<small v-if="event.title"> · {{ historyLabels[event.type] }}</small><p v-if="event.detail">{{ event.detail }}</p></span></li></ol></details>
+          </section>
+          <section class="analysis-section">
+            <div class="section-title"><div><h2>研究计划 <small v-if="plan.length">v{{ run.planVersion }}</small></h2><p>{{ planData?.summary || (active ? '完成目标拆解后，将在这里列出具体研究问题。' : '本次分析尚未生成研究计划。') }}</p></div></div>
+            <ol v-if="plan.length" class="analysis-plan"><li v-for="(step,index) in plan" :key="step.id"><span>{{ index + 1 }}</span><div><strong>{{ step.objective }}</strong><p v-if="step.query">{{ step.query }}</p></div></li></ol>
+            <details v-if="editable && plan.length" class="analysis-append"><summary><Plus :size="14" />补充研究问题</summary><form @submit.prevent="control('append')"><input v-model="newStep.objective" aria-label="追加计划步骤" placeholder="例如：核对首期试点的实施成本" maxlength="500" required /><select v-model="newStep.action" aria-label="计划动作"><option value="SEARCH_INTERNAL">项目资料</option><option value="SEARCH_GRAPH">知识图谱</option><option value="SEARCH_WEB">外部搜索</option><option value="SYNTHESIZE">整理结论</option></select><button class="button button-primary button-sm" :disabled="busy || disconnected || !newStep.objective.trim()">追加</button></form></details>
+          </section>
+          <section class="analysis-section analysis-result">
+            <div class="section-title"><div><h2>分析结果</h2><p>{{ summary ? '请结合来源与限制审阅以下结论' : '分析完成后显示真实结论、建议和限制' }}</p></div><button v-if="summary" class="text-button" @click="exportReport"><FileText :size="14" />导出</button></div>
+            <template v-if="summary"><p class="result-summary">{{ summary }}</p><div v-for="(section,index) in reportSections" :key="index" class="result-section"><h3>{{ section.title }}</h3><p>{{ section.content }}</p></div><div v-if="recommendations.length" class="result-section"><h3>建议</h3><ul><li v-for="(item,index) in recommendations" :key="index">{{ item }}</li></ul></div><div v-if="limitations.length" class="result-section"><h3>限制与待确认事项</h3><ul><li v-for="(item,index) in limitations" :key="index">{{ item }}</li></ul></div></template>
+            <p v-else class="result-placeholder">{{ status === 'FAILED' ? '本次分析未完成，尚无可用结论。请处理失败原因后重新分析。' : status === 'COMPLETED' ? '本次运行未返回结论内容，请查看报告记录。' : '尚未生成分析结论。' }}</p>
+            <div v-if="status === 'COMPLETED'" class="result-next"><button class="button button-secondary button-sm" @click="go('project-reports')">查看报告<FileText :size="14" /></button><button class="text-button" @click="go('project-review')">下一步：审查定稿<ArrowRight :size="14" /></button></div>
+          </section>
+        </div>
+        <aside class="analysis-sidebar">
+          <section class="analysis-section"><div class="section-title"><h2>本次分析目标</h2><FileText :size="16" /></div><details class="analysis-goal"><summary>{{ String(run.title || run.goal || '规划输入') }}</summary><p>{{ run.goal }}</p></details><button class="text-button edit-goal" @click="go('project-planning')">查看规划输入<ArrowRight :size="14" /></button></section>
+          <section class="analysis-section"><div class="section-title"><h2>证据与来源</h2><span>{{ evidence.length }}</span></div><div v-if="!evidence.length" class="analysis-empty"><Database :size="24" /><strong>{{ active ? '等待检索结果' : '尚无可引用证据' }}</strong><p>{{ active ? '检索返回后，来源与引用片段会显示在这里。' : '补充项目资料后重新分析，可提高结论的可验证性。' }}</p><button class="text-button" @click="go('project-assets')">查看项目资料<ArrowRight :size="14" /></button></div><div v-else class="analysis-evidence"><button v-for="(item,index) in evidence" :key="item.id" :class="{ selected: selectedEvidence === item.id }" @click="selectedEvidence = selectedEvidence === item.id ? '' : item.id"><span>{{ String(index + 1).padStart(2,'0') }}</span><div><strong>{{ item.title }}</strong><small>{{ item.section }}{{ item.page ? ` · 第 ${item.page} 页` : '' }}</small></div></button><div v-if="selected" class="evidence-excerpt"><p>{{ selected.excerpt }}</p><button class="text-button" @click="copyEvidence"><Copy :size="13" />复制引用</button></div></div></section>
+        </aside>
+      </div>
     </template>
-  </PageHeader>
-  <div class="run-metrics">
-    <div v-for="metric in metrics" :key="metric.label">
-      <span>{{ metric.label }}</span
-      ><strong>{{ metric.value }}</strong>
-    </div>
   </div>
-  <div class="research-workspace">
-    <section class="panel markdown-body">
-      <p class="eyebrow">FINAL SUMMARY</p>
-      <h2>结论摘要</h2>
-      <p>{{ summaryText }}</p>
-      <button
-        class="button button-secondary button-sm"
-        type="button"
-        @click="exportSummary"
-      >
-        <FileText :size="14" />导出摘要
-      </button>
-    </section>
-    <aside class="panel evidence-panel">
-      <div class="panel-heading">
-        <div>
-          <h2>证据与来源</h2>
-          <p>点击证据查看引用片段</p>
-        </div>
-      </div>
-      <button
-        v-for="(item, index) in evidence"
-        :key="item.code"
-        class="evidence-card"
-        :class="{ selected: selectedEvidence === index }"
-        type="button"
-        @click="selectEvidence(index)"
-      >
-        <div>
-          <span class="evidence-code">{{ item.code }}</span
-          ><strong>{{ item.title }}</strong>
-        </div>
-        <small>{{ item.source }}</small>
-      </button>
-      <p v-if="!evidence.length" class="empty-state">知识库暂无可引用资料。</p>
-      <div v-if="selectedEvidence >= 0" class="evidence-drawer">
-        <div>
-          <span class="eyebrow">EVIDENCE</span>
-          <h2>{{ evidence[selectedEvidence]?.title }}</h2>
-          <p>
-            {{ evidenceExcerpt }}
-          </p>
-        </div>
-        <div>
-          <button
-            class="button button-secondary button-sm"
-            type="button"
-            @click="copySelectedEvidence"
-          >
-            <Copy :size="14" />{{ copied ? "已复制" : "复制引用" }}</button
-          ><button
-            class="icon-button small"
-            type="button"
-            @click="selectedEvidence = -1"
-          >
-            <X :size="17" />
-          </button>
-        </div>
-      </div>
-    </aside>
-  </div>
-  <section class="panel run-plan-panel">
-    <div class="panel-heading">
-      <div>
-        <span class="eyebrow">VERSIONED PLAN</span>
-        <h2>
-          执行计划 <small>v{{ planVersion }}</small>
-        </h2>
-        <p>
-          {{ planSummary || "计划由 Agent 根据目标自动生成，可在运行中追加。" }}
-        </p>
-      </div>
-      <button
-        class="button button-secondary button-sm"
-        type="button"
-        :disabled="
-          planSaving || !['running', 'pending', 'paused'].includes(run.status)
-        "
-        @click="togglePlanPause"
-      >
-        <Play v-if="run.paused" :size="14" /><Pause v-else :size="14" />{{
-          run.paused ? "继续执行" : "暂停任务"
-        }}
-      </button>
-    </div>
-    <div class="run-plan-list">
-      <div v-for="(step, index) in plan" :key="step.id" class="run-plan-step">
-        <span>{{ index + 1 }}</span>
-        <div>
-          <strong>{{ step.objective }}</strong
-          ><small>{{ step.action }} · {{ step.query || "无需查询" }}</small>
-        </div>
-      </div>
-      <p v-if="!plan.length" class="empty-state">计划将在任务开始后生成。</p>
-    </div>
-    <form class="run-plan-form" @submit.prevent="appendPlanStep">
-      <input
-        v-model="newStep.objective"
-        type="text"
-        maxlength="500"
-        placeholder="追加一个研究步骤，例如：核对竞品定价"
-        aria-label="追加计划步骤"
-      />
-      <select v-model="newStep.action" aria-label="计划动作">
-        <option value="SEARCH_INTERNAL">项目资料</option>
-        <option value="SEARCH_GRAPH">知识图谱</option>
-        <option value="SEARCH_WEB">外部搜索</option>
-        <option value="SYNTHESIZE">整理结论</option>
-      </select>
-      <input
-        v-model="newStep.query"
-        type="text"
-        maxlength="2000"
-        placeholder="查询语句（可选）"
-        aria-label="计划查询语句"
-      />
-      <button
-        class="button button-primary button-sm"
-        type="submit"
-        :disabled="planSaving || !newStep.objective.trim()"
-      >
-        <Plus :size="14" />追加
-      </button>
-    </form>
-  </section>
 </template>
 
 <style scoped>
-.run-detail-top {
-  align-items: center;
-}
-.run-detail-top h1 {
-  font-size: 1.5rem;
-}
-.run-meta {
-  gap: 0.875rem;
-  margin-top: 0.6875rem;
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-}
-.run-metrics {
-  display: flex;
-  gap: 0;
-  background: var(--surface);
-  border: 0.0625rem solid var(--workspace-border);
-  border-radius: 0.625rem;
-  margin-bottom: 1.125rem;
-}
-.run-metrics div {
-  padding: 0.9375rem 1.5rem;
-  min-width: 8.75rem;
-  border-right: 0.0625rem solid var(--workspace-divider);
-}
-.run-metrics div:last-child {
-  border-right: 0;
-}
-.run-metrics span,
-.run-metrics strong {
-  display: block;
-}
-.run-metrics span {
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-}
-.run-metrics strong {
-  color: var(--workspace-text);
-  font-size: 1.0625rem;
-  margin-top: 0.375rem;
-}
-.research-workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(18rem, 0.85fr);
-  gap: 0.9375rem;
-  align-items: start;
-}
-.run-plan-panel {
-  margin-top: 0.9375rem;
-}
-.run-plan-panel h2 {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  margin: 0;
-  color: var(--workspace-text);
-  font-size: 0.875rem;
-}
-.run-plan-panel h2 small {
-  color: var(--teal-dark);
-  font-size: 0.7rem;
-  font-weight: 500;
-}
-.run-plan-panel p {
-  margin: 0.3125rem 0 0;
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-}
-.run-plan-list {
-  display: grid;
-  gap: 0.5rem;
-  padding: 0 1.25rem 1rem;
-}
-.run-plan-step {
-  display: flex;
-  align-items: center;
-  gap: 0.625rem;
-  padding: 0.625rem 0.75rem;
-  border: 0.0625rem solid var(--workspace-divider);
-  border-radius: 0.5rem;
-  background: var(--surface-soft);
-}
-.run-plan-step > span {
-  display: grid;
-  place-items: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  color: var(--teal-dark);
-  background: color-mix(in oklab, var(--teal) 14%, var(--surface));
-  font-size: 0.7rem;
-}
-.run-plan-step div {
-  display: grid;
-  min-width: 0;
-  gap: 0.2rem;
-}
-.run-plan-step strong {
-  color: var(--workspace-text);
-  font-size: 0.75rem;
-}
-.run-plan-step small {
-  overflow: hidden;
-  color: var(--workspace-muted);
-  font-size: 0.7rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.run-plan-form {
-  display: grid;
-  grid-template-columns: 1.1fr 8rem 1.1fr auto;
-  gap: 0.5rem;
-  padding: 1rem 1.25rem;
-  border-top: 0.0625rem solid var(--workspace-divider);
-  background: var(--surface-soft);
-}
-.run-plan-form input,
-.run-plan-form select {
-  min-width: 0;
-  padding: 0.5rem 0.625rem;
-  border: 0.0625rem solid var(--workspace-border);
-  border-radius: 0.4375rem;
-  color: var(--workspace-text);
-  background: var(--surface);
-  font: inherit;
-  font-size: 0.75rem;
-  outline: 0;
-}
-@media (max-width: 47.5rem) {
-  .run-plan-form {
-    grid-template-columns: 1fr;
-  }
-}
-.timeline-panel,
-.event-panel,
-.evidence-panel {
-  min-height: 28.75rem;
-}
-.live-indicator {
-  color: var(--teal-dark);
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3125rem;
-}
-.live-indicator i {
-  width: 0.375rem;
-  height: 0.375rem;
-  border-radius: 50%;
-  background: var(--teal);
-  box-shadow: 0 0 0 0.25rem #e1f6f3;
-}
-.timeline {
-  padding: 0.5625rem 1.375rem;
-}
-.timeline-item {
-  position: relative;
-  display: flex;
-  gap: 0.625rem;
-  min-height: 4.3125rem;
-}
-.timeline-item:not(:last-child)::before {
-  content: "";
-  position: absolute;
-  left: 0.5rem;
-  top: 1.25rem;
-  height: calc(100% - 0.375rem);
-  border-left: 0.0625rem solid var(--workspace-divider);
-}
-.timeline-marker {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  place-items: center;
-  width: 1.0625rem;
-  height: 1.0625rem;
-  border-radius: 50%;
-  color: white;
-  background: #e1e9e9;
-  flex: 0 0 auto;
-}
-.timeline-item.done .timeline-marker {
-  background: var(--teal);
-}
-.timeline-item.active .timeline-marker {
-  background: #fff6e4;
-  border: 0.0625rem solid #e8a93e;
-}
-.timeline-item.active .timeline-marker span {
-  width: 0.3125rem;
-  height: 0.3125rem;
-  border-radius: 50%;
-  background: #e8a93e;
-}
-.timeline-copy {
-  padding-top: 0.0625rem;
-}
-.timeline-copy strong,
-.timeline-copy small {
-  display: block;
-}
-.timeline-copy strong {
-  color: var(--workspace-text);
-  font-size: 0.75rem;
-}
-.timeline-item.active .timeline-copy strong {
-  color: #b4771e;
-}
-.timeline-copy small {
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-  line-height: 1.5;
-  margin-top: 0.3125rem;
-}
-.step-spinner {
-  margin-left: auto;
-  color: #d79a2d;
-  animation: spin 1.2s linear infinite;
-}
-.event-list {
-  padding: 0.3125rem 1.375rem 1.25rem;
-}
-.event-row {
-  display: grid;
-  grid-template-columns: 2.875rem 1.6875rem 1fr;
-  gap: 0.5rem;
-  padding: 0.8125rem 0;
-  border-bottom: 0.0625rem solid var(--workspace-divider);
-}
-.event-row:last-child {
-  border-bottom: 0;
-}
-.event-time {
-  color: var(--workspace-muted);
-  font:
-    0.5625rem ui-monospace,
-    monospace;
-  padding-top: 0.3125rem;
-}
-.event-icon {
-  width: 1.6875rem;
-  height: 1.6875rem;
-  border-radius: 0.4375rem;
-  display: grid;
-  place-items: center;
-}
-.gray-bg {
-  background: #f0f3f3;
-  color: #87979c;
-}
-.event-row strong {
-  color: var(--workspace-text);
-  font-size: 0.75rem;
-}
-.event-row p {
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-  margin: 0.3125rem 0 0;
-  line-height: 1.5;
-}
-.evidence-list {
-  padding: 0.25rem 0.875rem 1.125rem;
-}
-.evidence-card {
-  width: 100%;
-  display: block;
-  border: 0.0625rem solid transparent;
-  background: transparent;
-  border-radius: 0.5rem;
-  text-align: left;
-  padding: 0.75rem 0.5625rem;
-  cursor: pointer;
-}
-.evidence-card:hover,
-.evidence-card.selected {
-  background: color-mix(in oklab, var(--teal) 8%, var(--surface));
-  border-color: color-mix(in oklab, var(--teal) 24%, var(--workspace-border));
-}
-.evidence-card > div {
-  display: flex;
-  align-items: center;
-  gap: 0.4375rem;
-}
-.evidence-code {
-  display: inline-grid;
-  place-items: center;
-  width: 1.4375rem;
-  height: 1.1875rem;
-  color: var(--teal-dark);
-  background: #ddf4ef;
-  border-radius: 0.25rem;
-  font:
-    800 0.5625rem ui-monospace,
-    monospace;
-}
-.evidence-code.conflict {
-  color: #b06e17;
-  background: #fff0d8;
-}
-.evidence-card strong {
-  color: var(--workspace-text);
-  font-size: 0.75rem;
-}
-.evidence-card small,
-.evidence-card p {
-  display: block;
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-  margin: 0.4375rem 0 0;
-}
-.evidence-card p {
-  line-height: 1.55;
-  color: var(--workspace-muted);
-}
-.evidence-drawer {
-  position: fixed;
-  right: 1.5rem;
-  bottom: 1.5rem;
-  z-index: 30;
-  width: min(35rem, calc(100vw - 3rem));
-  display: flex;
-  justify-content: space-between;
-  gap: 1.125rem;
-  background: #173c3a;
-  color: white;
-  padding: 1.0625rem 1.125rem;
-  border-radius: 0.625rem;
-  box-shadow: 0 1rem 2.5rem rgba(17, 58, 56, 0.25);
-}
-.evidence-drawer .eyebrow {
-  color: #81dbce;
-  margin-bottom: 0.5rem;
-}
-.evidence-drawer h2 {
-  font-size: 0.75rem;
-  margin: 0;
-}
-.evidence-drawer p {
-  color: #b8d9d5;
-  font:
-    0.625rem/1.6 Georgia,
-    serif;
-  margin: 0.5rem 0;
-}
-.evidence-drawer small {
-  color: #8ab4af;
-  font-size: 0.75rem;
-}
-.evidence-drawer > div:last-child {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.4375rem;
-}
-.evidence-drawer .button-secondary {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.13);
-  color: white;
-}
-
-@media (max-width: 47.5rem) {
-  .run-detail-top {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .run-metrics {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .run-metrics div {
-    min-width: 0;
-    border-bottom: 0.0625rem solid #edf1f1;
-  }
-
-  .run-metrics div:nth-child(2) {
-    border-right: 0;
-  }
-
-  .run-metrics div:nth-child(3),
-  .run-metrics div:nth-child(4) {
-    border-bottom: 0;
-  }
-
-  .research-workspace {
-    grid-template-columns: 1fr;
-  }
-
-  .timeline-panel,
-  .event-panel,
-  .evidence-panel {
-    min-height: auto;
-  }
-
-  .evidence-drawer {
-    right: 0.75rem;
-    bottom: 0.75rem;
-    width: calc(100vw - 1.5rem);
-  }
-}
+.analysis-page { color: var(--workspace-text); width: 100%; max-width: 90rem; margin: 0 auto; }
+.analysis-nav,.analysis-heading,.analysis-actions,.section-title,.analysis-stats,.result-next { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.analysis-nav { margin-bottom: 1rem; }
+.analysis-heading { margin: 1.75rem 0 1.1rem; }
+.analysis-heading h1 { display: flex; align-items: center; flex-wrap: wrap; gap: .8rem; margin: 0; font-size: 1.4rem; font-weight: 650; letter-spacing: -.025em; }
+.analysis-heading p { color: var(--workspace-muted); font-size: .78rem; margin: .6rem 0 0; }
+.analysis-actions { justify-content: flex-end; flex-wrap: wrap; gap: .5rem; }
+.analysis-status { padding: .25rem .55rem; font-size: .7rem; font-weight: 550; background: var(--surface-soft); border: 1px solid var(--workspace-border); border-radius: .35rem; }
+.analysis-status.running,.analysis-status.completed { color: var(--teal-dark); background: color-mix(in srgb,var(--teal) 10%,var(--surface)); }
+.analysis-status.failed { color: #ce6464; }
+.analysis-progress { border: 1px solid var(--workspace-border); border-radius: .75rem; background: var(--surface); overflow: hidden; }
+.analysis-current { display: flex; align-items: center; gap: 1rem; padding: 1.4rem 1.5rem 1.15rem; }
+.activity-icon { display: grid; place-items: center; width: 2.9rem; height: 2.9rem; flex-shrink: 0; color: var(--teal-dark); background: color-mix(in srgb,var(--teal) 10%,var(--surface)); border-radius: .65rem; }
+.analysis-current > div { flex: 1; min-width: 0; }
+.analysis-current strong { font-size: .98rem; font-weight: 600; }
+.analysis-current p { font-size: .78rem; line-height: 1.7; color: var(--workspace-muted); margin: .4rem 0 0; }
+.analysis-current .progress-number { font-size: 1.8rem; font-variant-numeric: tabular-nums; font-weight: 550; }
+.progress-number small { font-size: .8rem; color: var(--workspace-muted); margin-left: .15rem; }
+.analysis-progress-track { height: 3px; margin: 0 1.5rem; background: var(--workspace-divider); }
+.analysis-progress-track span { display: block; height: 100%; background: var(--teal); transition: width .3s; }
+.has-error .analysis-progress-track span { background: #ce6464; }
+.analysis-stages { display: grid; grid-template-columns: repeat(4,1fr); gap: .75rem; list-style: none; margin: 0; padding: 1.3rem 1.5rem; }
+.analysis-stages li { display: flex; align-items: center; gap: .65rem; color: var(--workspace-muted); }
+.analysis-stages li > span { width: 1.8rem; height: 1.8rem; flex-shrink: 0; display: grid; place-items: center; border: 1px solid var(--workspace-border); border-radius: 50%; font-size: .72rem; }
+.analysis-stages strong { display: block; font-size: .8rem; font-weight: 550; }
+.analysis-stages small { display: block; margin-top: .2rem; font-size: .68rem; }
+.analysis-stages .current { color: var(--workspace-text); }
+.analysis-stages .current > span,.analysis-stages .done > span { color: var(--teal-dark); border-color: var(--teal); background: color-mix(in srgb,var(--teal) 9%,var(--surface)); }
+.analysis-stages .failed > span { color: #ce6464; border-color: #ce6464; }
+.analysis-stats { flex-wrap: wrap; justify-content: flex-start; border-top: 1px solid var(--workspace-divider); padding: .85rem 1.5rem; color: var(--workspace-muted); font-size: .72rem; gap: 1.5rem; }
+.analysis-stats span { display: inline-flex; align-items: center; gap: .4rem; }
+.analysis-stats b { color: var(--workspace-text); font-weight: 500; font-variant-numeric: tabular-nums; }
+.analysis-stats .progress-note { margin-left: auto; font-size: .68rem; }
+.analysis-columns { display: grid; grid-template-columns: minmax(0,1fr) minmax(16rem,.46fr); gap: 1.25rem; margin-top: 1.25rem; align-items: start; }
+.analysis-main,.analysis-sidebar { display: grid; gap: 1.25rem; min-width: 0; }
+.analysis-section { background: var(--surface); border: 1px solid var(--workspace-border); border-radius: .65rem; overflow: hidden; min-width: 0; }
+.section-title { padding: 1.2rem 1.3rem; gap: .5rem; }
+.section-title h2 { margin: 0; font-size: .88rem; font-weight: 600; }
+.section-title h2 small { font-size: .7rem; color: var(--workspace-muted); margin-left: .3rem; }
+.section-title p { margin: .35rem 0 0; font-size: .73rem; color: var(--workspace-muted); line-height: 1.7; }
+.section-title > span,.section-title > svg { color: var(--workspace-muted); font-size: .7rem; flex-shrink: 0; }
+.analysis-tasks { list-style: none; margin: 0; padding: 0 1.3rem .4rem; }
+.analysis-tasks li { display: flex; gap: .7rem; padding: .95rem 0; border-top: 1px solid var(--workspace-divider); align-items: flex-start; }
+.task-marker { display: grid; place-items: center; flex: 0 0 1.4rem; height: 1.4rem; color: var(--workspace-muted); }
+.analysis-tasks .completed .task-marker,.analysis-tasks .running .task-marker { color: var(--teal-dark); }
+.analysis-tasks .failed .task-marker { color: #ce6464; }
+.analysis-tasks li > div { flex: 1; min-width: 0; }
+.analysis-tasks strong,.analysis-plan strong { font-size: .79rem; font-weight: 550; line-height: 1.7; }
+.analysis-tasks p,.analysis-plan p { font-size: .73rem; line-height: 1.8; color: var(--workspace-muted); margin: .25rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.analysis-tasks li > small { font-size: .68rem; color: var(--workspace-muted); white-space: nowrap; padding-top: .25rem; }
+.analysis-empty { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 1.2rem 1.5rem 1.6rem; color: var(--workspace-muted); gap: .65rem; }
+.analysis-empty strong { font-size: .8rem; font-weight: 500; color: var(--workspace-text); }
+.analysis-empty p { max-width: 29rem; font-size: .74rem; line-height: 1.8; margin: 0 0 .3rem; }
+.analysis-log { border-top: 1px solid var(--workspace-divider); padding: .85rem 1.3rem; font-size: .74rem; }
+.analysis-log summary,.analysis-goal summary,.analysis-append summary { cursor: pointer; line-height: 1.7; }
+.analysis-log summary { color: var(--workspace-muted); }
+.analysis-log ol { list-style: none; padding: 0; margin: .8rem 0 0; }
+.analysis-log li { display: flex; gap: .8rem; padding: .4rem 0; }
+.analysis-log time { color: var(--workspace-muted); font-size: .68rem; font-variant-numeric: tabular-nums; }
+.analysis-log p { margin: .3rem 0; overflow-wrap: anywhere; }
+.analysis-plan { list-style: none; padding: 0 1.3rem 1rem; margin: 0; }
+.analysis-plan li { display: flex; gap: .8rem; padding: .7rem 0; border-top: 1px solid var(--workspace-divider); }
+.analysis-plan li > span { color: var(--workspace-muted); font-size: .75rem; padding-top: .2rem; }
+.analysis-append { border-top: 1px solid var(--workspace-divider); padding: .8rem 1.3rem; }
+.analysis-append summary { font-size: .74rem; color: var(--teal-dark); }
+.analysis-append summary svg { vertical-align: middle; }
+.analysis-append form { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .8rem; }
+.analysis-append input,.analysis-append select { border: 1px solid var(--workspace-border); border-radius: .4rem; background: var(--surface); color: var(--workspace-text); font: inherit; font-size: .75rem; padding: .5rem; min-width: 0; }
+.analysis-append input { flex: 1; min-width: 10rem; }
+.analysis-goal { padding: 0 1.3rem; font-size: .78rem; overflow-wrap: anywhere; }
+.analysis-goal summary { font-weight: 500; }
+.analysis-goal p { color: var(--workspace-muted); font-size: .75rem; line-height: 1.9; white-space: pre-wrap; }
+.edit-goal { margin: 1rem 1.3rem 1.2rem; }
+.analysis-evidence { padding: 0 1.3rem 1rem; }
+.analysis-evidence > button { display: flex; width: 100%; gap: .6rem; text-align: left; padding: .8rem 0; border: 0; border-top: 1px solid var(--workspace-divider); background: none; color: inherit; cursor: pointer; }
+.analysis-evidence > button.selected { color: var(--teal-dark); }
+.analysis-evidence > button > span { color: var(--workspace-muted); font-size: .65rem; padding-top: .2rem; }
+.analysis-evidence strong { display: block; font-size: .76rem; font-weight: 500; overflow-wrap: anywhere; }
+.analysis-evidence small { display: block; margin-top: .3rem; font-size: .66rem; color: var(--workspace-muted); }
+.evidence-excerpt { border-top: 1px solid var(--workspace-divider); padding-top: .6rem; }
+.evidence-excerpt p { white-space: pre-wrap; font-size: .75rem; line-height: 1.9; overflow-wrap: anywhere; max-height: 25rem; overflow: auto; }
+.result-summary,.result-placeholder,.result-section { margin: 0; padding: 0 1.3rem 1.2rem; font-size: .8rem; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; }
+.result-placeholder { color: var(--workspace-muted); }
+.result-section h3 { font-size: .85rem; margin: .3rem 0; }
+.result-section p { margin: 0; }
+.result-section ul { white-space: normal; padding-left: 1.1rem; margin: .3rem 0; }
+.result-next { padding: 1rem 1.3rem; border-top: 1px solid var(--workspace-divider); flex-wrap: wrap; }
+.analysis-notice { display: flex; align-items: flex-start; gap: .75rem; margin-top: 1rem; padding: 1rem 1.2rem; border: 1px solid color-mix(in srgb,#c79b4d 40%,var(--workspace-border)); background: color-mix(in srgb,#c79b4d 6%,var(--surface)); border-radius: .6rem; }
+.analysis-notice > svg { flex-shrink: 0; color: #c79b4d; }
+.analysis-notice > div { flex: 1; min-width: 0; }
+.analysis-notice strong { font-size: .8rem; font-weight: 550; }
+.analysis-notice p { margin: .3rem 0 0; font-size: .75rem; line-height: 1.8; color: var(--workspace-muted); overflow-wrap: anywhere; }
+.is-error { border-color: color-mix(in srgb,#ce6464 40%,var(--workspace-border)); background: color-mix(in srgb,#ce6464 5%,var(--surface)); }
+.is-error > svg { color: #ce6464; }
+.analysis-loading { display: flex; justify-content: center; align-items: center; gap: .8rem; min-height: 18rem; color: var(--workspace-muted); }
+.analysis-page .text-button { font-size: .74rem; gap: .35rem; }
+.analysis-page button:focus-visible,.analysis-page summary:focus-visible,.analysis-page input:focus-visible,.analysis-page select:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
+.spin { animation: rotate 1.2s linear infinite; }
+@keyframes rotate { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } .analysis-progress-track span { transition: none; } }
+@media (max-width: 68rem) { .analysis-columns { grid-template-columns: minmax(0,1fr); } .analysis-sidebar { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width: 42rem) { .analysis-heading { align-items: flex-start; flex-direction: column; } .analysis-heading h1 { font-size: 1.2rem; } .analysis-sidebar { grid-template-columns: minmax(0,1fr); } .analysis-current { padding: 1rem; gap: .7rem; align-items: flex-start; } .activity-icon { width: 2.2rem; height: 2.2rem; } .analysis-current .progress-number { font-size: 1.2rem; } .analysis-stages { padding: 1rem; grid-template-columns: repeat(2,1fr); gap: 1rem; } .analysis-stats { padding: .8rem 1rem; gap: .8rem; } .analysis-stats .progress-note { margin-left: 0; width: 100%; } .analysis-notice { flex-wrap: wrap; } .analysis-notice > div { min-width: 70%; } }
 </style>

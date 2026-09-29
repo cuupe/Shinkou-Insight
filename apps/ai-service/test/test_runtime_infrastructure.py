@@ -143,3 +143,55 @@ async def test_retrieval_and_web_cache_serialize_pydantic_evidence():
     assert (await cached_web.search("网页证据", 1))[0].id == "W1"
     assert web.calls == 1
     await cache.close()
+
+
+@pytest.mark.asyncio
+async def test_retrieval_revision_bypasses_weak_results_cached_before_relevance_gate():
+    cache = await CacheService.create(enabled=True, backend="memory", namespace="test-retrieval-revision", max_entries=10)
+    scope = {"workspaceId": 1, "projectId": 1}
+    legacy_identity = {
+        **scope,
+        "retrievalRevision": 2,
+        "question": "WHO headquarters",
+        "topK": 1,
+        "filters": {},
+        "retrievalMode": "HYBRID",
+        "reranker": True,
+        "fusion": "WEIGHTED_RRF",
+        "candidateK": None,
+        "rankConstant": 60,
+        "vectorWeight": 0.55,
+        "keywordWeight": 0.45,
+        "diversityLambda": 0.9,
+        "rerankTopK": None,
+        "embeddingModel": None,
+        "embeddingDimension": None,
+    }
+    await cache.set(
+        "retrieval",
+        legacy_identity,
+        [Evidence(id="E1", chunk_id="c1", content="unrelated stale result", source_name="old cache").model_dump(mode="json")],
+        ttl_seconds=30,
+        version=0,
+    )
+
+    class Retriever:
+        calls = 0
+
+        async def retrieve(self, **_kwargs):
+            self.calls += 1
+            return []
+
+    retriever = Retriever()
+    cached_retriever = CachedRetriever(retriever, cache, ttl_seconds=30)
+    items = await cached_retriever.retrieve(
+        workspace_id=1,
+        project_id=1,
+        question="WHO headquarters",
+        top_k=1,
+        use_reranker=True,
+    )
+
+    assert items == []
+    assert retriever.calls == 1
+    await cache.close()

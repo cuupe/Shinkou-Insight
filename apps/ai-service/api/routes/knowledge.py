@@ -17,11 +17,13 @@ from models.schemas import (
     KnowledgeAnswerResponse,
     KnowledgeCitation,
     KnowledgeSearchRequest,
+    RetrievalItem,
     RetrievalResponse,
     RuntimeModelConfig,
 )
 from prompts.search_prompts import knowledge_answer_prompt
 from rag.hybrid import build_query_variants
+from storage.files import StorageUnavailableError
 
 router = APIRouter(tags=["knowledge"])
 settings = get_settings()
@@ -79,7 +81,9 @@ async def search_knowledge(request: KnowledgeSearchRequest, http_request: Reques
     return RetrievalResponse(
         query=request.query,
         rewritten_queries=build_query_variants(request.query),
-        items=items,
+        # Retriever adapters (including cache hits) return Evidence, the base
+        # type. Pydantic does not coerce a base model into its subclass.
+        items=[RetrievalItem.model_validate(item.model_dump()) for item in items],
         search_trace={
             "mode": request.retrieval_mode,
             "fusionMethod": request.fusion_method,
@@ -182,7 +186,9 @@ async def index_asset(asset_id: str, request: IndexAssetRequest, http_request: R
             chunking=request.chunking.model_dump() if request.chunking else None,
         )
     except FileNotFoundError as exc:
-        raise HTTPException(404, "asset content not found") from exc
+        raise HTTPException(404, "资料原文件不存在，请重新上传") from exc
+    except StorageUnavailableError as exc:
+        raise HTTPException(503, str(exc)) from exc
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(422, str(exc)) from exc
     return IndexAssetResponse(

@@ -6,6 +6,8 @@ from core.cache import CacheService
 from models.schemas import Evidence
 from rag.retriever import Retriever
 
+RETRIEVAL_REVISION = 3
+
 
 class CachedRetriever:
     """Project/version scoped retrieval cache with complete query fingerprint."""
@@ -25,6 +27,7 @@ class CachedRetriever:
         embedding = kwargs.get("embedding")
         identity = {
             **scope,
+            "retrievalRevision": RETRIEVAL_REVISION,
             "question": kwargs.get("question", ""),
             "topK": kwargs.get("top_k", 8),
             "filters": kwargs.get("filters") or {},

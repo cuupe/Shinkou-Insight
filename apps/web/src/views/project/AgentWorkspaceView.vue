@@ -10,6 +10,7 @@ import {
 } from "vue";
 import {
   AlertCircle,
+  ArrowRight,
   Bot,
   Check,
   CheckCircle2,
@@ -46,6 +47,8 @@ import {
 } from "@lucide/vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import ProjectWorkflow from "@/components/project/ProjectWorkflow.vue";
+import AgentMessageProgress from "@/components/project/AgentMessageProgress.vue";
+import { elapsedMs } from "@/utils/agentProgress";
 import { agentApi } from "@/api/agent";
 import { getApiErrorMessage } from "@/api/core";
 import { assetsApi } from "@/api/assets";
@@ -67,6 +70,8 @@ import katex from "katex";
 import MarkdownIt from "markdown-it";
 import texmath from "markdown-it-texmath";
 import "katex/dist/katex.min.css";
+import { formatDateTime } from "@/lib/utils";
+import { normalizeAgentMarkdown } from "@/utils/agentMarkdown";
 import { useRoute } from "vue-router";
 import { useAgentWorkspace } from "@/composables/useAgentWorkspace";
 import type {
@@ -79,11 +84,15 @@ import type {
   AgentAttachmentUploadResponse,
 } from "@/api/types";
 import { useWorkspace } from "@/composables/useWorkspace";
-import { formatDateTime } from "@/lib/utils";
 
 const { notify, router, routeTo, workspaceId, projectId, allowWeb } =
   useWorkspace();
 const route = useRoute();
+const evaluationCaseId = computed(() =>
+  typeof route.query.evaluationCaseId === "string"
+    ? route.query.evaluationCaseId
+    : "",
+);
 const MAX_SINGLE_FILE_BYTES = 256 * 1024 * 1024;
 const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 const ATTACHMENT_PREVIEW_LIMIT = 3;
@@ -95,7 +104,6 @@ const {
   eventHistory,
   citations,
   draft,
-  thinking,
   composerError,
   isRunning,
   cancelling,
@@ -235,9 +243,7 @@ const currentEvent = computed(() => {
   return events.value.at(-1);
 });
 const activityNow = ref(Date.now());
-const activityStartedAt = ref<number | null>(null);
 let activityTimer: number | undefined;
-let activityKey = "";
 
 function formatElapsed(milliseconds: number) {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -268,10 +274,8 @@ function nextActivityLabel(event: AgentEvent | undefined) {
   return "继续执行 Agent 流程";
 }
 
-const activityElapsed = computed(() => {
-  if (!isRunning.value || activityStartedAt.value == null) return 0;
-  return Math.max(0, activityNow.value - activityStartedAt.value);
-});
+const activityElapsed = computed(() => elapsedMs(currentEvent.value?.startedAt,
+  currentEvent.value?.completedAt, activityNow.value) ?? 0);
 
 const runElapsed = computed(() => {
   if (activeThread.value.runDurationMs != null)
@@ -301,7 +305,7 @@ const runElapsedLabel = computed(() =>
 );
 const runTimingSource = computed(() => {
   if (activeThread.value.status === "idle") return "尚未运行";
-  return activeThread.value.runStartedAt ? "AI 服务真实计时" : "等待服务确认";
+    return activeThread.value.runStartedAt ? "本轮运行时间戳" : "等待服务确认";
 });
 
 function formatRealToken(value: number | undefined) {
@@ -315,27 +319,10 @@ const tokenUsageStatus = computed(() => {
   return isRunning.value ? "等待模型返回 usage" : "暂无真实 usage";
 });
 
-watch(
-  () =>
-    `${isRunning.value}:${currentEvent.value?.id || "pending"}:${currentEvent.value?.status || "pending"}:${currentEvent.value?.detail || ""}`,
-  (key) => {
-    if (!isRunning.value) {
-      activityKey = "";
-      activityStartedAt.value = null;
-      return;
-    }
-    if (key !== activityKey) {
-      activityKey = key;
-      activityStartedAt.value = Date.now();
-      activityNow.value = Date.now();
-    }
-  },
-  { immediate: true },
-);
 
 watch(
-  isRunning,
-  (running) => {
+  () => [activeThread.value.id, isRunning.value] as const,
+  ([, running]) => {
     if (activityTimer !== undefined) window.clearInterval(activityTimer);
     activityTimer = undefined;
     if (running) {
@@ -362,54 +349,6 @@ const contextSourceCount = computed(
 );
 const processEvents = computed(() =>
   eventHistory.value.length ? eventHistory.value : events.value,
-);
-
-// Only expose auditable execution summaries in the conversation. The model's
-// private chain of thought is never streamed or rendered by the client.
-const latestAssistantMessageId = computed(
-  () =>
-    [...messages.value]
-      .reverse()
-      .find((message) => message.role === "assistant")?.id || "",
-);
-const thinkingSteps = computed(() =>
-  processEvents.value.filter((event) => {
-    const feedback = event.meta?.modelFeedback;
-    return (
-      event.kind !== "chat" &&
-      typeof feedback === "string" &&
-      Boolean(feedback.trim())
-    );
-  }),
-);
-const thinkingExpanded = ref(false);
-
-function thinkingStepText(event: AgentEvent) {
-  const modelFeedback = event.meta?.modelFeedback;
-  if (typeof modelFeedback === "string" && modelFeedback.trim()) {
-    return modelFeedback.trim();
-  }
-  return event.detail?.trim() || event.title;
-}
-
-function toggleThinkingSummary() {
-  thinkingExpanded.value = !thinkingExpanded.value;
-}
-
-watch(
-  isRunning,
-  (running, wasRunning) => {
-    if (running) thinkingExpanded.value = true;
-    else if (wasRunning) thinkingExpanded.value = false;
-  },
-  { immediate: true },
-);
-
-watch(
-  () => activeThread.value.id,
-  () => {
-    thinkingExpanded.value = isRunning.value;
-  },
 );
 
 function formatTokenCount(value: number | undefined) {
@@ -517,53 +456,6 @@ async function loadWebSearchConfig() {
   }
 }
 
-function projectAnalysisStorageKey() {
-  return `shinkou-project-analysis:${workspaceId.value}:${projectId.value}`;
-}
-
-function projectAnalysisPrompt(plan: Record<string, unknown>) {
-  const field = (key: string, label: string) => {
-    const value = String(plan[key] || "").trim();
-    return value ? `${label}：${value}` : "";
-  };
-  return [
-    "请基于以下已确认的企业项目定义，启动一次完整的项目分析工作流。",
-    field("objective", "项目目标"),
-    field("problem", "背景问题与机会"),
-    field("successMetrics", "成功指标"),
-    field("constraints", "约束与假设"),
-    field("owner", "项目负责人"),
-    field("deadline", "期望决策日期"),
-    "请先拆解分析计划，再按需检索项目资料和外部信息，完成市场/竞品、可行性、风险与执行路径分析，形成带来源的方案草案。最后列出需要我在后续对话中确认的关键问题，不要只给简短结论。",
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-async function startProjectAnalysisFromPlanning() {
-  if (String(route.query.workflow || "") !== "project-analysis") return;
-  let plan: Record<string, unknown>;
-  try {
-    const raw = sessionStorage.getItem(projectAnalysisStorageKey());
-    if (!raw) return;
-    sessionStorage.removeItem(projectAnalysisStorageKey());
-    plan = JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    notify("项目分析上下文读取失败，请返回规划页重试");
-    return;
-  }
-  if (!String(plan.objective || "").trim()) {
-    notify("项目目标为空，无法启动智能分析");
-    return;
-  }
-
-  createThread();
-  void sendMessage(projectAnalysisPrompt(plan), [], agentConfig.value);
-  await router.replace({
-    query: { ...route.query, workflow: undefined },
-  });
-}
-
 async function initializeAgentWorkspace() {
   await Promise.all([
     loadModelOptions(),
@@ -571,7 +463,24 @@ async function initializeAgentWorkspace() {
     loadContextSources(),
     loadHistory(),
   ]);
-  await startProjectAnalysisFromPlanning();
+  const prompt = route.query.prompt;
+  if (typeof prompt === "string" && prompt.trim()) {
+    draft.value = prompt;
+    void router.replace({
+      ...routeTo("project-agent-chat"),
+      query: evaluationCaseId.value
+        ? { evaluationCaseId: evaluationCaseId.value }
+        : {},
+    });
+  }
+}
+
+function returnToEvaluation() {
+  if (!evaluationCaseId.value) return;
+  void router.push({
+    ...routeTo("project-evaluation"),
+    query: { caseId: evaluationCaseId.value },
+  });
 }
 
 onMounted(() => void initializeAgentWorkspace());
@@ -931,139 +840,6 @@ function renderMessageMarkdown(message: AgentMessage) {
   return html;
 }
 
-function isLikelyInlineMath(value: string) {
-  const expression = value.replace(/\s+/g, " ").trim();
-  if (!expression || expression.length > 160 || !/[A-Za-z]/.test(expression)) {
-    return false;
-  }
-
-  // Models often wrap short formulas in inline code instead of `$...$`.
-  // Convert only recognizable math-shaped spans so paths, commands, and
-  // ordinary code labels keep their code formatting.
-  if (/^[A-Za-z]$/.test(expression)) return true;
-  if (
-    /^(?:sin|cos|tan|cot|sec|csc|log|ln|exp|sqrt|max|min|abs)\s*\(/i.test(
-      expression,
-    )
-  ) {
-    return true;
-  }
-  if (/\\(?:frac|sqrt|sum|int|cdot|times|sin|cos|tan|log|ln|alpha|beta|pi)\b/.test(expression)) {
-    return true;
-  }
-
-  const mathCharacters = /^[A-Za-z0-9\s\\{}()[\]+\-*/=.,·×÷≤≥<>−^_]+$/;
-  const hasEquationSignal = /[=^_]/.test(expression);
-  const hasArithmeticSignal =
-    /[+\-*/]/.test(expression) &&
-    (/\d/.test(expression) || /\s[+\-*/]\s/.test(expression));
-  return (
-    (hasEquationSignal || hasArithmeticSignal) &&
-    mathCharacters.test(expression)
-  );
-}
-
-function normalizeInlineMathExpression(value: string) {
-  return value
-    .trim()
-    .replace(
-      /(?<!\\)\b(sin|cos|tan|cot|sec|csc|log|ln|exp|sqrt|max|min|abs)\b/gi,
-      "\\$1",
-    );
-}
-
-function normalizeInlineMathCodeSpans(value: string) {
-  return value.replace(
-    /(^|[^`])`([^`\r\n]+)`(?!`)/g,
-    (full, prefix: string, code: string) => {
-      if (prefix === "\\" || !isLikelyInlineMath(code)) return full;
-      return `${prefix}$${normalizeInlineMathExpression(code)}$`;
-    },
-  );
-}
-
-function normalizeMarkdownEntities(value: string) {
-  // Providers sometimes serialize ordinary spaces as HTML entities. Decode
-  // the common space forms before structural Markdown cleanup runs.
-  return value
-    .replace(/(?:&#x20;|&#xA0;|&#32;|&#160;|&nbsp;)/gi, " ")
-    .replace(/\u00a0/g, " ");
-}
-
-function normalizeAgentMarkdown(value: string) {
-  const fencedBlocks: string[] = [];
-  const protectedValue = value.replace(
-    /(```[\s\S]*?```|~~~[\s\S]*?~~~)/g,
-    (block) => {
-      const index = fencedBlocks.push(block) - 1;
-      return `\u0000SHINKOU_CODE_${index}\u0000`;
-    },
-  );
-  const mathBlocks: string[] = [];
-  const source = normalizeMarkdownEntities(
-    protectedValue
-      .replace(/\\r\\n/g, "\n")
-      .replace(/\\n/g, "\n")
-      .replace(/\\(?=\r?\n)/g, ""),
-  );
-  const protectedMarkdown = normalizeInlineMathCodeSpans(source).replace(
-    /(\$\$[\s\S]*?\$\$|\$(?!\$)[^\n$]+?\$(?!\$)|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\\begin\{[^}]+\}[\s\S]*?\\end\{[^}]+\})/g,
-    (block) => {
-      const index = mathBlocks.push(block) - 1;
-      return `\u0000SHINKOU_MATH_${index}\u0000`;
-    },
-  );
-  const normalized = protectedMarkdown
-    // Some providers return JSON-style line breaks instead of real newlines.
-    .replace(/\\r\\n/g, "\n")
-    .replace(/\\n/g, "\n")
-    // A stray backslash before a real newline is an escaping artifact, not content.
-    .replace(/\\(?=\r?\n)/g, "")
-    // Recover Markdown markers escaped by the model (\\#, \\*, \\**, \\[, …).
-    .replace(/\\([#>*_`~\-\[\]+=])/g, "$1")
-    // CommonMark requires whitespace after an ATX heading marker.
-    // Providers occasionally return escaped or full-width ATX headings.
-    // Normalize them before MarkdownIt sees the block, while fenced code is
-    // protected above and therefore remains byte-for-byte unchanged.
-    .replace(/(^|\n)[ \t]{0,3}＃(?=[ \t]*\S)/g, "$1#")
-    // Some providers concatenate a heading directly after the previous
-    // sentence, e.g. "上一段内容##一、说明". MarkdownIt cannot recognize
-    // an ATX heading in the middle of a paragraph, so restore the missing
-    // block boundary before normalizing the heading spacing below.
-    .replace(/([^\n])([ \t]*#{2,6})(?=[ \t]*\S)/g, "$1\n$2 ")
-    .replace(
-      /([^\n])([ \t]*#)(?=[ \t]*[一二三四五六七八九十百]+、)/g,
-      "$1\n$2 ",
-    )
-    .replace(/(^|\n)[ \t]{0,3}(#{1,6})(?=\S)/g, "$1$2 ")
-    // Models sometimes glue a list item to the previous sentence or heading,
-    // for example "...一元一次方程的求解- 体现：...".
-    .replace(/([^\n])\s*-\s+(?=[\u4e00-\u9fff])/g, "$1\n- ")
-    .replace(/([^\n])\s*\*\s+(?=[\u4e00-\u9fff])/g, "$1\n* ")
-    // Recover list markers and common Chinese report section headings.
-    .replace(/(^|\n)([ \t]*)([-+])(?=\S)/g, "$1$2$3 ")
-    .replace(/(^|\n)([ \t]*)\*(?=[^\s*])/g, "$1$2* ")
-    .replace(/(^|\n)([ \t]*)(\d+[.)])(?=\S)/g, "$1$2$3 ")
-    .replace(/(^|\n)([ \t]*)([一二三四五六七八九十]+、)(?=\S)/g, "$1$2## $3 ")
-    // Final heading pass: tolerate arbitrary indentation and optional spaces
-    // after ##/### so lower-level headings are never shown as literal hashes.
-    .replace(/(^|\n)[ \t]*(#{1,6})[ \t]*(?=\S)/g, "$1$2 ");
-  return normalized
-    .replace(/^题目所需知识点解析(?=\S)/, "# 题目所需知识点解析\n\n")
-    .replace(
-      /(^|\n)(##\s+[^\n]{2,80}?知识点)(?=[^：:\n])/g,
-      "$1$2\n\n",
-    )
-    .replace(
-      /\u0000SHINKOU_MATH_(\d+)\u0000/g,
-      (_match, index) => mathBlocks[Number(index)] || "",
-    )
-    .replace(
-      /\u0000SHINKOU_CODE_(\d+)\u0000/g,
-      (_match, index) => fencedBlocks[Number(index)] || "",
-    );
-}
-
 async function writeTextToClipboard(value: string) {
   if (!value.trim()) return false;
   try {
@@ -1172,6 +948,7 @@ function openMessageCitation(event: MouseEvent, message: AgentMessage) {
 function eventStatusLabel(event: AgentEvent) {
   if (event.status === "running") return "进行中";
   if (event.status === "failed") return "失败";
+    if (event.status === "cancelled") return "已停止";
   if (event.status === "completed" && event.meta?.skipped) return "已跳过";
   if (event.status === "completed") return event.duration || "已完成";
   return "等待中";
@@ -1704,6 +1481,14 @@ onUnmounted(() => {
   >
     <template #action>
       <button
+        v-if="evaluationCaseId"
+        class="button button-secondary"
+        type="button"
+        @click="returnToEvaluation"
+      >
+        <ArrowRight :size="15" />返回评估用例
+      </button>
+      <button
         class="button button-primary"
         type="button"
         @click="handleCreateThread"
@@ -2071,79 +1856,12 @@ onUnmounted(() => {
                   <span
                     v-if="message.status === 'streaming'"
                     class="streaming-label"
-                    ><i />生成中</span
+                    ><i />{{ message.content ? "生成中" : "处理中" }}</span
                   >
-                  <button
-                    v-if="
-                      message.role === 'assistant' &&
-                      message.id === latestAssistantMessageId &&
-                      (isRunning || thinkingSteps.length)
-                    "
-                    class="message-thinking-trigger"
-                    type="button"
-                    :aria-expanded="thinkingExpanded"
-                    @click="toggleThinkingSummary"
-                  >
-                    <Sparkles :size="12" />
-                    <span>{{ isRunning ? "正在思考" : "思考摘要" }}</span>
-                    <ChevronDown
-                      :size="13"
-                      :class="{ open: thinkingExpanded }"
-                    />
-                  </button>
                 </div>
+                <AgentMessageProgress v-if="message.role === 'assistant'" :message="message" :now="activityNow" />
                 <div
-                  v-if="
-                    message.role === 'assistant' &&
-                    message.id === latestAssistantMessageId &&
-                    thinkingExpanded &&
-                    (isRunning || thinkingSteps.length)
-                  "
-                  class="message-thinking-details"
-                  aria-label="思考摘要"
-                >
-                  <div class="message-thinking-list">
-                    <div
-                      v-if="isRunning && thinking"
-                      class="message-thinking-live"
-                    >
-                      <span class="message-thinking-index">思考</span>
-                      <span class="message-thinking-copy">
-                        <strong class="message-thinking-live-text">{{
-                          thinking
-                        }}</strong>
-                        <small>实时推理过程</small>
-                      </span>
-                    </div>
-                    <div
-                      v-for="(event, index) in thinkingSteps"
-                      :key="event.id + '-' + index + '-summary'"
-                      class="message-thinking-step"
-                      :class="event.status"
-                    >
-                      <span class="message-thinking-index">{{
-                        String(index + 1).padStart(2, "0")
-                      }}</span>
-                      <span class="message-thinking-icon">
-                        <component :is="eventIcon(event.kind)" :size="12" />
-                      </span>
-                      <span class="message-thinking-copy">
-                        <strong>{{ thinkingStepText(event) }}</strong>
-                        <small>{{ event.title }}</small>
-                      </span>
-                      <span class="message-thinking-status">{{
-                        eventStatusLabel(event)
-                      }}</span>
-                    </div>
-                    <p
-                      v-if="!thinkingSteps.length"
-                      class="message-thinking-empty"
-                    >
-                      正在准备执行步骤…
-                    </p>
-                  </div>
-                </div>
-                <div
+                  v-if="message.content"
                   class="message-bubble"
                   :class="{
                     'is-thinking':
@@ -3737,171 +3455,6 @@ onUnmounted(() => {
 .message-meta strong {
   color: var(--workspace-muted);
   font-weight: 650;
-}
-
-.message-thinking-trigger {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.125rem 0.25rem;
-  border: 0;
-  border-radius: 0.3125rem;
-  background: transparent;
-  color: var(--teal-dark);
-  font: inherit;
-  font-size: 0.6875rem;
-  cursor: pointer;
-}
-
-.message-thinking-trigger:hover,
-.message-thinking-trigger:focus-visible {
-  background: var(--agent-accent-surface-soft);
-  color: var(--workspace-text);
-}
-
-.message-thinking-trigger > span {
-  overflow: hidden;
-  max-width: 10rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.message-thinking-trigger > svg {
-  flex: 0 0 auto;
-}
-
-.message-thinking-trigger > svg:last-child {
-  transition: transform 0.16s ease;
-}
-
-.message-thinking-trigger > svg:last-child.open {
-  transform: rotate(180deg);
-}
-
-.message-thinking-details {
-  width: min(100%, 48rem);
-  margin: 0.125rem 0 0.25rem;
-  padding-left: 0.25rem;
-}
-
-.message-thinking-list {
-  display: grid;
-  gap: 0.125rem;
-  padding: 0.125rem 0 0.25rem 0.75rem;
-  border-left: 0.0625rem solid var(--agent-accent-border);
-}
-
-.message-thinking-step {
-  display: grid;
-  grid-template-columns: 1.375rem 1.25rem minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 0.375rem;
-  min-width: 0;
-  padding: 0.375rem 0;
-  border-top: 0.0625rem solid var(--workspace-divider);
-}
-
-.message-thinking-index,
-.message-thinking-status {
-  color: var(--workspace-subtle);
-  font-size: 0.6875rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.message-thinking-icon {
-  display: grid;
-  width: 1.125rem;
-  height: 1.125rem;
-  place-items: center;
-  border: 0.0625rem solid var(--workspace-border);
-  border-radius: 50%;
-  color: var(--workspace-subtle);
-}
-
-.message-thinking-step.running .message-thinking-icon {
-  border-color: var(--agent-accent-border);
-  color: var(--teal-dark);
-  box-shadow: 0 0 0 0.1875rem color-mix(in oklab, var(--teal) 12%, transparent);
-}
-
-.message-thinking-step.completed .message-thinking-icon {
-  border-color: var(--agent-accent-border);
-  background: var(--agent-accent-surface-soft);
-  color: var(--teal-dark);
-}
-
-.message-thinking-copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 0.125rem;
-}
-
-.message-thinking-copy strong {
-  overflow: hidden;
-  color: var(--workspace-text);
-  font-size: 0.75rem;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.message-thinking-copy small {
-  overflow: hidden;
-  color: var(--workspace-muted);
-  font-size: 0.6875rem;
-  line-height: 1.45;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.message-thinking-step.running .message-thinking-status {
-  color: var(--teal-dark);
-}
-
-.message-thinking-step.failed .message-thinking-status {
-  color: #ef9d9d;
-}
-
-.message-thinking-note,
-.message-thinking-empty {
-  margin: 0.375rem 0 0;
-  color: var(--workspace-subtle);
-  font-size: 0.6875rem;
-  line-height: 1.45;
-}
-
-.message-thinking-note {
-  padding-top: 0.375rem;
-  border-top: 0.0625rem solid var(--workspace-divider);
-}
-
-.message-thinking-live {
-  display: flex;
-  gap: 0.625rem;
-  margin: 0.375rem 0 0.5rem 0;
-  padding: 0.5rem 0.625rem;
-  border-radius: 0.25rem;
-  background: var(--surface-accent, rgba(18, 110, 130, 0.06));
-  border: 0.0625rem solid var(--workspace-border);
-}
-
-.message-thinking-live .message-thinking-index {
-  flex: none;
-  margin-top: 0.125rem;
-}
-
-.message-thinking-live-text {
-  white-space: pre-wrap;
-  color: var(--workspace-text);
-  font-weight: 400;
-  word-break: break-word;
-}
-
-.streaming-label {
-  gap: 0.3125rem;
-  color: var(--teal-dark);
 }
 
 .message-bubble {

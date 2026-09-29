@@ -1,6 +1,7 @@
 package com.cuupe.backend.modules.ai;
 
 import com.cuupe.backend.modules.asset.entity.KnowledgeAsset;
+import com.cuupe.backend.common.exception.ApiException;
 import tools.jackson.databind.ObjectMapper;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -10,6 +11,7 @@ import okhttp3.Response;
 import okhttp3.Dispatcher;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.http.HttpStatus;
 
 import java.io.IOException;
 import java.util.Base64;
@@ -23,6 +25,7 @@ public class AiIndexingClient {
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
 
     private final OkHttpClient client;
+    private final OkHttpClient indexingClient;
     private final ObjectMapper objectMapper;
     private final String baseUrl;
     private final String internalApiKey;
@@ -32,7 +35,8 @@ public class AiIndexingClient {
             ObjectMapper objectMapper,
             @Value("${shinkou.ai.base-url:http://localhost:8003}") String baseUrl,
             @Value("${shinkou.ai.internal-api-key:local-dev-key}") String internalApiKey,
-            @Value("${shinkou.ai.callback-base-url:http://localhost:8080}") String callbackBaseUrl
+            @Value("${shinkou.ai.callback-base-url:http://localhost:8080}") String callbackBaseUrl,
+            @Value("${shinkou.ai.indexing-timeout-seconds:600}") long indexingTimeoutSeconds
     ) {
         this.objectMapper = objectMapper;
         this.baseUrl = baseUrl.replaceAll("/+$", "");
@@ -43,7 +47,14 @@ public class AiIndexingClient {
         dispatcher.setMaxRequestsPerHost(64);
         this.client = new OkHttpClient.Builder()
                 .dispatcher(dispatcher)
+                .connectTimeout(Duration.ofSeconds(10))
+                .readTimeout(Duration.ofSeconds(90))
                 .callTimeout(Duration.ofSeconds(90))
+                .build();
+        Duration indexingTimeout = Duration.ofSeconds(Math.max(1, indexingTimeoutSeconds));
+        this.indexingClient = client.newBuilder()
+                .readTimeout(indexingTimeout)
+                .callTimeout(indexingTimeout)
                 .build();
     }
 
@@ -53,7 +64,11 @@ public class AiIndexingClient {
         payload.put("workspaceId", workspaceId);
         payload.put("projectId", asset.getProjectId());
         payload.put("userId", userId);
-        payload.put("fileName", asset.getName());
+        // A display name may have no extension. The parser needs the original
+        // stored filename to select the PDF/Office/text decoder.
+        String storageKey = asset.getStorageKey();
+        payload.put("fileName", storageKey == null || storageKey.isBlank()
+                ? asset.getName() : storageKey.substring(storageKey.lastIndexOf('/') + 1));
         payload.put("mimeType", asset.getMimeType());
         payload.put("storageKey", asset.getStorageKey());
         payload.put("language", asset.getLanguage());
@@ -72,15 +87,48 @@ public class AiIndexingClient {
                 .header("X-Internal-Api-Key", internalApiKey)
                 .post(RequestBody.create(objectMapper.writeValueAsBytes(payload), JSON))
                 .build();
-        try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                throw new IOException("AI indexing failed with HTTP " + response.code());
+        try (Response response = indexingClient.newCall(request).execute()) {
+            String body = response.body() == null ? "{}" : response.body().string();
+            if (!response.isSuccessful()) throw knowledgeError(response.code(), body);
+            Map<String, Object> result = objectMapper.readValue(body, Map.class);
+            if (!(result.get("chunkCount") instanceof Number count) || count.intValue() <= 0) {
+                throw new IOException("文件未生成可检索的文本片段，请检查文件内容或 OCR 识别结果");
             }
+        } catch (java.io.InterruptedIOException exception) {
+            throw new IOException("资料索引超过等待时间，请稍后重新索引或缩小文件后重试", exception);
         }
     }
 
     public Map<String, Object> knowledge(String path, Map<String, Object> payload) throws IOException {
-        return post(path, payload);
+        try {
+            Request request = new Request.Builder().url(baseUrl + path)
+                    .header("X-Internal-Api-Key", internalApiKey)
+                    .post(RequestBody.create(objectMapper.writeValueAsBytes(payload), JSON)).build();
+            try (Response response = client.newCall(request).execute()) {
+                String body = response.body() == null ? "{}" : response.body().string();
+                if (!response.isSuccessful()) {
+                    HttpStatus status = response.code() == 422 ? HttpStatus.UNPROCESSABLE_ENTITY : HttpStatus.BAD_GATEWAY;
+                    throw new ApiException(status, "KNOWLEDGE_SERVICE_ERROR", knowledgeError(response.code(), body).getMessage());
+                }
+                return objectMapper.readValue(body, Map.class);
+            }
+        } catch (java.io.InterruptedIOException exception) {
+            throw new ApiException(HttpStatus.GATEWAY_TIMEOUT, "KNOWLEDGE_TIMEOUT", "知识库检索超时，请稍后重试或检查嵌入模型连接");
+        } catch (IOException exception) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "KNOWLEDGE_UNAVAILABLE", "知识库服务暂时无法连接，请检查 Python 服务后重试");
+        }
+    }
+
+    private IOException knowledgeError(int status, String body) {
+        String message = "知识库处理失败（HTTP " + status + "），请检查 Python 服务日志";
+        try {
+            Map<String, Object> error = objectMapper.readValue(body, Map.class);
+            // Never forward HTML error pages or validation input values.
+            if ((status >= 400 && status < 500 || status == 503) && error.get("detail") instanceof String detail && !detail.isBlank()) {
+                message = detail.length() > 500 ? detail.substring(0, 500) : detail;
+            }
+        } catch (RuntimeException ignored) { }
+        return new IOException(message);
     }
 
     public void executeRun(Long runId, Long workspaceId, Long projectId, Long userId, String goal, String config, Map<String, Object> runtime) throws IOException {
@@ -102,7 +150,7 @@ public class AiIndexingClient {
         post("/internal/research/runs/" + runId + "/execute", payload);
     }
 
-    public void executeAgentRun(String runKey, Long workspaceId, Long projectId, Long userId, String messageId, String goal, Map<String, Object> config, Map<String, Object> runtime, List<Map<String, Object>> contextMessages, List<Map<String, Object>> attachments) throws IOException {
+    public void executeAgentRun(String runKey, Long workspaceId, Long projectId, Long userId, String messageId, String goal, Map<String, Object> config, Map<String, Object> runtime, Map<String, Object> projectContext, List<Map<String, Object>> contextMessages, List<Map<String, Object>> attachments) throws IOException {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("runId", runKey);
         payload.put("workspaceId", workspaceId);
@@ -110,6 +158,7 @@ public class AiIndexingClient {
         payload.put("userId", userId);
         payload.put("goal", goal);
         payload.put("agentMessageId", messageId);
+        payload.put("projectContext", projectContext == null ? Map.of() : projectContext);
         payload.put("contextMessages", contextMessages == null ? List.of() : contextMessages);
         payload.put("attachments", attachments == null ? List.of() : attachments);
         payload.put("config", config == null ? Map.of() : config);
@@ -165,7 +214,7 @@ public class AiIndexingClient {
     }
 
     public Map<String, Object> runDetail(String runId) throws IOException {
-        return get("/internal/research/runs/" + runId);
+        return get("/internal/research/runs/" + runId, client.newBuilder().callTimeout(Duration.ofSeconds(4)).build());
     }
 
     public Map<String, Object> localTools() throws IOException {
@@ -209,12 +258,16 @@ public class AiIndexingClient {
     }
 
     private Map<String, Object> get(String path) throws IOException {
+        return get(path, client);
+    }
+
+    private Map<String, Object> get(String path, OkHttpClient requestClient) throws IOException {
         Request request = new Request.Builder()
                 .url(baseUrl + path)
                 .header("X-Internal-Api-Key", internalApiKey)
                 .get()
                 .build();
-        try (Response response = client.newCall(request).execute()) {
+        try (Response response = requestClient.newCall(request).execute()) {
             String body = response.body() == null ? "{}" : response.body().string();
             if (!response.isSuccessful()) {
                 String detail = body.replaceAll("[\\r\\n\\t]+", " ").trim();

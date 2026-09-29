@@ -3,6 +3,18 @@ import { projectPath } from "./paths";
 import type { ApiResponse, ResearchRun } from "./types";
 
 export const runsApi = {
+  create: (
+    workspaceId: number | string,
+    projectId: number,
+    payload: { goal: string } & Record<string, unknown>,
+  ) =>
+    unwrap<ResearchRun>(
+      anet.post<ApiResponse<ResearchRun>>(
+        `${projectPath(workspaceId, projectId)}/runs`,
+        payload,
+      ),
+    ),
+
   list: (workspaceId: number | string, projectId: number) =>
     unwrap<ResearchRun[]>(
       anet.get<ApiResponse<ResearchRun[]>>(
@@ -14,10 +26,12 @@ export const runsApi = {
     workspaceId: number | string,
     projectId: number,
     runId: number | string,
+    signal?: AbortSignal,
   ) =>
     unwrap<ResearchRun>(
       anet.get<ApiResponse<ResearchRun>>(
         `${projectPath(workspaceId, projectId)}/runs/${runId}`,
+        { signal, timeout: 10000 },
       ),
     ),
 

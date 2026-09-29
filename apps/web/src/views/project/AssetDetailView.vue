@@ -2,6 +2,8 @@
 import {
   AlertTriangle,
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
   CheckCircle2,
   Download,
   FileSearch,
@@ -91,6 +93,13 @@ const activeChunk = ref(0);
 const reindexing = ref(false);
 const remoteContent = ref("");
 const remoteChunks = ref<Record<string, unknown>[]>([]);
+const chunksLoading = ref(false);
+const chunkPage = ref(1);
+const CHUNKS_PER_PAGE = 30;
+const PREVIEW_COLLAPSED_CHARS = 12000;
+const PREVIEW_PAGE_CHARS = 24000;
+const previewExpanded = ref(false);
+const previewPage = ref(0);
 const citationChunkId = computed(() => String(route.query.chunkId || ""));
 const citationPage = computed(() => {
   const page = Number(route.query.page);
@@ -105,49 +114,113 @@ const citationTargetMatched = ref(false);
 onMounted(async () => {
   const assetId = String(route.params.assetId);
   try {
-    const [detail, content, chunks] = await Promise.all([
+    const [detail, content] = await Promise.all([
       assetsApi
         .detail(workspaceId.value, projectId.value, assetId)
         .catch(() => null),
       assetsApi.content(workspaceId.value, projectId.value, assetId),
-      assetsApi.chunks(workspaceId.value, projectId.value, assetId),
     ]);
     if (detail) remoteAsset.value = mapRemoteAsset(detail);
     remoteContent.value = content;
-    remoteChunks.value = chunks;
+    if (!content && !citationTargetRequested.value && detail?.indexStatus === "SUCCESS") {
+      await loadChunkPage(1);
+    }
     await applyCitationTarget();
   } catch {
     notify("资产详情加载失败");
   }
 });
 
-const previewParagraphs = computed(() =>
-  remoteContent.value
-    ? [remoteContent.value]
-    : [
-        remoteChunks.value.length
-          ? String(remoteChunks.value[0]?.content || "")
-          : "暂无内容预览，资料完成解析后会展示原文内容。",
-      ],
+const previewLong = computed(
+  () => remoteContent.value.length > PREVIEW_COLLAPSED_CHARS,
+);
+const previewPageCount = computed(() =>
+  Math.max(1, Math.ceil(remoteContent.value.length / PREVIEW_PAGE_CHARS)),
+);
+const previewVisibleContent = computed(() => {
+  if (!previewLong.value) return remoteContent.value;
+  if (!previewExpanded.value) {
+    return remoteContent.value.slice(0, PREVIEW_COLLAPSED_CHARS);
+  }
+  const start = previewPage.value * PREVIEW_PAGE_CHARS;
+  return remoteContent.value.slice(start, start + PREVIEW_PAGE_CHARS);
+});
+const chunkPageCount = computed(() =>
+  Math.max(1, Math.ceil(asset.value.chunks / CHUNKS_PER_PAGE)),
 );
 const previewTitle = computed(
   () => asset.value?.name.replace(/\.[^.]+$/, "") || "",
 );
 const chunkRows = computed(() =>
-  remoteChunks.value.map((chunk, index) => ({
-    index,
-    chunkId: String(chunk.id ?? chunk.chunkId ?? ""),
-    pageNumber: Number(chunk.pageNumber ?? chunk.page ?? 0) || null,
-    label: `Chunk ${String(index + 1).padStart(2, "0")}`,
-    title: String(chunk.sectionTitle || `资料片段 ${index + 1}`),
-    snippet: String(chunk.content || ""),
-  })),
+  remoteChunks.value.map((chunk, pageIndex) => {
+    const index = Number(
+      chunk.index ?? (chunkPage.value - 1) * CHUNKS_PER_PAGE + pageIndex,
+    );
+    const ordinal = index + 1;
+    return {
+      index,
+      chunkId: String(chunk.id ?? chunk.chunkId ?? ""),
+      pageNumber: Number(chunk.pageNumber ?? chunk.page ?? 0) || null,
+      label: `Chunk ${String(ordinal).padStart(2, "0")}`,
+      title: String(chunk.sectionTitle || `资料片段 ${ordinal}`),
+      snippet: String(chunk.content || ""),
+    };
+  }),
 );
 const activeChunkRow = computed(
-  () => chunkRows.value[activeChunk.value] ?? chunkRows.value[0],
+  () => chunkRows.value.find((chunk) => chunk.index === activeChunk.value) ?? chunkRows.value[0],
 );
+
+async function loadChunkPage(
+  page = chunkPage.value,
+  target: { chunkId?: string; pageNumber?: number } = {},
+) {
+  if (chunksLoading.value || !asset.value.id) return;
+  chunksLoading.value = true;
+  try {
+    const chunks = await assetsApi.chunks(
+      workspaceId.value,
+      projectId.value,
+      asset.value.id,
+      { page, pageSize: CHUNKS_PER_PAGE, ...target },
+    );
+    remoteChunks.value = chunks;
+    chunkPage.value = target.chunkId || target.pageNumber ? 1 : page;
+    const firstIndex = Number(chunks[0]?.index ?? ((chunkPage.value - 1) * CHUNKS_PER_PAGE));
+    activeChunk.value = firstIndex;
+    await nextTick();
+    document
+      .querySelector('[data-chunk-index="' + firstIndex + '"]')
+      ?.scrollIntoView({ block: "center", behavior: "smooth" });
+  } catch {
+    notify("Chunk 列表加载失败，请稍后重试");
+  } finally {
+    chunksLoading.value = false;
+  }
+}
+
+function setActiveSection(section: "preview" | "chunks") {
+  activeSection.value = section;
+  if (section === "chunks" && !remoteChunks.value.length) void loadChunkPage(1);
+}
+
+function setPreviewExpanded(expanded: boolean) {
+  previewExpanded.value = expanded;
+  previewPage.value = 0;
+}
+
 async function applyCitationTarget() {
-  if (!citationTargetRequested.value || !remoteChunks.value.length) return;
+  if (!citationTargetRequested.value || !asset.value.id) return;
+  if (!remoteChunks.value.length) {
+    const chunkId = /^\d+$/.test(citationChunkId.value)
+      ? citationChunkId.value
+      : undefined;
+    await loadChunkPage(1, {
+      chunkId,
+      pageNumber: !chunkId ? citationPage.value ?? undefined : undefined,
+    });
+  }
+  if (!remoteChunks.value.length) return;
   const normalizedQuote = citationQuote.value.replace(/\s+/g, " ");
   const target = chunkRows.value.find((chunk) => {
     const content = chunk.snippet.replace(/\s+/g, " ");
@@ -172,6 +245,8 @@ watch(
   () => [route.query.chunkId, route.query.page, route.query.quote],
   () => void applyCitationTarget(),
 );
+
+const previewTruncated = computed(() => remoteContent.value.includes("[预览已截断]"));
 const statusDescription = computed(() => {
   if (asset.value.status === "indexed")
     return "资料已经完成解析和向量索引，可供 Agent 检索。";
@@ -345,14 +420,14 @@ async function copyChunkId() {
             <button
               type="button"
               :class="{ active: activeSection === 'preview' }"
-              @click="activeSection = 'preview'"
+              @click="setActiveSection('preview')"
             >
               内容预览
             </button>
             <button
               type="button"
               :class="{ active: activeSection === 'chunks' }"
-              @click="activeSection = 'chunks'"
+              @click="setActiveSection('chunks')"
             >
               Chunk 列表 <span>{{ asset.chunks || 0 }}</span>
             </button>
@@ -361,14 +436,52 @@ async function copyChunkId() {
           <div v-if="activeSection === 'preview'" class="document-preview-wrap">
             <div class="document-toolbar">
               <span>{{ asset.type }} 文档预览</span
-              ><span>最后更新 {{ asset.updated }}</span>
+              ><span>{{ previewTruncated ? "原文预览已截断" : "最后更新 " + asset.updated }}</span>
             </div>
             <article class="document-preview">
               <p class="document-kicker">PROJECT KNOWLEDGE BASE</p>
               <h3>{{ previewTitle }}</h3>
-              <p v-for="paragraph in previewParagraphs" :key="paragraph">
-                {{ paragraph }}
+              <p class="document-preview-content">
+                {{
+                  previewVisibleContent ||
+                  (remoteChunks.length
+                    ? String(remoteChunks[0]?.content || "")
+                    : "暂无内容预览，资料完成解析后会展示原文内容。")
+                }}
               </p>
+              <div v-if="previewLong" class="preview-pagination">
+                <button
+                  v-if="!previewExpanded"
+                  type="button"
+                  @click="setPreviewExpanded(true)"
+                >
+                  展开预览（{{ remoteContent.length.toLocaleString() }} 字符）
+                </button>
+                <template v-else>
+                  <button
+                    v-if="previewPageCount > 1"
+                    type="button"
+                    :disabled="previewPage === 0"
+                    @click="previewPage = Math.max(0, previewPage - 1)"
+                  >
+                    <ChevronLeft :size="15" />上一段
+                  </button>
+                  <span v-if="previewPageCount > 1">
+                    第 {{ previewPage + 1 }} / {{ previewPageCount }} 段
+                  </span>
+                  <button
+                    v-if="previewPageCount > 1"
+                    type="button"
+                    :disabled="previewPage + 1 >= previewPageCount"
+                    @click="previewPage = Math.min(previewPage + 1, previewPageCount - 1)"
+                  >
+                    下一段<ChevronRight :size="15" />
+                  </button>
+                  <button type="button" @click="setPreviewExpanded(false)">
+                    收起预览
+                  </button>
+                </template>
+              </div>
               <p class="preview-footnote">
                 内容由项目内容接口返回；分段、页码和原文定位以当前后端返回结果为准。
               </p>
@@ -377,6 +490,9 @@ async function copyChunkId() {
 
           <div v-else class="chunk-workspace">
             <div class="chunk-list">
+              <div class="chunk-pagination-summary">
+                共 {{ asset.chunks.toLocaleString() }} 个片段
+              </div>
               <button
                 v-for="chunk in chunkRows"
                 :key="chunk.index"
@@ -390,8 +506,30 @@ async function copyChunkId() {
                 ><strong>{{ chunk.title }}</strong
                 ><small>{{ chunk.label }}</small>
               </button>
+              <div class="chunk-pagination">
+                <button
+                  type="button"
+                  aria-label="上一页 Chunk"
+                  :disabled="chunksLoading || chunkPage <= 1"
+                  @click="loadChunkPage(chunkPage - 1)"
+                >
+                  <ChevronLeft :size="15" />
+                </button>
+                <span>{{ chunkPage }} / {{ chunkPageCount }}</span>
+                <button
+                  type="button"
+                  aria-label="下一页 Chunk"
+                  :disabled="chunksLoading || chunkPage >= chunkPageCount"
+                  @click="loadChunkPage(chunkPage + 1)"
+                >
+                  <ChevronRight :size="15" />
+                </button>
+              </div>
             </div>
             <div class="chunk-reader">
+              <p v-if="chunksLoading" role="status" class="chunk-loading">
+                正在加载这一页的资料片段…
+              </p>
               <div v-if="citationTargetRequested" class="citation-target-note">
                 {{
                   citationTargetMatched
@@ -713,6 +851,42 @@ async function copyChunkId() {
 .document-preview p {
   margin: 0 0 1rem;
 }
+.document-preview-content {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.preview-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1rem 0;
+  color: var(--workspace-muted);
+  font-family: "Geist", "Microsoft YaHei", sans-serif;
+  font-size: 0.75rem;
+}
+.preview-pagination button,
+.chunk-pagination button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  min-height: 2rem;
+  padding: 0.375rem 0.625rem;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.4375rem;
+  background: var(--surface-raised);
+  color: var(--teal-dark);
+  font: inherit;
+  cursor: pointer;
+}
+.preview-pagination button:disabled,
+.chunk-pagination button:disabled {
+  color: var(--workspace-muted);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
 .quote-highlight {
   display: flex;
   gap: 0.625rem;
@@ -744,8 +918,33 @@ async function copyChunkId() {
   min-height: 22rem;
 }
 .chunk-list {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   padding: 0.875rem;
   border-right: 0.0625rem solid var(--workspace-divider);
+}
+.chunk-pagination-summary {
+  margin: 0.125rem 0 0.625rem;
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+}
+.chunk-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.375rem;
+  padding-top: 0.625rem;
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+}
+.chunk-pagination button {
+  width: 2rem;
+  padding-inline: 0;
+}
+.chunk-loading {
+  color: var(--workspace-muted);
+  font-size: 0.8125rem;
 }
 .chunk-row {
   display: grid;

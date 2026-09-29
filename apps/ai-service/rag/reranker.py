@@ -4,6 +4,9 @@ from typing import Protocol
 
 from models.schemas import RetrievalItem
 from rag.hybrid import extract_search_terms, normalize_query
+from rag.keyword import explicit_file_names
+
+MIN_RELEVANCE_SCORE = 0.15
 
 
 class Reranker(Protocol):
@@ -37,3 +40,20 @@ class LexicalReranker:
             item.rerank_score = round(score, 6)
             ranked.append(item)
         return sorted(ranked, key=lambda item: item.rerank_score or 0, reverse=True)
+
+
+def retain_relevant_items(query: str, items: list[RetrievalItem]) -> list[RetrievalItem]:
+    """Drop weak lexical matches while honoring an explicit file constraint.
+
+    The current deterministic reranker scores irrelevant vector neighbors near
+    zero. A small floor lets a caller represent an empty knowledge result
+    instead of presenting the nearest unrelated chunk as evidence. Explicit
+    filenames are source constraints, so matching-file results are preserved.
+    """
+
+    if explicit_file_names(query):
+        return items
+    return [
+        item for item in items
+        if item.rerank_score is not None and item.rerank_score >= MIN_RELEVANCE_SCORE
+    ]

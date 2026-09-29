@@ -274,6 +274,21 @@ class ResearchConfig(ApiModel):
     generation: ModelGenerationConfig | None = None
 
 
+class AgentProjectContext(ApiModel):
+    """Shared project identity and planning data attached to every project chat run."""
+
+    name: str = Field(default="", max_length=120)
+    code: str = Field(default="", max_length=80)
+    description: str = Field(default="", max_length=500)
+    status: str = Field(default="", max_length=40)
+    objective: str = Field(default="", max_length=4_000)
+    problem: str = Field(default="", max_length=4_000)
+    success_metrics: str = Field(default="", max_length=4_000)
+    constraints: str = Field(default="", max_length=4_000)
+    owner: str = Field(default="", max_length=120)
+    deadline: str = Field(default="", max_length=40)
+
+
 class ExecuteRunRequest(ApiModel):
     run_id: int | str
     workspace_id: int
@@ -286,7 +301,8 @@ class ExecuteRunRequest(ApiModel):
     runtime_web_search: RuntimeWebSearchConfig | None = None
     runtime_embedding: RuntimeEmbeddingConfig | None = None
     agent_message_id: str | None = None
-    context_messages: list[ChatMessage] = Field(default_factory=list, max_length=40)
+    project_context: AgentProjectContext = Field(default_factory=AgentProjectContext)
+    context_messages: list[ChatMessage] = Field(default_factory=list, max_length=200)
     attachments: list[AttachmentInput] = Field(default_factory=list, max_length=10)
 
 

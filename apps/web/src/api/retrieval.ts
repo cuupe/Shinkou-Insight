@@ -18,6 +18,7 @@ export const retrievalApi = {
       anet.post<ApiResponse<KnowledgeSearchResponse>>(
         `${projectPath(workspaceId, projectId)}/knowledge/search`,
         payload,
+        { timeout: 95000 },
       ),
     ),
 
@@ -30,6 +31,7 @@ export const retrievalApi = {
       anet.post<ApiResponse<KnowledgeAnswerResponse>>(
         `${projectPath(workspaceId, projectId)}/knowledge/answer`,
         payload,
+        { timeout: 95000 },
       ),
     ),
 };

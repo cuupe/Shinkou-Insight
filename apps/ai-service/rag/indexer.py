@@ -242,6 +242,8 @@ class KnowledgeIndexer:
             self.chunker if chunking is None else DocumentChunker.from_config(chunking)
         )
         chunks = await asyncio.to_thread(chunker.split, parsed.documents)
+        if not chunks:
+            raise ValueError("文件未解析出可索引的文本，请检查文件内容或 OCR 识别结果")
         count = await self.store.index(
             workspace_id=workspace_id,
             project_id=project_id,

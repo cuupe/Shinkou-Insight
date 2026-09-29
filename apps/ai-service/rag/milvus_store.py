@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import asyncio
-import re
+import logging
 from typing import Any
 
 from embeddings.providers import EmbeddingProvider
 from models.schemas import RetrievalItem
 from rag.hybrid import (
-    build_query_variants,
     diversify_candidates,
     extract_search_terms,
     fuse_ranked_candidates,
 )
-from rag.reranker import LexicalReranker
+from rag.keyword import asset_name_matches, explicit_file_names, fetch_keyword_rows
+from rag.reranker import LexicalReranker, retain_relevant_items
+
+logger = logging.getLogger(__name__)
 
 
 def _keyword_terms(question: str, max_terms: int = 64) -> list[str]:
@@ -26,13 +28,6 @@ def _keyword_terms(question: str, max_terms: int = 64) -> list[str]:
     """
 
     return extract_search_terms(question, max_terms=max_terms)
-
-
-def _like_patterns(terms: list[str]) -> list[str]:
-    return [
-        "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-        for term in terms
-    ]
 
 
 class MilvusKnowledgeStore:
@@ -57,6 +52,7 @@ class MilvusKnowledgeStore:
         collection_name: str = "shinkou_knowledge_chunks",
         min_size: int = 2,
         max_size: int = 10,
+        retrieval_timeout_seconds: float = 4.0,
     ):
         self.database_url = database_url
         self.milvus_uri = milvus_uri
@@ -66,6 +62,7 @@ class MilvusKnowledgeStore:
         self.embedding = embedding
         self.min_size = min_size
         self.max_size = max_size
+        self.retrieval_timeout_seconds = retrieval_timeout_seconds
         self.pool: Any | None = None
         self.client: Any | None = None
 
@@ -290,37 +287,85 @@ class MilvusKnowledgeStore:
     ) -> list[RetrievalItem]:
         pool, client = self._require_started()
         embedding = embedding or self.embedding
-        if embedding.dimension != self.embedding.dimension:
-            raise ValueError(
-                f"Embedding dimension {embedding.dimension} does not match the active Milvus collection dimension {self.embedding.dimension}"
-            )
         filters = filters or {}
         asset_ids = [int(value) for value in filters.get("assetIds", [])]
         mode = retrieval_mode.upper()
         candidate_limit = max(top_k, min(int(candidate_k or max(top_k * 4, 20)), 200))
 
-        vector_hits: list[dict[str, Any]] = []
-        if mode in {"VECTOR", "HYBRID"}:
+        async def vector_recall() -> tuple[list[dict[str, Any]], list[tuple]]:
+            if embedding.dimension != self.embedding.dimension:
+                raise ValueError(
+                    f"Embedding dimension {embedding.dimension} does not match the active Milvus collection dimension {self.embedding.dimension}"
+                )
             query_vector = await embedding.embed_query(question)
-            vector_hits = await asyncio.to_thread(
+            hits = await asyncio.to_thread(
                 self._search_vectors,
                 client,
                 self.collection_name,
                 query_vector,
                 self._milvus_filter(workspace_id, project_id, asset_ids),
                 candidate_limit,
+                self.retrieval_timeout_seconds,
+            )
+            rows = await self._fetch_rows_by_ids(
+                pool, workspace_id, project_id,
+                [int(hit["id"]) for hit in hits if hit.get("id") is not None], asset_ids,
+            )
+            return hits, rows
+
+        async def keyword_recall() -> list[tuple]:
+            return await self._fetch_keyword_rows(
+                pool, workspace_id, project_id, question, asset_ids,
+                candidate_limit, query_variants=query_variants,
             )
 
-        vector_ids = [
-            int(hit["id"]) for hit in vector_hits if hit.get("id") is not None
-        ]
-        vector_rows = await self._fetch_rows_by_ids(
-            pool,
-            workspace_id,
-            project_id,
-            vector_ids,
-            asset_ids,
-        )
+        vector_hits: list[dict[str, Any]] = []
+        vector_rows: list[tuple] = []
+        keyword_rows: list[tuple] = []
+        if mode == "HYBRID":
+            # Both channels own the same bounded budget. A slow/failed vector
+            # provider must not prevent local keyword evidence from reaching
+            # the caller before the outer knowledge-tool timeout.
+            vector_result, keyword_result = await asyncio.gather(
+                asyncio.wait_for(vector_recall(), self.retrieval_timeout_seconds),
+                asyncio.wait_for(keyword_recall(), self.retrieval_timeout_seconds),
+                return_exceptions=True,
+            )
+            failures: list[Exception] = []
+            for name, result in (("vector", vector_result), ("keyword", keyword_result)):
+                if isinstance(result, BaseException):
+                    if not isinstance(result, Exception):
+                        raise result
+                    failures.append(result)
+                    logger.warning("hybrid %s recall failed: %s", name, type(result).__name__)
+            if not isinstance(vector_result, BaseException):
+                vector_hits, vector_rows = vector_result
+            if not isinstance(keyword_result, BaseException):
+                keyword_rows = keyword_result
+            if failures and not (vector_rows or keyword_rows):
+                # Do not cache a provider failure as a successful empty search.
+                raise failures[0]
+        elif mode == "VECTOR":
+            vector_hits, vector_rows = await asyncio.wait_for(
+                vector_recall(), self.retrieval_timeout_seconds,
+            )
+        elif mode == "KEYWORD":
+            keyword_rows = await asyncio.wait_for(keyword_recall(), self.retrieval_timeout_seconds)
+
+        file_names = explicit_file_names(question)
+        if file_names:
+            # An explicit file name is a source constraint. Do not let a
+            # semantically similar chunk from another asset outrank it.
+            vector_rows = [row for row in vector_rows if asset_name_matches(row[2], file_names)]
+            keyword_rows = [row for row in keyword_rows if asset_name_matches(row[2], file_names)]
+            matching_chunk_ids = {int(row[0]) for row in [*vector_rows, *keyword_rows]}
+            if not matching_chunk_ids:
+                return []
+            vector_hits = [
+                hit for hit in vector_hits
+                if hit.get("id") is not None and int(hit["id"]) in matching_chunk_ids
+            ]
+
         vector_row_ids = {int(row[0]) for row in vector_rows}
         vector_rank: dict[int, tuple[int, float]] = {}
         for rank, hit in enumerate(vector_hits, start=1):
@@ -330,17 +375,6 @@ class MilvusKnowledgeStore:
             if chunk_id in vector_row_ids:
                 vector_rank[chunk_id] = (rank, float(hit["score"]))
 
-        keyword_rows: list[tuple] = []
-        if mode in {"KEYWORD", "HYBRID"}:
-            keyword_rows = await self._fetch_keyword_rows(
-                pool,
-                workspace_id,
-                project_id,
-                question,
-                asset_ids,
-                candidate_limit,
-                query_variants=query_variants,
-            )
         keyword_values = {int(row[0]): float(row[6]) for row in keyword_rows}
 
         rows = {int(row[0]): row for row in [*vector_rows, *keyword_rows]}
@@ -407,6 +441,7 @@ class MilvusKnowledgeStore:
             )
         if use_reranker:
             result = await LexicalReranker().rerank(question, result)
+            result = retain_relevant_items(question, result)
         return result[:top_k]
 
     @staticmethod
@@ -416,6 +451,7 @@ class MilvusKnowledgeStore:
         query_vector: list[float],
         expression: str,
         limit: int,
+        timeout: float = 4.0,
     ) -> list[dict[str, Any]]:
         response = client.search(
             collection_name=collection_name,
@@ -425,6 +461,7 @@ class MilvusKnowledgeStore:
             limit=limit,
             output_fields=MilvusKnowledgeStore.OUTPUT_FIELDS,
             search_params={"metric_type": "COSINE", "params": {}},
+            timeout=timeout,
         )
         return [
             {
@@ -472,39 +509,6 @@ class MilvusKnowledgeStore:
         limit: int,
         query_variants: list[str] | None = None,
     ) -> list[tuple]:
-        variants = query_variants or build_query_variants(question)
-        terms: list[str] = []
-        seen: set[str] = set()
-        for variant in variants or [question]:
-            for term in _keyword_terms(variant):
-                if term not in seen:
-                    seen.add(term)
-                    terms.append(term)
-        patterns = _like_patterns(terms[:128]) or ["%__shinkou_no_keyword_match__%"]
-        base = """
-            FROM asset_chunks c
-            JOIN knowledge_assets a ON a.id = c.asset_id
-            JOIN projects p ON p.id = a.project_id
-            WHERE p.workspace_id = %s AND p.id = %s
-              AND a.index_status IN ('SUCCESS','INDEXED')
-              AND (
-                    c.search_vector @@ plainto_tsquery('simple', %s)
-                    OR c.content ILIKE ANY(%s)
-              )
-        """
-        params: list[Any] = [workspace_id, project_id, question, patterns]
-        if asset_ids:
-            base += " AND c.asset_id = ANY(%s)"
-            params.append(asset_ids)
-        sql = (
-            "SELECT c.id,c.asset_id,a.name,c.page_number,c.section_title,c.content,"
-            "GREATEST("
-            "ts_rank_cd(c.search_vector, plainto_tsquery('simple', %s)),"
-            "CASE WHEN c.content ILIKE ANY(%s) THEN 0.1 ELSE 0 END"
-            ") AS score " + base + " ORDER BY score DESC, c.chunk_index LIMIT %s"
+        return await fetch_keyword_rows(
+            pool, workspace_id, project_id, question, asset_ids, limit, query_variants,
         )
-        params = [question, patterns, *params, limit]
-        async with pool.connection() as connection:
-            async with connection.cursor() as cursor:
-                await cursor.execute(sql, params)
-                return await cursor.fetchall()

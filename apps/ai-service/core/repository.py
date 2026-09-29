@@ -159,6 +159,8 @@ class InMemoryRunRepository:
             key = str(run_id)
             if key not in self._runs:
                 return False
+            if self._runs[key].status in {"COMPLETED", "FAILED", "CANCELLED"}:
+                return True
             self._cancelled.add(key)
             self._runs[key].status = "CANCELLING"
             self._runs[key].paused = False

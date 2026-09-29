@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
+import { useRoute } from "vue-router";
 import {
   AlertCircle,
   ArrowRight,
@@ -15,6 +16,7 @@ import {
   UserRound,
 } from "@lucide/vue";
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProjectWorkflow from "@/components/project/ProjectWorkflow.vue";
 import {
   Dialog,
   DialogContent,
@@ -28,7 +30,9 @@ import { actionItemsApi } from "@/api/action-items";
 import { workspaceApi } from "@/api/workspace";
 import type { WorkspaceMember } from "@/api/types";
 
-const { actionItems, notify, workspaceId, projectId } = useWorkspace();
+const { actionItems, notify, workspaceId, projectId, router, routeTo } =
+  useWorkspace();
+const route = useRoute();
 const items = reactive(actionItems);
 const searchQuery = ref("");
 const filterStatus = ref("全部");
@@ -38,6 +42,16 @@ const editingItemId = ref<string | null>(null);
 const owners = ref<WorkspaceMember[]>([]);
 
 onMounted(async () => {
+  const actionTitle = route.query.actionTitle;
+  const actionDescription = route.query.actionDescription;
+  if (typeof actionTitle === "string" && actionTitle.trim()) {
+    openCreateDialog();
+    actionForm.title = actionTitle.trim();
+    actionForm.description =
+      typeof actionDescription === "string" ? actionDescription : "";
+    void router.replace(routeTo("project-action-items"));
+  }
+
   try {
     const members = await workspaceApi.members(workspaceId.value);
     owners.value = members.filter((member) => member.userName);
@@ -78,6 +92,7 @@ const statusColumns = [
 
 const actionForm = reactive({
   title: "",
+  description: "",
   owner: "",
   due: "",
   priority: "中",
@@ -94,7 +109,7 @@ const filteredActionItems = computed(() => {
       filterPriority.value === "全部" || item.priority === filterPriority.value;
     const matchesQuery =
       !query ||
-      [item.title, item.owner, item.due]
+      [item.title, item.description, item.owner, item.due]
         .join(" ")
         .toLowerCase()
         .includes(query);
@@ -127,6 +142,7 @@ function itemsForStatus(status: string) {
 function resetForm() {
   Object.assign(actionForm, {
     title: "",
+    description: "",
     owner: owners.value[0]?.userName || "",
     due: "",
     priority: "中",
@@ -144,6 +160,7 @@ function openEditDialog(item: (typeof items)[number]) {
   editingItemId.value = item.id;
   Object.assign(actionForm, {
     title: item.title,
+    description: item.description,
     owner: item.owner,
     due: item.due,
     priority: item.priority,
@@ -166,6 +183,7 @@ async function saveActionItem() {
         editingItemId.value,
         {
           title: actionForm.title.trim(),
+          description: actionForm.description.trim(),
           ownerId: owners.value.find(
             (owner) => owner.userName === actionForm.owner,
           )?.userId,
@@ -178,7 +196,11 @@ async function saveActionItem() {
       notify(error instanceof Error ? error.message : "行动项保存失败");
       return;
     }
-    Object.assign(item, { ...actionForm, title: actionForm.title.trim() });
+    Object.assign(item, {
+      ...actionForm,
+      title: actionForm.title.trim(),
+      description: actionForm.description.trim(),
+    });
     notify("行动项已更新");
   } else {
     try {
@@ -187,6 +209,7 @@ async function saveActionItem() {
         projectId.value,
         {
           title: actionForm.title.trim(),
+          description: actionForm.description.trim(),
           ownerId: owners.value.find(
             (owner) => owner.userName === actionForm.owner,
           )?.userId,
@@ -199,6 +222,9 @@ async function saveActionItem() {
         id: String(created.id),
         ...actionForm,
         title: created.title || actionForm.title.trim(),
+        description: String(
+          created.description || actionForm.description.trim(),
+        ),
       });
     } catch (error) {
       notify(error instanceof Error ? error.message : "行动项创建失败");
@@ -251,7 +277,7 @@ function priorityClass(priority: string) {
   <PageHeader
     eyebrow="PROJECT / FOLLOW-UP"
     title="行动项"
-    subtitle="跟踪调研结论落地前仍需完成的工作"
+    subtitle="承接报告建议，分派负责人并跟踪每项后续工作的完成状态"
   >
     <template #action
       ><button
@@ -263,6 +289,8 @@ function priorityClass(priority: string) {
       </button></template
     >
   </PageHeader>
+
+  <ProjectWorkflow />
 
   <div class="action-summary">
     <div class="action-summary-card">
@@ -372,6 +400,9 @@ function priorityClass(priority: string) {
             </button>
           </div>
           <h3>{{ item.title }}</h3>
+          <p v-if="item.description" class="action-card-description">
+            {{ item.description }}
+          </p>
           <div class="action-card-meta">
             <span><UserRound :size="13" />{{ item.owner }}</span
             ><span :class="{ 'due-highlight': item.due === '今天' }"
@@ -420,6 +451,12 @@ function priorityClass(priority: string) {
             v-model="actionForm.title"
             type="text"
             placeholder="例如：确认跨地域复制的 RPO 目标"
+        /></label>
+        <label
+          >背景与验收说明<textarea
+            v-model="actionForm.description"
+            rows="3"
+            placeholder="可注明来源报告、决策依据和完成标准"
         /></label>
         <div class="form-grid">
           <label
@@ -715,6 +752,13 @@ function priorityClass(priority: string) {
   font-weight: 650;
   line-height: 1.5;
 }
+.action-card-description {
+  margin: -0.25rem 0 0.625rem;
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre-line;
+}
 .action-card-meta {
   display: flex;
   align-items: center;
@@ -809,11 +853,13 @@ function priorityClass(priority: string) {
   font-size: 0.75rem;
 }
 .editor-form input,
-.editor-form select {
+.editor-form select,
+.editor-form textarea {
   width: 100%;
   box-sizing: border-box;
 }
-.editor-form input {
+.editor-form input,
+.editor-form textarea {
   border: 0.0625rem solid var(--workspace-border);
   border-radius: 0.4375rem;
   outline: 0;
@@ -823,7 +869,12 @@ function priorityClass(priority: string) {
   font: inherit;
   font-size: 0.8125rem;
 }
-.editor-form input:focus {
+.editor-form textarea {
+  resize: vertical;
+  min-height: 5rem;
+}
+.editor-form input:focus,
+.editor-form textarea:focus {
   border-color: var(--teal);
   box-shadow: 0 0 0 0.1875rem color-mix(in oklab, var(--teal) 16%, transparent);
 }

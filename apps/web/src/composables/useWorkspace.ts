@@ -63,6 +63,7 @@ type AssetRow = {
 type ActionItemRow = {
   id: string;
   title: string;
+  description: string;
   ownerId?: number;
   owner: string;
   due: string;
@@ -98,6 +99,7 @@ type EvaluationCaseRow = {
   id: string;
   projectId?: number;
   query: string;
+  expectedAnswer: string;
   recall: string;
   citation: string;
   json: string;
@@ -144,10 +146,10 @@ const projectNav = [
   { label: "文件库", icon: FolderOpen, name: "project-files" },
   { label: "知识库", icon: Database, name: "project-assets" },
   { label: "检索 Playground", icon: Search, name: "project-playground" },
-  { label: "Agent 任务队列", icon: Activity, name: "project-runs" },
+  { label: "智能分析", icon: Activity, name: "project-runs" },
+  { label: "评估", icon: BarChart3, name: "project-evaluation" },
   { label: "报告", icon: FileText, name: "project-reports" },
   { label: "行动项", icon: ListChecks, name: "project-action-items" },
-  { label: "评估", icon: BarChart3, name: "project-evaluation" },
 ];
 const settingsNav = [
   { label: "个人设置", icon: UserRound, name: "user-settings" },
@@ -246,6 +248,7 @@ function mapRemoteActionItem(item: Record<string, unknown>): ActionItemRow {
   return {
     id: String(item.id ?? "—"),
     title: String(item.title || "未命名行动项"),
+    description: String(item.description || ""),
     ownerId: item.ownerId == null ? undefined : Number(item.ownerId),
     owner: String(item.owner || "未分配"),
     due: String(item.dueAt || "待安排"),
@@ -287,6 +290,7 @@ function mapRemoteEvaluationCase(
     id: String(item.id ?? "—"),
     projectId: item.projectId == null ? undefined : Number(item.projectId),
     query: String(item.query || ""),
+    expectedAnswer: String(item.expectedAnswer || ""),
     recall: item.recall == null ? "—" : `${String(item.recall)}%`,
     citation: item.citation == null ? "—" : `${String(item.citation)}%`,
     json: item.jsonScore == null ? "—" : `${String(item.jsonScore)}%`,
@@ -362,7 +366,7 @@ export function useWorkspace() {
           "project-asset-detail": "知识库详情",
           "project-playground": "检索 Playground",
           "project-runs": "项目流程 · 智能分析",
-          "project-run-detail": "运行工作台",
+          "project-run-detail": "项目流程 · 智能分析",
           "project-reports": "项目流程 · 导出成果",
           "project-action-items": "行动项",
           "project-evaluation": "评估",

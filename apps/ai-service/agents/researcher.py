@@ -33,6 +33,7 @@ class InternalResearcherAgent:
                 },
             )
             found.extend(Evidence.model_validate(item) for item in result)
+            await context.repository.add_evidence(context.run_id, found)
             await context.events.publish(
                 context.run_id,
                 "tool.completed",

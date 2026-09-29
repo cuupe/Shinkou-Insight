@@ -474,6 +474,10 @@ class ServiceContainer:
                 collection_name=settings.milvus_collection_name,
                 min_size=settings.db_pool_min_size,
                 max_size=settings.db_pool_max_size,
+                # Reserve time for cache access, fusion and tool bookkeeping.
+                retrieval_timeout_seconds=0.65 * min(
+                    settings.request_timeout_seconds, settings.knowledge_timeout_seconds,
+                ),
             )
             await store.start()
             return (

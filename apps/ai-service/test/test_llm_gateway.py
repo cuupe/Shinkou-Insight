@@ -302,6 +302,7 @@ async def test_http_gateway_streams_openai_compatible_sse_deltas():
     assert chunks[-1].usage.available is True
 
 
+@pytest.mark.asyncio
 async def test_http_gateway_streams_reasoning_content_as_thinking():
     def handler(request: httpx.Request) -> httpx.Response:
         body = (

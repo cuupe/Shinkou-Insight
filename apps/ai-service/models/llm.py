@@ -15,6 +15,7 @@ from models.schemas import (
     TokenUsage,
 )
 from prompts.search_prompts import MODEL_GRAPH_HINTS, MODEL_SOURCE_HINTS
+from models.output_guard import GenerationGuard, FinalChannelFilter
 
 T = TypeVar(
     "T",
@@ -162,6 +163,20 @@ class ModelResponseError(ModelGatewayError):
     """
 
     pass
+
+
+def _timeout_message(error: httpx.TimeoutException, timeout_seconds: float) -> str:
+    """Tell connection failures apart from waiting on a model response."""
+    budget = f"{timeout_seconds:g} 秒"
+    if isinstance(error, httpx.ConnectTimeout):
+        return f"连接模型服务超时（ConnectTimeout，{budget}）；请检查服务地址、代理和网络"
+    if isinstance(error, httpx.ReadTimeout):
+        return f"等待模型响应超时（ReadTimeout，连续 {budget} 未收到数据）；模型可能仍在生成，也可能是链路无响应"
+    if isinstance(error, httpx.WriteTimeout):
+        return f"发送模型请求超时（WriteTimeout，{budget}）；请检查网络链路"
+    if isinstance(error, httpx.PoolTimeout):
+        return f"等待模型连接池超时（PoolTimeout，{budget}）；请稍后重试"
+    return f"模型请求超时（{type(error).__name__}，{budget}）"
 
 
 _CONTEXT_WINDOW_KEYS = (
@@ -324,14 +339,13 @@ class ModelStreamChunk:
 
     ``thinking`` carries the provider's reasoning/chain-of-thought text
     (``reasoning_content`` / ``reasoning``) separately from the visible answer
-    ``delta``. It is surfaced to the UI as live thinking while the visible
-    answer is still being produced, so a reasoning model does not leave the
-    user staring at a silent spinner.
+    ``delta``. Runtime exposes only activity/timing, never the reasoning text.
     """
 
     delta: str = ""
     thinking: str = ""
     usage: TokenUsage | None = None
+    tool_calls: list[dict[str, Any]] | None = None
 
 
 class UnavailableModelGateway:
@@ -737,6 +751,8 @@ class HttpModelGateway:
     }
     """
 
+    supports_tools = True
+
     def __init__(
         self,
         *,
@@ -806,11 +822,11 @@ class HttpModelGateway:
                 url,
                 headers=headers,
                 json=payload,
+                timeout=self.timeout_seconds,
             )
 
         except httpx.TimeoutException as exc:
-
-            raise ModelTimeoutError("LLM request timed out") from exc
+            raise ModelTimeoutError(_timeout_message(exc, self.timeout_seconds)) from exc
 
         except httpx.RequestError as exc:
 
@@ -854,6 +870,8 @@ class HttpModelGateway:
         messages: list[dict[str, str]],
         *,
         temperature: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str = "auto",
     ) -> AsyncIterator[ModelStreamChunk]:
         """Stream OpenAI-compatible SSE deltas without buffering the answer."""
 
@@ -864,9 +882,18 @@ class HttpModelGateway:
             "Accept": "text/event-stream",
         }
         payload = self._build_payload(messages, temperature=temperature, stream=True)
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice
+            payload["parallel_tool_calls"] = False
         usage: TokenUsage | None = None
+        calls: dict[int, dict[str, Any]] = {}
+        final_filter = FinalChannelFilter()
+        content_guard = GenerationGuard()
+        reasoning_guard = GenerationGuard(max_chars=128000)
+        finished = False
         try:
-            async with self.client.stream("POST", url, headers=headers, json=payload) as response:
+            async with self.client.stream("POST", url, headers=headers, json=payload, timeout=self.timeout_seconds) as response:
                 if not 200 <= response.status_code < 300:
                     await response.aread()
                     self._raise_for_status(response)
@@ -877,25 +904,53 @@ class HttpModelGateway:
                     if line.startswith("data:"):
                         line = line[5:].strip()
                     if line == "[DONE]":
+                        finished = True
                         break
                     try:
                         data = json.loads(line)
                     except ValueError as exc:
                         raise ModelResponseError("LLM streaming response is not valid JSON") from exc
+                    for choice in data.get("choices") or []:
+                        if choice.get("finish_reason") or choice.get("message"):
+                            finished = True
+                        if choice.get("finish_reason") == "length":
+                            raise ModelResponseError("模型达到输出上限，回答未完成；请缩小问题范围后重试")
+                        for call in (choice.get("delta") or {}).get("tool_calls") or []:
+                            index = call.get("index", 0)
+                            if index not in calls and len(calls) >= 8:
+                                raise ModelResponseError("模型一次请求的工具数量超过上限")
+                            target = calls.setdefault(index, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                            if call.get("id"):
+                                target["id"] = call["id"]
+                            for key in ("name", "arguments"):
+                                target["function"][key] += (call.get("function") or {}).get(key, "")
+                                if len(target["function"][key]) > 16000:
+                                    raise ModelResponseError("工具参数超过长度上限")
                     raw_usage = data.get("usage")
                     if raw_usage:
                         usage = self._extract_usage(data)
                     delta = self._extract_stream_delta(data)
                     thinking = self._extract_stream_thinking(data)
                     if thinking:
+                        reasoning_guard.feed(thinking)
                         yield ModelStreamChunk(delta="", thinking=thinking)
                     if delta:
-                        yield ModelStreamChunk(delta=delta)
+                        content_guard.feed(delta)
+                        visible = final_filter.feed(delta)
+                        if visible:
+                            yield ModelStreamChunk(delta=visible)
         except httpx.TimeoutException as exc:
-            raise ModelTimeoutError("LLM request timed out") from exc
+            raise ModelTimeoutError(_timeout_message(exc, self.timeout_seconds)) from exc
         except httpx.RequestError as exc:
             detail = str(exc).strip() or repr(exc)
             raise ModelRequestError(f"LLM network request failed at {url}: {detail[:1000]}") from exc
+        if not finished:
+            raise ModelResponseError("模型连接提前结束，未收到完成标记；本次回答未完成")
+        remaining = final_filter.feed("", final=True)
+        if remaining:
+            yield ModelStreamChunk(delta=remaining)
+        if calls:
+            yield ModelStreamChunk(tool_calls=[calls[index] for index in sorted(calls)])
         if usage is not None:
             yield ModelStreamChunk(usage=usage)
 
@@ -937,6 +992,7 @@ class HttpModelGateway:
         elif generation.reasoning_effort and generation.reasoning_effort != "none":
             payload["reasoning_effort"] = generation.reasoning_effort
         payload.update(extra_body)
+        payload["max_tokens"] = min(int(payload["max_tokens"]), 32768)
         return payload
 
     def _extract_stream_delta(self, data: dict[str, Any]) -> str:
@@ -960,8 +1016,7 @@ class HttpModelGateway:
         OpenAI-compatible reasoning providers (SiliconFlow/DeepSeek among
         others) send the thinking text in a separate ``reasoning_content`` (or
         ``reasoning``) field before any visible ``content`` begins. Returning it
-        separately lets the runtime relay it as live ``thinking.delta`` events
-        instead of discarding the tokens the user already paid for.
+        separately lets the runtime expose activity without publishing private text.
         """
         try:
             choice = (data.get("choices") or [])[0]
@@ -1011,12 +1066,24 @@ class HttpModelGateway:
             *messages,
         ]
 
-        result = await self.chat(
-            structured_messages,
-            temperature=temperature,
-        )
+        started_at = time.perf_counter()
+        content_parts: list[str] = []
+        usage: TokenUsage | None = None
+        async for chunk in self.stream(structured_messages, temperature=temperature):
+            if chunk.delta:
+                content_parts.append(chunk.delta)
+            if chunk.usage is not None:
+                usage = chunk.usage
 
-        raw_content = result.content.strip()
+        raw_content = "".join(content_parts).strip()
+        if not raw_content:
+            raise ModelResponseError("模型流式结构化响应没有返回 JSON 内容")
+        result = ModelChatResult(
+            content=raw_content,
+            model=self.model,
+            usage=usage or TokenUsage(available=False),
+            latency_ms=int((time.perf_counter() - started_at) * 1000),
+        )
 
         cleaned_content = self._clean_json_text(raw_content)
 

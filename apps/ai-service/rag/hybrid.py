@@ -31,7 +31,7 @@ def extract_search_terms(value: str, max_terms: int = 64) -> list[str]:
     seen: set[str] = set()
 
     def add(term: str) -> None:
-        term = term.strip()
+        term = term.strip().strip(".,;:!?\"'`()[]{}")
         if (
             len(term) < 2
             or term in SEARCH_STOPWORDS
