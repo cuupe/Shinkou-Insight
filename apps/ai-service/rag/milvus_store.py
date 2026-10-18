@@ -95,7 +95,7 @@ class MilvusKnowledgeStore:
     def _connect_milvus(self) -> Any:
         from pymilvus import DataType, MilvusClient
 
-        kwargs: dict[str, Any] = {"uri": self.milvus_uri}
+        kwargs: dict[str, Any] = {"uri": self.milvus_uri, "timeout": 30}
         if self.milvus_token:
             kwargs["token"] = self.milvus_token
         if self.milvus_db_name:
@@ -152,7 +152,9 @@ class MilvusKnowledgeStore:
                     f"{configured_dimension}, expected {self.embedding.dimension}; "
                     "use a new collection name when changing embedding dimensions"
                 )
-        client.load_collection(collection_name=self.collection_name)
+        # A missing persisted index must produce a diagnostic instead of
+        # keeping the entire API in startup forever.
+        client.load_collection(collection_name=self.collection_name, timeout=30)
         return client
 
     def _require_started(self) -> tuple[Any, Any]:
@@ -291,6 +293,16 @@ class MilvusKnowledgeStore:
         asset_ids = [int(value) for value in filters.get("assetIds", [])]
         mode = retrieval_mode.upper()
         candidate_limit = max(top_k, min(int(candidate_k or max(top_k * 4, 20)), 200))
+        embedding_model = str(getattr(embedding, "model_name", "")).casefold()
+        effective_mode = mode
+        # The local hash provider is a deterministic placeholder, not a
+        # semantic embedding model. Its cosine neighbors are effectively
+        # random for retrieval and can crowd real lexical evidence out of a
+        # hybrid result (especially when a project contains a large novel or
+        # other unrelated corpus). Use the reliable keyword path for both
+        # HYBRID and explicit VECTOR requests until a semantic model is set.
+        if mode in {"HYBRID", "VECTOR"} and embedding_model.startswith("hash-embedding"):
+            effective_mode = "KEYWORD"
 
         async def vector_recall() -> tuple[list[dict[str, Any]], list[tuple]]:
             if embedding.dimension != self.embedding.dimension:
@@ -322,7 +334,7 @@ class MilvusKnowledgeStore:
         vector_hits: list[dict[str, Any]] = []
         vector_rows: list[tuple] = []
         keyword_rows: list[tuple] = []
-        if mode == "HYBRID":
+        if effective_mode == "HYBRID":
             # Both channels own the same bounded budget. A slow/failed vector
             # provider must not prevent local keyword evidence from reaching
             # the caller before the outer knowledge-tool timeout.
@@ -345,11 +357,18 @@ class MilvusKnowledgeStore:
             if failures and not (vector_rows or keyword_rows):
                 # Do not cache a provider failure as a successful empty search.
                 raise failures[0]
-        elif mode == "VECTOR":
+        elif mode in {"HYBRID", "VECTOR"} and effective_mode == "KEYWORD":
+            logger.info(
+                "%s vector recall disabled for non-semantic embedding model %s",
+                mode,
+                embedding_model or "unknown",
+            )
+            keyword_rows = await asyncio.wait_for(keyword_recall(), self.retrieval_timeout_seconds)
+        elif effective_mode == "VECTOR":
             vector_hits, vector_rows = await asyncio.wait_for(
                 vector_recall(), self.retrieval_timeout_seconds,
             )
-        elif mode == "KEYWORD":
+        elif effective_mode == "KEYWORD":
             keyword_rows = await asyncio.wait_for(keyword_recall(), self.retrieval_timeout_seconds)
 
         file_names = explicit_file_names(question)
@@ -379,7 +398,7 @@ class MilvusKnowledgeStore:
 
         rows = {int(row[0]): row for row in [*vector_rows, *keyword_rows]}
         channels: dict[str, list[tuple[str, tuple, float]]] = {}
-        if mode in {"VECTOR", "HYBRID"}:
+        if effective_mode in {"VECTOR", "HYBRID"}:
             channels["vector"] = [
                 (str(chunk_id), rows[chunk_id], score)
                 for chunk_id, (_rank, score) in sorted(
@@ -387,17 +406,17 @@ class MilvusKnowledgeStore:
                 )
                 if chunk_id in rows
             ]
-        if mode in {"KEYWORD", "HYBRID"}:
+        if effective_mode in {"KEYWORD", "HYBRID"}:
             channels["keyword"] = [
                 (str(chunk_id), rows[chunk_id], score)
                 for chunk_id, score in keyword_values.items()
                 if chunk_id in rows and score > 0
             ]
-        if mode == "VECTOR":
+        if effective_mode == "VECTOR":
             fused = fuse_ranked_candidates(
                 channels, method="LINEAR", weights={"vector": 1.0}
             )
-        elif mode == "KEYWORD":
+        elif effective_mode == "KEYWORD":
             fused = fuse_ranked_candidates(
                 channels, method="LINEAR", weights={"keyword": 1.0}
             )
@@ -413,9 +432,9 @@ class MilvusKnowledgeStore:
             fused,
             top_k=max(top_k, min(candidate_limit, int(rerank_top_k or top_k))),
             content_fn=lambda row: row[5],
+            group_fn=lambda row: row[1],
             diversity_lambda=diversity_lambda,
         )
-
         result: list[RetrievalItem] = []
         for rank, candidate in enumerate(fused, start=1):
             chunk_id = int(candidate.key)
@@ -441,7 +460,56 @@ class MilvusKnowledgeStore:
             )
         if use_reranker:
             result = await LexicalReranker().rerank(question, result)
-            result = retain_relevant_items(question, result)
+            if not (file_names or asset_ids):
+                result = retain_relevant_items(question, result)
+        if result and top_k >= 3 and not file_names:
+            # Titles can match a query while the actual numbers/conditions live
+            # in another section. Supply context from small matched documents,
+            # bounded by the same top_k, rather than repeatedly returning titles.
+            primary = []
+            primary_assets = set()
+            for item in result:
+                if item.asset_id not in primary_assets:
+                    primary.append(item)
+                    primary_assets.add(item.asset_id)
+                if len(primary) >= min(4, max(1, top_k // 2)):
+                    break
+            selected_assets = list(dict.fromkeys(item.asset_id for item in primary))
+            try:
+                context_rows = await asyncio.wait_for(
+                    self._fetch_short_document_rows(pool, workspace_id, project_id, selected_assets),
+                    self.retrieval_timeout_seconds,
+                )
+            except Exception as exc:
+                logger.warning("document context recall failed: %s", type(exc).__name__)
+                context_rows = []
+            if context_rows:
+                selected = list(primary)
+                seen = {item.chunk_id for item in selected}
+                groups = [[row for row in context_rows if row[1] == asset and row[0] not in seen]
+                          for asset in selected_assets]
+                # Longer body sections precede title-only sections, but each
+                # primary document gets a turn before another context section.
+                for group in groups:
+                    group.sort(key=lambda row: (-len(row[5]), row[0]))
+                while len(selected) < top_k and any(groups):
+                    for group in groups:
+                        if not group or len(selected) >= top_k:
+                            continue
+                        row = group.pop(0)
+                        if row[0] in seen:
+                            continue
+                        center = next(item for item in primary if item.asset_id == row[1])
+                        selected.append(RetrievalItem(
+                            id=f"E{len(selected)+1}", chunk_id=row[0], asset_id=row[1],
+                            asset_name=row[2], source_name=row[2], page_number=row[3],
+                            section_title=row[4], content=row[5], score=(center.score or 0) * 0.5,
+                        ))
+                        seen.add(row[0])
+                selected.extend(item for item in result if item.chunk_id not in seen)
+                result = selected
+        for rank, item in enumerate(result[:top_k], start=1):
+            item.id = f"E{rank}"
         return result[:top_k]
 
     @staticmethod
@@ -470,6 +538,32 @@ class MilvusKnowledgeStore:
             }
             for hit in (response[0] if response else [])
         ]
+
+    async def _fetch_short_document_rows(self, pool: Any, workspace_id: int, project_id: int,
+                                         asset_ids: list[int]) -> list[tuple]:
+        if not asset_ids:
+            return []
+        sql = """
+            WITH scoped AS MATERIALIZED (
+                SELECT c.id,c.asset_id,a.name,c.page_number,c.section_title,c.content,c.chunk_index
+                FROM asset_chunks c
+                JOIN knowledge_assets a ON a.id=c.asset_id
+                JOIN projects p ON p.id=a.project_id
+                WHERE p.workspace_id=%s AND p.id=%s
+                  AND a.index_status IN ('SUCCESS','INDEXED')
+                  AND c.asset_id=ANY(%s)
+            ), small AS (
+                SELECT asset_id FROM scoped GROUP BY asset_id
+                HAVING count(*) <= 12 AND sum(char_length(content)) <= 4000
+            )
+            SELECT c.id,c.asset_id,c.name,c.page_number,c.section_title,c.content,0::float
+            FROM scoped c JOIN small s ON s.asset_id=c.asset_id
+            ORDER BY c.asset_id,c.chunk_index,c.id LIMIT 48
+        """
+        async with pool.connection() as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute(sql, [workspace_id, project_id, asset_ids])
+                return await cursor.fetchall()
 
     async def _fetch_rows_by_ids(
         self,

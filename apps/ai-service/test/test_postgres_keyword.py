@@ -4,12 +4,16 @@ Set TEST_POSTGRES_URL to a disposable/test PostgreSQL connection string.
 """
 
 import os
+import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pytest
 
 from rag.keyword import fetch_keyword_rows
 from rag.retriever import PostgresKeywordRetriever
+from rag.milvus_store import MilvusKnowledgeStore
+from embeddings.providers import HashEmbeddingProvider
 
 
 @pytest.fixture
@@ -95,3 +99,44 @@ async def test_postgres_adapter_uses_same_ranking(postgres_pool):
     results = await retriever.retrieve(workspace_id=7, project_id=8, question="谁获得了2029年诺贝尔交通工程奖", top_k=1)
     assert results[0].asset_id == 12
     assert results[0].keyword_score > 0
+
+
+@pytest.mark.asyncio
+async def test_short_document_context_enforces_project_workspace_and_index_scope(postgres_pool):
+    store = object.__new__(MilvusKnowledgeStore)
+    rows = await store._fetch_short_document_rows(postgres_pool, 7, 8, [12,14,15,16,17])
+    assert {row[1] for row in rows} == {12,17}
+    assert await store._fetch_short_document_rows(postgres_pool, 99, 8, [12]) == []
+
+
+@pytest.mark.asyncio
+async def test_short_document_context_does_not_expand_a_large_document(postgres_pool):
+    async with postgres_pool.connection() as connection:
+        async with connection.cursor() as cursor:
+            await cursor.execute("UPDATE asset_chunks SET content=%s WHERE asset_id=%s", ["长"*4001,12])
+    store = object.__new__(MilvusKnowledgeStore)
+    assert await store._fetch_short_document_rows(postgres_pool, 7, 8, [12]) == []
+
+
+@pytest.mark.asyncio
+async def test_actual_multi_need_queries_recall_cost_dates_measurements_and_rollout_conditions(postgres_pool):
+    data=json.loads((Path(__file__).parent/'fixtures/research_stop_run12.json').read_text(encoding='utf-8'))
+    evidence=[*data['evidence'],data['additional']]
+    async with postgres_pool.connection() as connection:
+        async with connection.cursor() as cursor:
+            for asset in {item['asset_id']:item['source_name'] for item in evidence}.items():
+                await cursor.execute("INSERT INTO knowledge_assets VALUES (%s,%s,%s,%s)",
+                                     [100000+asset[0],8,asset[1],'SUCCESS'])
+            for index,item in enumerate(evidence):
+                await cursor.execute("INSERT INTO asset_chunks(id,asset_id,chunk_index,content,section_title) VALUES (%s,%s,%s,%s,%s)",
+                                     [1000000+index,100000+item['asset_id'],index,item['content'],item.get('section_title')])
+    store=MilvusKnowledgeStore('unused','unused',HashEmbeddingProvider(dimension=8))
+    store.pool,store.client=postgres_pool,object()
+    results=[]
+    for query in [
+        '星桥六周试点 样本数 准确率 资料可定位覆盖率 平均检索耗时 严重错误率 周活跃率 含税成本 XQ-05 推广前置条件 2026-08-31 2026-10-11',
+        '星桥试点 六周含税成本 总成本 XQ-05 推广前置条件 权限撤销 运行责任 新增样本复测',
+    ]:
+        results.extend(await store.retrieve(workspace_id=7,project_id=8,question=query,top_k=8))
+    text='\n'.join(item.content for item in results)
+    assert all(term in text for term in ['139000','权限撤销','50 条','2026-08-31','120 秒','66 秒'])

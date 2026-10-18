@@ -8,9 +8,9 @@ export type ResearchEvent = {
 
 export const researchStages = [
   { title: "理解目标", nodes: ["VALIDATE_INPUT", "PLAN"], description: "梳理目标、约束与成功指标，生成研究计划" },
-  { title: "搜集证据", nodes: ["RETRIEVE_INTERNAL", "EVALUATE_EVIDENCE", "REWRITE_QUERY", "SEARCH_WEB"], description: "检索项目资料，检查相关性与证据缺口" },
-  { title: "形成方案", nodes: ["SYNTHESIZE_FINDINGS", "WRITE_REPORT"], description: "综合证据，整理方案、风险与建议" },
-  { title: "核验结果", nodes: ["REVIEW_REPORT", "PERSIST_RESULT", "END"], description: "核对引用和结论，保存报告供人工审查" },
+  { title: "搜集证据", nodes: ["DECISION", "RETRIEVE_INTERNAL", "EVALUATE_EVIDENCE", "REWRITE_QUERY", "SEARCH_WEB"], description: "检索项目资料，检查相关性与证据缺口" },
+  { title: "形成方案", nodes: ["SYNTHESIS", "SYNTHESIZE_FINDINGS", "WRITE_REPORT"], description: "综合证据，整理方案、风险与建议" },
+  { title: "核验结果", nodes: ["REFLECTION", "REVIEW_REPORT", "PERSIST_RESULT", "END"], description: "核对引用和结论，保存报告供人工审查" },
 ];
 
 export function isResearchActive(run: ResearchRun | null) {
@@ -50,6 +50,40 @@ export function researchReport(run: ResearchRun | null) {
 export function researchSummary(run: ResearchRun | null) {
   const report = researchReport(run);
   return String(report?.executive_summary || report?.executiveSummary || run?.finalSummary || "");
+}
+
+export function researchSections(run: ResearchRun | null) {
+  const raw = researchReport(run)?.sections;
+  return Array.isArray(raw) ? raw.filter(item => item && typeof item === "object").map(item => ({
+    title: String(item.title || item.heading || "分析结果"),
+    content: String(item.content || item.body || ""),
+  })) : [];
+}
+
+export function researchVisibleList(run: ResearchRun | null, field: "recommendations" | "limitations") {
+  const report = researchReport(run);
+  if (field === "limitations" && report?.limitations_in_body === true) return [];
+  const raw = report?.[field];
+  const body = researchSections(run).map(section => section.content).join("\n");
+  return Array.isArray(raw) ? [...new Set(raw.map(item => String(item).trim()).filter(Boolean))]
+    .filter(item => !body.includes(item)) : [];
+}
+
+export function researchOutcome(run: ResearchRun | null) {
+  const explicit = researchReport(run)?.outcome;
+  if (["COMPLETE", "PARTIAL", "NEEDS_INPUT"].includes(String(explicit))) return String(explicit);
+  const review = run?.reviewResult as { approved?: boolean; issues?: unknown[] } | undefined;
+  return review?.approved === false && Array.isArray(review.issues) && review.issues.length ? "PARTIAL" : "COMPLETE";
+}
+
+export function researchMarkdown(run: ResearchRun | null) {
+  const parts = [`# ${researchReport(run)?.title || "分析报告"}`, researchSummary(run),
+    ...researchSections(run).map(section => `## ${section.title}\n\n${section.content}`)];
+  for (const [field, title] of [["recommendations", "建议"], ["limitations", "限制与待确认事项"]] as const) {
+    const items = researchVisibleList(run, field);
+    if (items.length) parts.push(`## ${title}`, ...items.map(item => `- ${item}`));
+  }
+  return parts.filter(Boolean).join("\n\n");
 }
 
 export function researchErrorHelp(message: string) {

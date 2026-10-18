@@ -27,4 +27,12 @@ export const evaluationApi = {
         payload,
       ),
     ),
+  run: (workspaceId: number | string, id: number | string) =>
+    unwrap<EvaluationRun>(
+      anet.post<ApiResponse<EvaluationRun>>(
+        `${workspacePath(workspaceId)}/evaluation-cases/${id}/run`,
+        {},
+        { timeout: 95000 },
+      ),
+    ),
 };

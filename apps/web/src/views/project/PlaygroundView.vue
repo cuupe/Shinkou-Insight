@@ -42,8 +42,11 @@ const {
   evaluationCases,
   router,
   routeTo,
+  assets,
 } = useWorkspace();
 const route = useRoute();
+type RetrievalMode = "HYBRID" | "VECTOR" | "KEYWORD";
+type FusionMethod = "WEIGHTED_RRF" | "RRF" | "LINEAR";
 type RetrievalResult = {
   rank: number;
   source: string;
@@ -55,22 +58,64 @@ type RetrievalResult = {
   reranked: boolean;
   text: string;
 };
+type RetrievalTrace = {
+  mode?: RetrievalMode;
+  effectiveMode?: RetrievalMode;
+  effectiveChannels?: string[];
+  embeddingModel?: string;
+  fallbackReason?: string | null;
+  candidateK?: number;
+  fusionMethod?: FusionMethod;
+  reranker?: boolean;
+};
 const retrievalModes = [
-  { label: "Hybrid", value: "HYBRID" },
-  { label: "Vector", value: "VECTOR" },
-  { label: "Keyword", value: "KEYWORD" },
+  {
+    label: "混合",
+    value: "HYBRID" as const,
+    description: "组合语义与关键词；没有真实向量模型时会自动回退到关键词。",
+  },
+  {
+    label: "向量",
+    value: "VECTOR" as const,
+    description: "适合表达不同但含义相近的问题；需要项目配置真实的 Embedding 模型。",
+  },
+  {
+    label: "关键词",
+    value: "KEYWORD" as const,
+    description: "按原文名称、数字和词组匹配，适合精确查找条款或资料片段。",
+  },
+];
+const fusionMethods: { label: string; value: FusionMethod }[] = [
+  { label: "加权 RRF（推荐）", value: "WEIGHTED_RRF" },
+  { label: "RRF（等权融合）", value: "RRF" },
+  { label: "线性分数融合", value: "LINEAR" },
 ];
 const retrievalResults = ref<RetrievalResult[]>([]);
 const isSearching = ref(false);
 const searchError = ref("");
 const hasSearched = ref(false);
+const selectedAssetId = ref("all");
+const candidateK = ref(40);
+const fusionMethod = ref<FusionMethod>("WEIGHTED_RRF");
+const vectorWeight = ref(0.55);
+const retrievalTrace = ref<RetrievalTrace | null>(null);
+const rewrittenQueries = ref<string[]>([]);
 const selectedRank = ref<number | null>(null);
 const parameterOpen = ref(false);
-const parameterMode = ref(retrievalMode.value);
 const parameterTopK = ref(topK.value);
+const parameterCandidateK = ref(candidateK.value);
+const parameterFusionMethod = ref<FusionMethod>(fusionMethod.value);
+const parameterVectorWeight = ref(vectorWeight.value);
 const parameterRerank = ref(rerank.value);
 const evidenceOpen = ref(false);
 const selectedResult = ref<RetrievalResult | null>(null);
+const indexedAssets = computed(() => assets.filter((asset) => asset.status === "indexed"));
+const selectedMode = computed(
+  () => retrievalModes.find((mode) => mode.value === retrievalMode.value) || retrievalModes[0]!,
+);
+const selectedAssetName = computed(
+  () => indexedAssets.value.find((asset) => asset.id === selectedAssetId.value)?.name || "全部已索引资料",
+);
 const matchingEvaluationCase = computed(() =>
   evaluationCases.find(
     (item) => item.query === playgroundQuery.value.trim(),
@@ -96,9 +141,23 @@ watch(
   { immediate: true },
 );
 
+watch([workspaceId, projectId], () => {
+  selectedAssetId.value = "all";
+  retrievalResults.value = [];
+  retrievalTrace.value = null;
+  rewrittenQueries.value = [];
+  searchError.value = "";
+  hasSearched.value = false;
+});
+
 function formatScore(value: unknown) {
   const score = Number(value);
-  return Number.isFinite(score) ? score.toFixed(2) : "—";
+  if (!Number.isFinite(score)) return "—";
+  return score < 0.01 ? score.toFixed(4) : score < 1 ? score.toFixed(3) : score.toFixed(2);
+}
+
+function modeLabel(value?: string) {
+  return retrievalModes.find((mode) => mode.value === value)?.label || value || "—";
 }
 
 function mapResult(item: KnowledgeSearchItem, index: number): RetrievalResult {
@@ -130,6 +189,8 @@ async function runSearch() {
   searchError.value = "";
   hasSearched.value = true;
   retrievalResults.value = [];
+  retrievalTrace.value = null;
+  rewrittenQueries.value = [];
   evidenceOpen.value = false;
   selectedResult.value = null;
   selectedRank.value = null;
@@ -142,9 +203,17 @@ async function runSearch() {
         topK: topK.value,
         retrievalMode: retrievalMode.value,
         useReranker: rerank.value,
+        filters: selectedAssetId.value === "all" ? {} : { assetIds: [selectedAssetId.value] },
+        candidateK: candidateK.value,
+        fusionMethod: fusionMethod.value,
+        vectorWeight: vectorWeight.value,
+        keywordWeight: 1 - vectorWeight.value,
+        rerankTopK: Math.max(topK.value, Math.min(candidateK.value, 20)),
       },
     );
     retrievalResults.value = response.items.map(mapResult);
+    retrievalTrace.value = response.searchTrace || null;
+    rewrittenQueries.value = response.rewrittenQueries || [];
     notify(
       retrievalResults.value.length
         ? `检索完成，返回 ${retrievalResults.value.length} 条结果`
@@ -191,18 +260,25 @@ function returnToEvaluation() {
 }
 
 function openParameters() {
-  parameterMode.value = retrievalMode.value;
   parameterTopK.value = topK.value;
+  parameterCandidateK.value = candidateK.value;
+  parameterFusionMethod.value = fusionMethod.value;
+  parameterVectorWeight.value = vectorWeight.value;
   parameterRerank.value = rerank.value;
   parameterOpen.value = true;
 }
 
 function applyParameters() {
-  retrievalMode.value = parameterMode.value;
   topK.value = Math.min(20, Math.max(1, Number(parameterTopK.value) || 1));
+  candidateK.value = Math.min(
+    200,
+    Math.max(topK.value, Math.round(Number(parameterCandidateK.value) || 40)),
+  );
+  fusionMethod.value = parameterFusionMethod.value;
+  vectorWeight.value = Math.min(1, Math.max(0, Number(parameterVectorWeight.value)));
   rerank.value = parameterRerank.value;
   parameterOpen.value = false;
-  notify(`检索参数已更新：${retrievalMode.value} · Top K ${topK.value}`);
+  notify(`检索参数已更新：${retrievalMode.value} · Top K ${topK.value} · 候选 ${candidateK.value}`);
 }
 
 function openEvidence(result: RetrievalResult) {
@@ -235,17 +311,40 @@ function openEvidence(result: RetrievalResult) {
           <p>使用真实业务问题检查检索结果。</p>
         </div>
       </div>
-      <textarea v-model="playgroundQuery" rows="5" />
+      <div class="playground-mode-picker" role="group" aria-label="检索方式">
+        <button
+          v-for="mode in retrievalModes"
+          :key="mode.value"
+          type="button"
+          :class="{ active: retrievalMode === mode.value }"
+          :aria-pressed="retrievalMode === mode.value"
+          @click="retrievalMode = mode.value"
+        >
+          {{ mode.label }}
+        </button>
+      </div>
+      <p class="playground-mode-description">{{ selectedMode.description }}</p>
+      <label class="playground-source-filter" for="playground-source">
+        <span>资料范围</span>
+        <select id="playground-source" v-model="selectedAssetId">
+          <option value="all">全部已索引资料（{{ indexedAssets.length }}）</option>
+          <option v-for="asset in indexedAssets" :key="asset.id" :value="asset.id">
+            {{ asset.name }} · {{ asset.chunks }} 段
+          </option>
+        </select>
+      </label>
+      <textarea
+        v-model="playgroundQuery"
+        rows="5"
+        placeholder="输入完整问题；也可选定某份资料，检查其中是否包含对应证据。"
+      />
       <div class="playground-config-summary">
         <div>
           <span>当前检索参数</span>
-          <strong
-            >{{ retrievalMode }} · Top K {{ topK }} · Rerank
-            {{ rerank ? "已启用" : "未启用" }}</strong
-          >
+          <strong>{{ retrievalMode }} · Top K {{ topK }} · 候选 {{ candidateK }} · 重排 {{ rerank ? "开" : "关" }}</strong>
         </div>
         <button class="text-button" type="button" @click="openParameters">
-          调整参数 <SlidersHorizontal :size="14" />
+          更多参数 <SlidersHorizontal :size="14" />
         </button>
       </div>
       <button class="button button-primary" type="button" :disabled="isSearching || !playgroundQuery.trim()" @click="runSearch">
@@ -276,7 +375,20 @@ function openEvidence(result: RetrievalResult) {
       <div class="panel-heading">
         <div>
           <h2>召回结果</h2>
-          <p>{{ retrievalResults.length }} 条结果 · {{ retrievalMode }}</p>
+          <p>{{ retrievalResults.length }} 条 · {{ selectedAssetName }}</p>
+        </div>
+      </div>
+      <div v-if="retrievalTrace" class="playground-search-trace">
+        <div class="trace-heading">
+          <strong>实际检索：{{ modeLabel(retrievalTrace.effectiveMode) }}</strong>
+          <span>{{ (retrievalTrace.effectiveChannels || []).join(" + ") || modeLabel(retrievalTrace.effectiveMode) }}</span>
+        </div>
+        <p v-if="retrievalTrace.fallbackReason" class="trace-warning">
+          当前没有可用的语义向量模型，本次已回退到关键词检索，避免随机向量带入无关内容。
+        </p>
+        <div v-if="rewrittenQueries.length" class="rewritten-queries">
+          <span>检索扩展</span>
+          <code v-for="query in rewrittenQueries" :key="query">{{ query }}</code>
         </div>
       </div>
       <article
@@ -289,7 +401,7 @@ function openEvidence(result: RetrievalResult) {
         <div class="retrieval-card-top">
           <span class="rank-number">0{{ result.rank }}</span
           ><span class="status-badge status-indexed"
-            ><i />{{ result.score }}</span
+            ><i />相关度 {{ result.score }}</span
           >
         </div>
         <h3>{{ result.title }}</h3>
@@ -380,26 +492,6 @@ function openEvidence(result: RetrievalResult) {
         </DialogHeader>
         <div class="playground-parameter-form">
           <div class="parameter-field">
-            <label for="playground-mode">检索模式</label>
-            <Select v-model="parameterMode">
-              <SelectTrigger id="playground-mode" aria-label="选择检索模式">
-                <SelectValue placeholder="选择模式" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem
-                  v-for="mode in retrievalModes"
-                  :key="mode.value"
-                  :value="mode.value"
-                >
-                  {{ mode.label }}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-            <small
-              >Hybrid 综合语义与关键词召回，Vector 更偏向语义相似度。</small
-            >
-          </div>
-          <div class="parameter-field">
             <label for="playground-top-k">Top K</label>
             <input
               id="playground-top-k"
@@ -410,10 +502,47 @@ function openEvidence(result: RetrievalResult) {
             />
             <small>控制返回的候选证据数量，范围为 1–20。</small>
           </div>
+          <div class="parameter-field">
+            <label for="playground-candidate-k">候选数量</label>
+            <input
+              id="playground-candidate-k"
+              v-model.number="parameterCandidateK"
+              type="number"
+              min="1"
+              max="200"
+            />
+            <small>先从索引召回候选，再选出 Top K；候选数不能小于 Top K。</small>
+          </div>
+          <div class="parameter-field">
+            <label for="playground-fusion">混合排序方式</label>
+            <Select v-model="parameterFusionMethod">
+              <SelectTrigger id="playground-fusion" aria-label="选择混合排序方式">
+                <SelectValue placeholder="选择排序方式" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem
+                  v-for="method in fusionMethods"
+                  :key="method.value"
+                  :value="method.value"
+                >
+                  {{ method.label }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <small>仅混合检索会使用融合排序；关键词/向量模式按各自分数排序。</small>
+          </div>
+          <label v-if="parameterFusionMethod === 'WEIGHTED_RRF' && retrievalMode === 'HYBRID'" class="parameter-weight">
+            <span>
+              <strong>语义权重 {{ Math.round(parameterVectorWeight * 100) }}%</strong>
+              <small>关键词权重 {{ Math.round((1 - parameterVectorWeight) * 100) }}%</small>
+            </span>
+            <input v-model.number="parameterVectorWeight" type="range" min="0" max="1" step="0.05" />
+            <b>{{ Math.round(parameterVectorWeight * 100) }}%</b>
+          </label>
           <label class="parameter-switch" for="playground-rerank">
             <span>
-              <strong>启用 Rerank</strong>
-              <small>对初步召回结果进行二次排序。</small>
+              <strong>启用相关性重排</strong>
+              <small>按问题与证据词组重排，并过滤明显无关片段，建议保持开启。</small>
             </span>
             <input
               id="playground-rerank"
@@ -442,7 +571,7 @@ function openEvidence(result: RetrievalResult) {
 <style scoped>
 .playground-layout {
   display: grid;
-  grid-template-columns: 17.8125rem minmax(0, 1fr);
+  grid-template-columns: minmax(17rem, 0.42fr) minmax(0, 1fr);
   gap: 1.25rem;
   align-items: start;
 }
@@ -661,6 +790,34 @@ function openEvidence(result: RetrievalResult) {
   height: 1rem;
   accent-color: var(--teal);
 }
+.parameter-weight {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.8125rem;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.5rem;
+  background: var(--surface-soft);
+}
+.parameter-weight span {
+  display: grid;
+  gap: 0.25rem;
+}
+.parameter-weight strong,
+.parameter-weight b {
+  color: var(--workspace-text);
+  font-size: 0.75rem;
+}
+.parameter-weight small {
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+}
+.parameter-weight input {
+  grid-column: 1 / -1;
+  width: 100%;
+  accent-color: var(--teal);
+}
 .playground-results {
   min-width: 0;
 }
@@ -687,6 +844,106 @@ function openEvidence(result: RetrievalResult) {
 }
 .playground-query > .panel-heading {
   padding: 0 0 1rem;
+}
+.playground-mode-picker {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.625rem;
+  background: var(--surface-soft);
+}
+.playground-mode-picker button {
+  min-width: 0;
+  min-height: 2.125rem;
+  border: 0;
+  border-radius: 0.4375rem;
+  background: transparent;
+  color: var(--workspace-muted);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.playground-mode-picker button.active {
+  background: var(--surface-raised);
+  color: var(--teal-dark);
+  box-shadow: 0 0.0625rem 0.25rem rgba(0, 0, 0, 0.12);
+  font-weight: 700;
+}
+.playground-mode-picker button:focus-visible,
+.playground-source-filter select:focus-visible {
+  outline: 0.125rem solid color-mix(in oklab, var(--teal) 65%, transparent);
+  outline-offset: 0.125rem;
+}
+.playground-mode-description {
+  min-height: 2.5rem;
+  margin: 0.5rem 0 0.875rem;
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+.playground-source-filter {
+  display: grid;
+  gap: 0.375rem;
+  margin-bottom: 0.75rem;
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+}
+.playground-source-filter select {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.25rem;
+  padding: 0.4375rem 0.5625rem;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.5rem;
+  background: var(--surface-raised);
+  color: var(--workspace-text);
+  font: inherit;
+}
+.playground-search-trace {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.75rem 0.875rem 1rem;
+  padding: 0.75rem 0.875rem;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.625rem;
+  background: var(--surface-soft);
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+}
+.trace-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.375rem 0.75rem;
+}
+.trace-heading strong {
+  color: var(--workspace-text);
+}
+.trace-warning {
+  margin: 0;
+  color: #d7a567;
+  line-height: 1.5;
+}
+.rewritten-queries {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+.rewritten-queries > span {
+  padding-top: 0.1875rem;
+}
+.rewritten-queries code {
+  max-width: 100%;
+  padding: 0.1875rem 0.4375rem;
+  overflow-wrap: anywhere;
+  border: 0.0625rem solid var(--workspace-border);
+  border-radius: 0.375rem;
+  color: var(--workspace-text);
+  font: inherit;
 }
 .playground-controls {
   display: grid;
@@ -737,7 +994,7 @@ function openEvidence(result: RetrievalResult) {
 }
 .retrieval-results {
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 .retrieval-results > .panel-heading {
   padding-bottom: 0.875rem;
@@ -785,8 +1042,13 @@ function openEvidence(result: RetrievalResult) {
   gap: 0.3125rem;
 }
 .retrieval-card p {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
   line-height: 1.7;
   margin: 0.6875rem 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
 }
 .retrieval-card .text-button {
   font-size: 0.75rem;
@@ -1000,6 +1262,10 @@ function openEvidence(result: RetrievalResult) {
 @media (max-width: 47.5rem) {
   .playground-layout {
     grid-template-columns: 1fr;
+  }
+
+  .playground-mode-description {
+    min-height: 0;
   }
 
   .playground-config-summary {

@@ -8,9 +8,13 @@ import { useWorkspace } from "@/composables/useWorkspace";
 
 const { mobileOpen } = useWorkspace();
 const narrowScreen = useMediaQuery("(max-width: 760px)");
-watch(narrowScreen, (narrow) => {
-  if (narrow) mobileOpen.value = false;
-}, { immediate: true });
+watch(
+  narrowScreen,
+  (narrow) => {
+    if (narrow) mobileOpen.value = false;
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -112,6 +116,12 @@ watch(narrowScreen, (narrow) => {
     height: 100dvh;
     display: flex;
     overflow: hidden;
+  }
+
+  .sidebar-slot {
+    flex-basis: 0;
+    width: 0;
+    transition: none;
   }
 
   .app-content {
@@ -662,6 +672,12 @@ watch(narrowScreen, (narrow) => {
 
 /* The viewport belongs to the shell. Every page-level child owns its own
    overflow so a long table or reader cannot move the navigation with it. */
+html:has(.app-shell),
+body:has(.app-shell) {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 .app-shell,
 .app-content,
 .page-content {
@@ -761,6 +777,42 @@ watch(narrowScreen, (narrow) => {
   overflow: visible;
 }
 
+/* Long reports, run history, and action boards should grow to their content.
+   Keep the workspace shell fixed while the page content itself scrolls. */
+.app-shell .page-content:has(> .report-metrics),
+.app-shell .page-content:has(> .queue-summary),
+.app-shell .page-content:has(> .action-summary) {
+  overflow-y: auto;
+}
+
+.app-shell .page-content:has(> .report-metrics) > *,
+.app-shell .page-content:has(> .queue-summary) > *,
+.app-shell .page-content:has(> .action-summary) > * {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.app-shell .page-content:has(> .report-metrics) .reports-layout,
+.app-shell .page-content:has(> .report-metrics) .report-reader,
+.app-shell .page-content:has(> .report-metrics) .reports-list-panel .full-list {
+  overflow: visible;
+}
+
+.app-shell .page-content:has(> .queue-summary) .queue-panel {
+  overflow: visible;
+}
+
+.app-shell .page-content:has(> .queue-summary) .queue-table-wrap {
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.app-shell .page-content:has(> .action-summary) .action-board,
+.app-shell .page-content:has(> .action-summary) .action-card-list {
+  overflow: visible;
+}
+
 .page-content > .agent-workspace,
 .page-content > .agent-page,
 .page-content > .asset-table-panel,
@@ -845,6 +897,23 @@ watch(narrowScreen, (narrow) => {
 
 .app-shell .page-content:has(> .knowledge-health-grid) > * {
   flex: 0 0 auto;
+  overflow: visible;
+}
+
+/* Playground 由结果数量决定自然高度；不要将查询区和结果区压进固定视口，
+   也不要让两个 panel 各自建立滚动容器。 */
+.app-shell .page-content:has(> .playground-layout) {
+  overflow-y: auto;
+}
+
+.app-shell .page-content:has(> .playground-layout) > * {
+  flex: 0 0 auto;
+  min-height: auto;
+  overflow: visible;
+}
+
+.app-shell .page-content:has(> .playground-layout) .playground-layout > .panel {
+  min-height: auto;
   overflow: visible;
 }
 

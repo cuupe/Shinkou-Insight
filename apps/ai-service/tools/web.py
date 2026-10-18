@@ -54,7 +54,9 @@ def _relevant_candidates(
         )
         for index, (title, url, description) in enumerate(candidates)
     ]
-    return [candidates[int(item.id)] for item in rank_web_evidence(query, rows, top_k)]
+    # Preserve provider-ranked candidates. Semantic relevance is assessed after
+    # reading the source, not inferred from literal query-word overlap.
+    return candidates[:top_k]
 
 
 def _source_terms(value: object) -> set[str]:

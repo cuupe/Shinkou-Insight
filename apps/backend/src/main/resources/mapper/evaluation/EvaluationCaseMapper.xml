@@ -2,7 +2,12 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.cuupe.backend.modules.evaluation.mapper.EvaluationCaseMapper">
     <sql id="columns">
-        e.id,e.workspace_id,e.project_id,e.query,e.expected_answer,e.recall,e.citation,e.json_score,e.status,e.updated_at
+        e.id,e.workspace_id,e.project_id,e.query,e.expected_answer,e.expected_asset,
+        e.expected_chunk_ids::text AS expected_chunk_ids,
+        e.required_facts::text AS required_facts,
+        e.forbidden_facts::text AS forbidden_facts,
+        e.evaluation_result::text AS evaluation_result,
+        e.evaluated_at,e.recall,e.citation,e.json_score,e.status,e.updated_at
     </sql>
     <select id="findByWorkspace" resultType="com.cuupe.backend.modules.evaluation.entity.EvaluationCase">
         SELECT <include refid="columns"/>
@@ -26,8 +31,41 @@
               WHERE wm.workspace_id=e.workspace_id AND wm.user_id=#{userId} AND wm.status='ACTIVE'
           )
     </update>
+    <update id="updateDefinition">
+        UPDATE evaluation_cases
+        SET project_id=#{projectId},query=#{query},expected_answer=#{expectedAnswer},
+            expected_asset=#{expectedAsset},
+            expected_chunk_ids=CAST(#{expectedChunkIds} AS jsonb),
+            required_facts=CAST(#{requiredFacts} AS jsonb),
+            forbidden_facts=CAST(#{forbiddenFacts} AS jsonb),
+            recall=NULL,citation=NULL,json_score=NULL,status='REVIEW',
+            evaluation_result=NULL,evaluated_at=NULL,updated_at=CURRENT_TIMESTAMP
+        WHERE workspace_id=#{workspaceId} AND id=#{id}
+          AND EXISTS (
+              SELECT 1 FROM workspace_members wm
+              WHERE wm.workspace_id=evaluation_cases.workspace_id
+                AND wm.user_id=#{createdBy} AND wm.status='ACTIVE'
+          )
+    </update>
+    <update id="saveEvaluationResult">
+        UPDATE evaluation_cases e
+        SET recall=#{recall},citation=NULL,json_score=NULL,status=#{status},
+            evaluation_result=CAST(#{result} AS jsonb),
+            evaluated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+        WHERE e.workspace_id=#{workspaceId} AND e.id=#{id}
+          AND EXISTS (
+              SELECT 1 FROM workspace_members wm
+              WHERE wm.workspace_id=e.workspace_id AND wm.user_id=#{userId} AND wm.status='ACTIVE'
+          )
+    </update>
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO evaluation_cases(workspace_id,project_id,query,expected_answer,status,created_by)
-        VALUES(#{workspaceId},#{projectId},#{query},#{expectedAnswer},'REVIEW',#{createdBy})
+        INSERT INTO evaluation_cases(
+            workspace_id,project_id,query,expected_answer,expected_asset,
+            expected_chunk_ids,required_facts,forbidden_facts,status,created_by
+        ) VALUES (
+            #{workspaceId},#{projectId},#{query},#{expectedAnswer},#{expectedAsset},
+            CAST(#{expectedChunkIds} AS jsonb),CAST(#{requiredFacts} AS jsonb),
+            CAST(#{forbiddenFacts} AS jsonb),'REVIEW',#{createdBy}
+        )
     </insert>
 </mapper>

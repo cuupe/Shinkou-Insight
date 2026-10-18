@@ -1,0 +1,145 @@
+{
+  "package": "Shinkou Insight 完整流程测试包",
+  "version": "2026-10-16",
+  "synthetic": true,
+  "validation": {
+    "arithmetic": "passed",
+    "knowledge_parser": "6 Markdown files passed",
+    "retrieval_literal_targets": "8 cases passed",
+    "workbook_formula_and_export": "passed",
+    "workbook_visual_review": "passed",
+    "manual_system_acceptance": "not_performed"
+  },
+  "files": [
+    {
+      "path": "01-项目与测试指令.md",
+      "bytes": 4076,
+      "sha256": "51bb01948aba61665098438d20c1e681ce5b0c27b71c1b3203af55d431dab637"
+    },
+    {
+      "path": "02-逐步验收.md",
+      "bytes": 8403,
+      "sha256": "bd136d874451e5e23bb2645ac0b87b94917abd0f9dc0429274205e8fd2869a51"
+    },
+    {
+      "path": "03-标准答案与判定.md",
+      "bytes": 6442,
+      "sha256": "32aa2b4c6875a046d2de341135fb84beb45fbbc647837425f28a66d3c7db2d9c"
+    },
+    {
+      "path": "04-反馈模板.md",
+      "bytes": 992,
+      "sha256": "524a01edebf4cc271b6121bd22c3b6cd42c17026920ba22b7cad5786ddfe0b6a"
+    },
+    {
+      "path": "acceptance-cases.json",
+      "bytes": 11704,
+      "sha256": "d1c786c6094f75ca31242d4b1e3483471746128e445c654233085010200c8f56"
+    },
+    {
+      "path": "expected-results.json",
+      "bytes": 844,
+      "sha256": "a12d4799212361ffba64ac17cc55a1a0c2db0dfeb9bbb9922981b4d928536171"
+    },
+    {
+      "path": "isolation/project-b/另项目专属资料.txt",
+      "bytes": 232,
+      "sha256": "545d7d3754b68d60b57802e3da0ee958f3224eafe980f01a6040683438572865"
+    },
+    {
+      "path": "isolation/workspace-b/另工作区专属资料.txt",
+      "bytes": 242,
+      "sha256": "cdf40efd1692c7cedb1d928a900275a298b35108c172565c1c358b07f1724748"
+    },
+    {
+      "path": "knowledge-base/01-项目背景与范围.md",
+      "bytes": 1888,
+      "sha256": "1e693f624793a539908812e6d37fd8d5c303d0f205a2b7f35af0d919ca0438de"
+    },
+    {
+      "path": "knowledge-base/02-验收指标与统计口径.md",
+      "bytes": 1662,
+      "sha256": "d3c9b6fb84f8b6a84798964c49edcdd890edf089e8202ecacd04aa2effd713db"
+    },
+    {
+      "path": "knowledge-base/03-试点测量结果.md",
+      "bytes": 1924,
+      "sha256": "f17f44f71e56e04b64018a7660db8ae3df73a2f844f1edb0030cab17784844c7"
+    },
+    {
+      "path": "knowledge-base/04-预算与成本明细.md",
+      "bytes": 1219,
+      "sha256": "056b2eb0c9067676cb2146bd2a517914d6fabd43774c12a8efe7b963978e6f1c"
+    },
+    {
+      "path": "knowledge-base/05-数据权限与推广条件.md",
+      "bytes": 1481,
+      "sha256": "2b59f7dfbc645de1fe81a20569b8a98870761e87aaee9cf8e14092d7896a635f"
+    },
+    {
+      "path": "knowledge-base/06-风险与后续行动.md",
+      "bytes": 1345,
+      "sha256": "a92f906d92ccd4fec21431458a24797f874a1e8c7851d722f2087d7bcf2bd586"
+    },
+    {
+      "path": "negative/01-旧版成本草案.md",
+      "bytes": 425,
+      "sha256": "37d4a45dc9283bf7f7b0e2362e7e64b19215a13d11bca1fde59e45937b2622b2"
+    },
+    {
+      "path": "negative/02-现行成本冲突.md",
+      "bytes": 765,
+      "sha256": "c682829fabc0d1d16049371c7e48224338dd59f8771af5ce450e553fd9defb57"
+    },
+    {
+      "path": "negative/03-文档内指令注入.txt",
+      "bytes": 459,
+      "sha256": "9aa763563071e3f1ec77c21e83fcc0c855cab0eda6d83672865a49d02a522908"
+    },
+    {
+      "path": "negative/04-空文档.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "outputs/01a13a11-429b-7f62-9a82-79cc007901a7/端到端验收记录.xlsx",
+      "bytes": 9488,
+      "sha256": "f461db168c3663453e2856aa555434057074888b4f08f4283f6f99eaa4e14e13"
+    },
+    {
+      "path": "project-setup.json",
+      "bytes": 1250,
+      "sha256": "8689e3e314f22184c16cb940697d9d701e62232103fe45c0aa4ae312917adb34"
+    },
+    {
+      "path": "questions/dialogue-cases.json",
+      "bytes": 7665,
+      "sha256": "8c4d3c32910674e79e38a2fcfd897eddb77690d38c590d19324b974390ee0707"
+    },
+    {
+      "path": "questions/retrieval-cases.json",
+      "bytes": 2950,
+      "sha256": "3326af0fb837df2d262954d1350cab722d7f3611baa9abd32b821b68685872e0"
+    },
+    {
+      "path": "raw-data/cost-items.json",
+      "bytes": 443,
+      "sha256": "8a5f242fdb2cbdd51d2c9f947e0249049257335cfa4109fab3c965e70a22e494"
+    },
+    {
+      "path": "raw-data/measurement-300.json",
+      "bytes": 65853,
+      "sha256": "ddf2f099f04ca157e986217be4f9b29bff897409de6720a02f35be5e2ab9cb9c"
+    },
+    {
+      "path": "raw-data/weekly-users-20.json",
+      "bytes": 3598,
+      "sha256": "a55745fb052f8bb56257242cf335f1f6cedcf899b2376079c2a5e6a416460fa7"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2956,
+      "sha256": "da1adb11429685bf8ad28333ec73f60885689579380f2a2ff01a8dae37064489"
+    }
+  ]
+}

@@ -1,0 +1,99 @@
+[
+  {
+    "id": "R01",
+    "query": "星桥试点的项目代号、负责人和参与人数分别是什么？",
+    "expectedAsset": "01-项目背景与范围.md",
+    "requiredFacts": [
+      "XQ-PILOT-2026",
+      "王思宁",
+      "20"
+    ],
+    "forbiddenFacts": [],
+    "expectedAnswer": "XQ-PILOT-2026；王思宁；20人（客服12、售前8）。",
+    "expectedChunkIds": []
+  },
+  {
+    "id": "R02",
+    "query": "星桥试点的准确率门槛和严重错误率分母是什么？",
+    "expectedAsset": "02-验收指标与统计口径.md",
+    "requiredFacts": [
+      "90%",
+      "全部测试问题数"
+    ],
+    "forbiddenFacts": [],
+    "expectedAnswer": "准确率不低于90%；严重错误率分母是全部测试问题数。",
+    "expectedChunkIds": []
+  },
+  {
+    "id": "R03",
+    "query": "星桥300条问题中正确回答和严重错误分别有多少条？",
+    "expectedAsset": "03-试点测量结果.md",
+    "requiredFacts": [
+      "276",
+      "严重错误为 3"
+    ],
+    "forbiddenFacts": [],
+    "expectedAnswer": "正确276条，严重错误3条；不能把24条错误回答当分母。",
+    "expectedChunkIds": []
+  },
+  {
+    "id": "R04",
+    "query": "星桥人工和助手平均检索耗时各是多少？",
+    "expectedAsset": "03-试点测量结果.md",
+    "requiredFacts": [
+      "120 秒",
+      "66 秒"
+    ],
+    "forbiddenFacts": [],
+    "expectedAnswer": "人工120秒，助手66秒，仅指定位资料耗时。",
+    "expectedChunkIds": []
+  },
+  {
+    "id": "R05",
+    "query": "星桥六周含税全量成本与预算上限是多少？",
+    "expectedAsset": "04-预算与成本明细.md",
+    "requiredFacts": [
+      "139000",
+      "150000"
+    ],
+    "forbiddenFacts": [],
+    "expectedAnswer": "成本139000元，上限150000元，已经覆盖20人六周。",
+    "expectedChunkIds": []
+  },
+  {
+    "id": "R06",
+    "query": "星桥试点观察周有多少名活跃用户？",
+    "expectedAsset": "03-试点测量结果.md",
+    "requiredFacts": [
+      "15 人",
+      "20 名"
+    ],
+    "forbiddenFacts": [],
+    "expectedAnswer": "15/20人，观察周2026-10-05至2026-10-11。",
+    "expectedChunkIds": []
+  },
+  {
+    "id": "R07",
+    "query": "星桥为什么现在不能批准正式推广或对外上线？",
+    "expectedAsset": "05-数据权限与推广条件.md",
+    "requiredFacts": [
+      "权限撤销",
+      "尚未关闭"
+    ],
+    "forbiddenFacts": [],
+    "expectedAnswer": "推广前置条件未关闭，只能继续受限内部验证。",
+    "expectedChunkIds": []
+  },
+  {
+    "id": "R08",
+    "query": "星桥权限撤销传播回归由哪个角色负责，何时截止？",
+    "expectedAsset": "06-风险与后续行动.md",
+    "requiredFacts": [
+      "林澈",
+      "2026-10-20"
+    ],
+    "forbiddenFacts": [],
+    "expectedAnswer": "A01；林澈/IT；2026-10-20；验收移出后拒绝检索和资料详情。",
+    "expectedChunkIds": []
+  }
+]

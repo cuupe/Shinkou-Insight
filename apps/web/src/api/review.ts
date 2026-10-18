@@ -39,10 +39,39 @@ export const reviewApi = {
       ),
     ),
 
-  run: (workspaceId: number | string, projectId: number) =>
+  history: (workspaceId: number | string, projectId: number) =>
+    unwrap<ProjectReviewRun[]>(
+      anet.get<ApiResponse<ProjectReviewRun[]>>(
+        `${projectPath(workspaceId, projectId)}/review/runs`,
+      ),
+    ),
+
+  decide: (
+    workspaceId: number | string,
+    projectId: number,
+    id: number | string,
+    payload: {
+      decision: "APPROVED" | "CHANGES_REQUESTED";
+      comment: string;
+      confirmations: string[];
+    },
+  ) =>
+    unwrap<ProjectReviewRun>(
+      anet.post<ApiResponse<ProjectReviewRun>>(
+        `${projectPath(workspaceId, projectId)}/review/runs/${id}/decision`,
+        payload,
+      ),
+    ),
+
+  run: (
+    workspaceId: number | string,
+    projectId: number,
+    reportId?: number | string,
+  ) =>
     unwrap<ProjectReviewRun>(
       anet.post<ApiResponse<ProjectReviewRun>>(
         `${projectPath(workspaceId, projectId)}/review/runs`,
+        { reportId },
       ),
     ),
 };

@@ -9,13 +9,14 @@ from typing import Any, Protocol, TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from core.clock import with_time_context
+
 from models.schemas import (
     ModelChatResult,
     ModelGenerationConfig,
     TokenUsage,
 )
-from prompts.search_prompts import MODEL_GRAPH_HINTS, MODEL_SOURCE_HINTS
-from models.output_guard import GenerationGuard, FinalChannelFilter
+from models.output_guard import GenerationGuard, FinalChannelFilter, final_content
 
 T = TypeVar(
     "T",
@@ -29,10 +30,35 @@ _SILICONFLOW_THINKING_BUDGETS = {
 }
 
 
+@dataclass(frozen=True)
+class ModelLatencyPolicy:
+    first_response_seconds: float = 25
+    idle_seconds: float = 20
+    recovery_attempts: int = 1
+    completion_grace_seconds: float = 0
+
+
+def structured_output_instruction(schema: type[BaseModel]) -> dict[str, str]:
+    """Share the exact protocol schema between transport and prompt budgeting."""
+    def compact(value):
+        if isinstance(value, dict):
+            return {key: ({name: compact(field) for name, field in item.items()}
+                          if key in {"properties", "$defs", "definitions"} else compact(item))
+                    for key, item in value.items() if key not in {"title", "default"}}
+        if isinstance(value, list):
+            return [compact(item) for item in value]
+        return value
+    schema_json = json.dumps(compact(schema.model_json_schema()), ensure_ascii=False, separators=(",", ":"))
+    return {"role": "system", "content":
+        "你必须只返回一个合法 JSON 对象。不要返回 Markdown。不要返回 ```json 代码块。"
+        "不要添加任何解释文字。返回结果必须满足以下 JSON Schema：\n" + schema_json}
+
+
 def _siliconflow_thinking_options(
     effort: str,
     extra_body: dict[str, Any],
     kwargs: dict[str, Any],
+    budget_override: int | None = None,
 ) -> None:
     """Translate the UI's three thinking levels into provider controls.
 
@@ -41,7 +67,7 @@ def _siliconflow_thinking_options(
     """
 
     extra_body["enable_thinking"] = effort != "none"
-    budget = _SILICONFLOW_THINKING_BUDGETS.get(effort)
+    budget = budget_override if effort != "none" and budget_override is not None else _SILICONFLOW_THINKING_BUDGETS.get(effort)
     if budget is not None:
         extra_body["thinking_budget"] = budget
     else:
@@ -67,7 +93,7 @@ def _normalize_provider_messages(
 
     system_messages: list[dict[str, Any]] = []
     conversation_messages: list[dict[str, Any]] = []
-    for raw_message in messages:
+    for raw_message in with_time_context(messages):
         message = dict(raw_message)
         role = str(message.get("role", "user")).strip().casefold()
         if role == "system":
@@ -163,6 +189,34 @@ class ModelResponseError(ModelGatewayError):
     """
 
     pass
+
+
+class ModelProtocolError(ModelResponseError):
+    """A complete structured response failed JSON or schema validation."""
+
+    def __init__(self, message: str, *, detail: str):
+        super().__init__(message)
+        self.protocol_detail = detail
+
+
+class ModelOutputLimitError(ModelResponseError):
+    """The provider explicitly ended generation at its output token limit."""
+
+
+class ModelStreamInterruptedError(ModelResponseError):
+    """The response ended without a completion boundary."""
+
+
+def _validation_detail(error: ValidationError, schema_name: str) -> str:
+    details = []
+    for item in error.errors():
+        if item["type"] == "audit_clarification_question_missing":
+            details.append("clarification_question: 澄清动作需要具体问题或未确认条件")
+        else:
+            path = ".".join(map(str, item["loc"])) or schema_name
+            details.append(path + ": " + item["type"])
+    # Do not expose ctx, input values or arbitrary validator exception text.
+    return "；".join(details)[:1200]
 
 
 def _timeout_message(error: httpx.TimeoutException, timeout_seconds: float) -> str:
@@ -436,13 +490,13 @@ class LangChainModelGateway:
             kwargs["http_async_client"] = client
         self._chat_model = ChatOpenAI(**kwargs)
 
-    def with_generation(self, generation: ModelGenerationConfig) -> "LangChainModelGateway":
+    def with_generation(self, generation: ModelGenerationConfig, *, timeout_seconds: float | None = None) -> "LangChainModelGateway":
         return LangChainModelGateway(
             base_url=self.base_url,
             api_key=self.api_key,
             model=self.model,
             provider=self.provider,
-            timeout_seconds=self.timeout_seconds,
+            timeout_seconds=self.timeout_seconds if timeout_seconds is None else timeout_seconds,
             max_retries=self.max_retries,
             client=self.client,
             structured_output_method=self.structured_output_method,
@@ -511,17 +565,21 @@ class LangChainModelGateway:
             raise _translate_langchain_error(exc) from exc
 
         if not isinstance(response, dict):
-            raise ModelResponseError("LangChain structured output returned an unexpected value")
+            raise ModelProtocolError("LangChain structured output returned an unexpected value", detail="结构化响应不是对象")
         parsing_error = response.get("parsing_error")
         if parsing_error:
-            raise ModelResponseError(f"LLM structured output could not be parsed: {parsing_error}")
+            raw = response.get("raw")
+            metadata = getattr(raw, "response_metadata", {}) or {}
+            if metadata.get("finish_reason") == "length":
+                raise ModelOutputLimitError("模型达到输出上限，结构化响应未完成")
+            raise ModelProtocolError("LLM structured output could not be parsed", detail="结构化响应未通过协议解析")
         parsed = response.get("parsed")
         if parsed is None:
-            raise ModelResponseError("LLM structured output is empty")
+            raise ModelProtocolError("LLM structured output is empty", detail="结构化响应为空")
         try:
             value = parsed if isinstance(parsed, schema) else schema.model_validate(parsed)
         except Exception as exc:
-            raise ModelResponseError(f"LLM structured output does not match {schema.__name__}") from exc
+            raise ModelProtocolError(f"LLM structured output does not match {schema.__name__}", detail="结构化字段未通过校验") from exc
 
         raw = response.get("raw")
         if raw is None:
@@ -556,7 +614,7 @@ class LangChainModelGateway:
         extra_body = dict(generation.extra_body)
         if self.provider in {"siliconflow", "silicon flow", "硅基流动"}:
             effort = generation.reasoning_effort or "none"
-            _siliconflow_thinking_options(effort, extra_body, kwargs)
+            _siliconflow_thinking_options(effort, extra_body, kwargs, generation.thinking_budget)
         elif generation.reasoning_effort and generation.reasoning_effort != "none":
             kwargs["reasoning_effort"] = generation.reasoning_effort
         if generation.top_k is not None:
@@ -764,6 +822,7 @@ class HttpModelGateway:
         timeout_seconds: float = 60,
         max_retries: int = 2,
         generation: ModelGenerationConfig | None = None,
+        latency_policy: ModelLatencyPolicy | None = None,
     ):
         if not base_url:
             raise ValueError("runtime model base URL is required")
@@ -782,17 +841,25 @@ class HttpModelGateway:
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.generation = generation or ModelGenerationConfig()
+        self.latency_policy = latency_policy
 
-    def with_generation(self, generation: ModelGenerationConfig) -> "HttpModelGateway":
+    @property
+    def request_budget_seconds(self) -> float:
+        grace = self.latency_policy.completion_grace_seconds if self.latency_policy else 0
+        return self.timeout_seconds + max(0, grace)
+
+    def with_generation(self, generation: ModelGenerationConfig, *, timeout_seconds: float | None = None,
+                        latency_policy: ModelLatencyPolicy | None = None) -> "HttpModelGateway":
         return HttpModelGateway(
             client=self.client,
             base_url=self.base_url,
             api_key=self.api_key,
             model=self.model,
             provider=self.provider,
-            timeout_seconds=self.timeout_seconds,
+            timeout_seconds=self.timeout_seconds if timeout_seconds is None else timeout_seconds,
             max_retries=self.max_retries,
             generation=generation,
+            latency_policy=latency_policy or self.latency_policy,
         )
 
     # =====================================================
@@ -872,6 +939,8 @@ class HttpModelGateway:
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str = "auto",
+        structured_output: bool = False,
+        response_format: dict[str, Any] | None = None,
     ) -> AsyncIterator[ModelStreamChunk]:
         """Stream OpenAI-compatible SSE deltas without buffering the answer."""
 
@@ -882,6 +951,8 @@ class HttpModelGateway:
             "Accept": "text/event-stream",
         }
         payload = self._build_payload(messages, temperature=temperature, stream=True)
+        if response_format is not None:
+            payload["response_format"] = response_format
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice
@@ -889,15 +960,29 @@ class HttpModelGateway:
         usage: TokenUsage | None = None
         calls: dict[int, dict[str, Any]] = {}
         final_filter = FinalChannelFilter()
-        content_guard = GenerationGuard()
+        content_guard = GenerationGuard(structured=structured_output)
         reasoning_guard = GenerationGuard(max_chars=128000)
+        self.response_activity = {**getattr(self, "response_activity", {}), "content_chars": 0, "reasoning_chars": 0}
+        structured_body = ""
         finished = False
         try:
             async with self.client.stream("POST", url, headers=headers, json=payload, timeout=self.timeout_seconds) as response:
                 if not 200 <= response.status_code < 300:
                     await response.aread()
                     self._raise_for_status(response)
-                async for line in response.aiter_lines():
+                lines = response.aiter_lines().__aiter__()
+                while True:
+                    try:
+                        # Some compatible providers send finish_reason then
+                        # keep the SSE socket open. Allow usage a short grace,
+                        # never wait an entire model timeout after completion.
+                        line = await asyncio.wait_for(anext(lines), timeout=2.0 if finished else self.timeout_seconds)
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        if finished:
+                            break
+                        raise
                     line = line.strip()
                     if not line or line.startswith(":") or line.startswith("event:"):
                         continue
@@ -914,7 +999,7 @@ class HttpModelGateway:
                         if choice.get("finish_reason") or choice.get("message"):
                             finished = True
                         if choice.get("finish_reason") == "length":
-                            raise ModelResponseError("模型达到输出上限，回答未完成；请缩小问题范围后重试")
+                            raise ModelOutputLimitError("模型达到输出上限，回答未完成；请缩小问题范围后重试")
                         for call in (choice.get("delta") or {}).get("tool_calls") or []:
                             index = call.get("index", 0)
                             if index not in calls and len(calls) >= 8:
@@ -932,20 +1017,35 @@ class HttpModelGateway:
                     delta = self._extract_stream_delta(data)
                     thinking = self._extract_stream_thinking(data)
                     if thinking:
+                        self.response_activity["reasoning_chars"] += len(thinking)
                         reasoning_guard.feed(thinking)
                         yield ModelStreamChunk(delta="", thinking=thinking)
                     if delta:
+                        self.response_activity["content_chars"] += len(delta)
                         content_guard.feed(delta)
                         visible = final_filter.feed(delta)
                         if visible:
+                            if structured_output:
+                                structured_body += visible
+                                if structured_body.rstrip().endswith("}"):
+                                    try:
+                                        if isinstance(json.loads(structured_body), dict):
+                                            # A complete JSON object is an
+                                            # application completion boundary.
+                                            # The caller still validates schema
+                                            # before using any of its fields.
+                                            finished = True
+                                            self.response_activity["json_complete"] = True
+                                    except (ValueError, RecursionError):
+                                        pass
                             yield ModelStreamChunk(delta=visible)
-        except httpx.TimeoutException as exc:
+        except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
             raise ModelTimeoutError(_timeout_message(exc, self.timeout_seconds)) from exc
         except httpx.RequestError as exc:
             detail = str(exc).strip() or repr(exc)
             raise ModelRequestError(f"LLM network request failed at {url}: {detail[:1000]}") from exc
         if not finished:
-            raise ModelResponseError("模型连接提前结束，未收到完成标记；本次回答未完成")
+            raise ModelStreamInterruptedError("模型连接提前结束，未收到完成标记；本次回答未完成")
         remaining = final_filter.feed("", final=True)
         if remaining:
             yield ModelStreamChunk(delta=remaining)
@@ -987,7 +1087,7 @@ class HttpModelGateway:
         if self.provider in {"siliconflow", "silicon flow", "硅基流动"}:
             effort = generation.reasoning_effort or "none"
             options: dict[str, Any] = {}
-            _siliconflow_thinking_options(effort, extra_body, options)
+            _siliconflow_thinking_options(effort, extra_body, options, generation.thinking_budget)
             payload.update(options)
         elif generation.reasoning_effort and generation.reasoning_effort != "none":
             payload["reasoning_effort"] = generation.reasoning_effort
@@ -1044,46 +1144,100 @@ class HttpModelGateway:
         temperature: float | None = None,
     ) -> tuple[T, ModelChatResult]:
 
-        schema_json = json.dumps(
-            schema.model_json_schema(),
-            ensure_ascii=False,
-        )
-
-        structure_instruction = {
-            "role": "system",
-            "content": (
-                "你必须只返回一个合法 JSON 对象。"
-                "不要返回 Markdown。"
-                "不要返回 ```json 代码块。"
-                "不要添加任何解释文字。"
-                "返回结果必须满足以下 JSON Schema：\n"
-                f"{schema_json}"
-            ),
-        }
+        structure_instruction = structured_output_instruction(schema)
+        schema_json = structure_instruction["content"].split("\n", 1)[1]
 
         structured_messages = [
             structure_instruction,
             *messages,
         ]
 
+        # Receive incrementally to detect broken/incomplete streams and repeated
+        # output early. Consumers still receive exactly one validated object;
+        # incomplete JSON is never published as an answer or tool instruction.
         started_at = time.perf_counter()
-        content_parts: list[str] = []
-        usage: TokenUsage | None = None
-        async for chunk in self.stream(structured_messages, temperature=temperature):
-            if chunk.delta:
-                content_parts.append(chunk.delta)
-            if chunk.usage is not None:
-                usage = chunk.usage
-
-        raw_content = "".join(content_parts).strip()
+        parts = []
+        usage = TokenUsage()
+        response_format = None
+        if self.provider in {"siliconflow", "silicon flow", "硅基流动"}:
+            response_format = ({"type": "json_schema", "json_schema": {"name": schema.__name__, "schema": json.loads(schema_json)}}
+                               if getattr(schema, "provider_schema_strict", True) else {"type": "json_object"})
+        policy = self.latency_policy
+        self.response_activity = {"content_chars": 0, "reasoning_chars": 0, "attempt_count": 0}
+        first_response_ms = None
+        recovery_count = 0
+        # Only a stalled request with no content or reasoning may be retried.
+        # One shared deadline covers connection, queue, generation and recovery.
+        # Partial answers are never replayed or joined with another response.
+        request_started = asyncio.get_running_loop().time()
+        self.response_activity["response_budget_seconds"] = self.timeout_seconds
+        try:
+            async with asyncio.timeout_at(request_started + self.timeout_seconds) as deadline:
+                for attempt in range(1 + (min(self.max_retries, policy.recovery_attempts) if policy else 0)):
+                    self.response_activity["attempt_count"] = attempt + 1
+                    iterator = self.stream(structured_messages, temperature=temperature, structured_output=True,
+                                           response_format=response_format).__aiter__()
+                    received = False
+                    try:
+                        while True:
+                            interval = (policy.idle_seconds if received else policy.first_response_seconds) if policy else self.timeout_seconds
+                            try:
+                                chunk = await asyncio.wait_for(anext(iterator), timeout=interval)
+                            except StopAsyncIteration:
+                                break
+                            if chunk.delta or chunk.thinking:
+                                if first_response_ms is None:
+                                    first_response_ms = int((time.perf_counter() - started_at) * 1000)
+                                    self.response_activity["first_response_ms"] = first_response_ms
+                                received = True
+                            if chunk.delta:
+                                parts.append(chunk.delta)
+                                # A slow but active structured response can use
+                                # one fixed grace. Never reset the deadline on
+                                # each chunk or grant it for private reasoning.
+                                if self.request_budget_seconds > self.timeout_seconds and not self.response_activity.get("completion_grace_eligible"):
+                                    deadline.reschedule(request_started + self.request_budget_seconds)
+                                    self.response_activity.update(completion_grace_eligible=True,
+                                        response_budget_seconds=self.request_budget_seconds)
+                            if chunk.usage is not None:
+                                usage = chunk.usage
+                        break
+                    except (asyncio.TimeoutError, ModelTimeoutError):
+                        activity = self.response_activity
+                        partial = received or parts or activity.get("content_chars") or activity.get("reasoning_chars")
+                        recover = policy and not partial and attempt < min(self.max_retries, policy.recovery_attempts)
+                        if not recover:
+                            error = ModelTimeoutError("模型响应中断" if partial else "模型首响应等待超时")
+                            error.timeout_phase = "response_idle" if partial else "first_response"
+                            raise error
+                        recovery_count += 1
+                        self.response_activity["recovery_count"] = recovery_count
+                    finally:
+                        await iterator.aclose()
+        except asyncio.TimeoutError as exc:
+            if self.response_activity.get("json_complete"):
+                # Completion is already bounded by a whole JSON object. A
+                # provider waiting to send usage cannot invalidate that body;
+                # it still has to pass the schema and all downstream checks.
+                usage = TokenUsage()
+            else:
+                error = ModelTimeoutError("模型请求已用完本阶段时间预算")
+                error.timeout_phase = "request_budget"
+                error.response_stats = {"contentChars": self.response_activity.get("content_chars", 0),
+                                        "budgetSeconds": self.response_activity["response_budget_seconds"]}
+                raise error from exc
+        result = ModelChatResult(content="".join(parts), model=self.model, usage=usage,
+                                 latency_ms=int((time.perf_counter() - started_at) * 1000),
+                                 response_stats=dict(firstResponseMs=first_response_ms, recoveryCount=recovery_count,
+                                                     attemptCount=self.response_activity["attempt_count"],
+                                                     responseBudgetSeconds=self.response_activity["response_budget_seconds"],
+                                                     completionGraceUsed=bool(self.response_activity.get("completion_grace_eligible")
+                                                         and time.perf_counter()-started_at > self.timeout_seconds)))
+        raw_content = final_content(result.content).strip()
+        GenerationGuard(structured=True).feed(raw_content)
         if not raw_content:
-            raise ModelResponseError("模型流式结构化响应没有返回 JSON 内容")
-        result = ModelChatResult(
-            content=raw_content,
-            model=self.model,
-            usage=usage or TokenUsage(available=False),
-            latency_ms=int((time.perf_counter() - started_at) * 1000),
-        )
+            raise ModelProtocolError("模型结构化响应没有返回 JSON 内容", detail="JSON 内容为空")
+        result.content = raw_content
 
         cleaned_content = self._clean_json_text(raw_content)
 
@@ -1092,18 +1246,16 @@ class HttpModelGateway:
 
         except json.JSONDecodeError as exc:
 
-            raise ModelResponseError(
-                "Model did not return valid JSON. " f"Raw content: {raw_content[:500]}"
-            ) from exc
+            raise ModelProtocolError("Model did not return valid JSON",
+                detail=f"JSON 格式错误：第 {exc.lineno} 行第 {exc.colno} 列（{exc.msg}）") from exc
 
         try:
             parsed = schema.model_validate(json_data)
 
         except ValidationError as exc:
 
-            raise ModelResponseError(
-                "Model JSON does not match schema. " f"Errors: {exc.errors()}"
-            ) from exc
+            detail = _validation_detail(exc, schema.__name__)
+            raise ModelProtocolError("Model JSON does not match schema", detail=detail) from exc
 
         return (
             parsed,
@@ -1296,10 +1448,14 @@ class MockModelGateway:
         from models.schemas import AgentPlan, EvidenceEvaluation, Finding, PlanItem, ReActAction, ReflectionResult, ReportDraft, ReviewResult
 
         goal = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "研究目标")
-        if schema is PlanItem:
+        if schema.__name__ == "AgentDecision":
+            value: Any = {"resolved_goal": "模拟环境请求", "summary": "当前为模拟模型，未执行真实语义决策", "rationale": "需要配置实际模型后进行知识分析", "action": "clarify", "answer": "当前 AI 服务使用模拟模型。请先配置真实模型再执行知识分析。"}
+        elif schema.__name__ == "AnswerAudit":
+            value = {"approved": False, "summary": "模拟模型不能执行真实证据复核", "issues": ["需要真实模型"]}
+        elif schema is PlanItem:
             value: Any = {"id": "Q1", "question": goal[:500], "source": "BOTH", "rationale": "先核对项目资料，再补充外部信息"}
         elif schema is AgentPlan:
-            first_action = "SEARCH_GRAPH" if any(marker in goal.casefold() for marker in MODEL_GRAPH_HINTS) else "SEARCH_INTERNAL"
+            first_action = "SEARCH_INTERNAL"
             value = {
                 "summary": "先核对项目资料，再整理结论",
                 "steps": [
@@ -1308,11 +1464,7 @@ class MockModelGateway:
                 ],
             }
         elif schema is ReActAction:
-            normalized_goal = goal.casefold()
-            if any(marker in normalized_goal for marker in MODEL_GRAPH_HINTS):
-                action = "SEARCH_GRAPH"
-            else:
-                action = "SEARCH_INTERNAL" if any(marker in normalized_goal for marker in MODEL_SOURCE_HINTS) else "FINAL"
+            action = "FINAL"
             value = {"action": action, "query": goal[:500], "note": "先核对项目实体关系" if action == "SEARCH_GRAPH" else "先核对与问题直接相关的项目资料"}
         elif schema is EvidenceEvaluation:
             has_evidence = "证据数量=0" not in goal and "没有可用证据" not in goal

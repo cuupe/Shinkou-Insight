@@ -18,6 +18,9 @@ class HealthResponse(ApiModel):
     status: Literal["ok"]
     service: str
     mode: str
+    current_date: str
+    current_time: str
+    time_zone: str
 
 
 class AttachmentInput(ApiModel):
@@ -49,6 +52,7 @@ class ModelGenerationConfig(ApiModel):
     seed: int | None = Field(default=None, ge=0, le=2_147_483_647)
     stop: list[str] = Field(default_factory=list, max_length=4)
     reasoning_effort: Literal["none", "low", "medium", "high"] | None = "high"
+    thinking_budget: int | None = Field(default=None, ge=128, le=32768)
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -117,6 +121,7 @@ class ModelChatResult(ApiModel):
     usage: TokenUsage = Field(default_factory=TokenUsage)
     latency_ms: int = 0
     request_id: str | None = None
+    response_stats: dict[str, Any] = Field(default_factory=dict)
 
 
 class LlmChatResponse(ModelChatResult):
@@ -141,6 +146,7 @@ class Evidence(ApiModel):
     rerank_score: float | None = None
     content_kind: Literal["fulltext", "abstract", "search_snippet"] | None = None
     published_at: str | None = None
+    retrieved_at: str | None = None
 
 
 class Finding(ApiModel):
@@ -171,7 +177,8 @@ class ReportDraft(ApiModel):
     sections: list[dict[str, Any]] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
-    evidence_ids: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list, description="Retrieved knowledge/web evidence IDs only, such as E1. User inputs and project fields belong in context_source_ids")
+    context_source_ids: list[str] = Field(default_factory=list, description="Exact trusted user/project source IDs such as U1 or project.constraints. These identify supplied inputs, not independent measurements or knowledge citations")
 
 
 class ReviewResult(ApiModel):
@@ -261,14 +268,25 @@ class ResearchConfig(ApiModel):
     require_tool_approval: bool = True
     disabled_tools: list[str] = Field(default_factory=list, max_length=100)
     reflection_enabled: bool = True
+    # Structured protocol decisions already explain their reasoning publicly.
+    # Additional provider reasoning has a separate, explicit cost control.
+    decision_reasoning_effort: Literal["none", "low", "medium", "high"] = "none"
+    audit_reasoning_effort: Literal["none", "low", "medium", "high"] = "low"
+    audit_thinking_budget: int = Field(default=256, ge=128, le=32768)
+    decision_timeout_seconds: float = Field(default=180, gt=0, le=600)
+    research_completion_grace_seconds: float = Field(default=120, ge=0, le=300, description="One fixed completion grace for research decisions with visible response content; does not extend idle waits or the total run deadline")
+    model_first_response_timeout_seconds: float = Field(default=25, gt=0, le=120)
+    model_idle_timeout_seconds: float = Field(default=20, gt=0, le=120)
+    chat_timeout_seconds: float = Field(default=180, gt=0, le=1800)
+    research_timeout_seconds: float = Field(default=600, gt=0, le=3600)
     review_policy: ReviewPolicy = Field(default_factory=ReviewPolicy)
     # AUTO selects a suitable path per request. DIRECT is for internal callers
     # and is intentionally not exposed as a separate UI option.
     strategy: Literal["AUTO", "DIRECT", "REACT", "PLAN_AND_SOLVE", "REFLECTION"] = (
         "AUTO"
     )
-    # AUTO keeps routine chat on the single-agent path. Complex requests or
-    # explicit user wording can opt into the coordinator and its child agents.
+    # ON requests an independent answer auditor. AUTO uses semantic evidence
+    # needs for parallel tasks and only adds a review when it is needed.
     multi_agent_mode: Literal["AUTO", "ON", "OFF"] = "AUTO"
     # 当后端没有解析出项目级模型时，作为默认模型的本次运行覆盖参数。
     generation: ModelGenerationConfig | None = None

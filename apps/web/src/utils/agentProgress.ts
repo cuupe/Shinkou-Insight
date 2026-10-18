@@ -20,6 +20,39 @@ export function messageElapsed(message: AgentMessage, now: number) {
   return elapsedMs(message.runStartedAt, message.runFinishedAt, now);
 }
 
+/** Keep runtime errors in the message's error card, not in the composer. */
+export function recordMessageFailure(message: AgentMessage, error: unknown) {
+  message.status = "failed";
+  message.executionError ||= {
+    code: "RUN_FAILED",
+    stage: "execution",
+    message: error instanceof Error ? error.message : String(error || "Agent 运行失败"),
+    remedy: "查看执行记录中的具体原因后重试",
+    retryable: true,
+  };
+  finishMessageProgress(message, "failed");
+}
+
+/** Legacy backend replies may contain the same serialized error as metadata.
+ * Remove only that exact error text; preserve any earlier answer content.
+ */
+export function visibleAnswerContent(message: AgentMessage) {
+  const content = message.content || "";
+  const failure = message.executionError?.message;
+  if (message.role !== "assistant" || !failure) return content;
+  if (content.trim() === failure.trim()) return "";
+  const suffix = "\n\n运行失败：" + failure;
+  return content.endsWith(suffix) ? content.slice(0, -suffix.length) : content;
+}
+
+export function conversationStatusLabel(messages: AgentMessage[], running: boolean) {
+  if (running) return "Agent 正在工作";
+  const latest = messages.filter(message => message.role === "assistant").at(-1);
+  if (latest?.status === "failed") return "上次运行未完成";
+  if (latest?.decisions?.at(-1)?.action === "clarify") return "待你确认条件";
+  return "对话已就绪";
+}
+
 function finishThinking(
   message: AgentMessage,
   timestamp: string,
@@ -114,6 +147,13 @@ export function applyMessageProgress(
     case "event.updated":
       mergeEvent((message.events ||= []), event.event, timestamp);
       break;
+    case "decision.updated": {
+      const decisions = (message.decisions ||= []);
+      const index = decisions.findIndex((decision) => decision.id === event.decision.id);
+      if (index < 0) decisions.push(event.decision);
+      else decisions[index] = event.decision;
+      break;
+    }
     case "agent.task.updated": {
       const tasks = (message.agentTasks ||= []);
       const index = tasks.findIndex((task) => task.id === event.task.id);
@@ -152,6 +192,11 @@ export function applyMessageProgress(
         elapsedMs(message.runStartedAt, message.runFinishedAt, Date.now());
       if (event.type === "run.completed")
         message.multiAgent = event.multiAgent || event.data?.multiAgent;
+      if (event.type === "run.failed") message.executionError = event.error || {
+        code: "RUN_FAILED", stage: "execution", message: event.message || "Agent 运行失败",
+        remedy: "查看执行记录中的具体原因后重试", retryable: true,
+      };
+      else message.decisionMetrics = event.decisionMetrics;
       finishMessageProgress(
         message,
         event.type === "run.failed"

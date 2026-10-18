@@ -8,6 +8,8 @@ from typing import Any
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
+from core.clock import TIME_CONTEXT_VERSION, with_time_context
+
 from prompts.search_prompts import (
     PLAN_AND_SOLVE_SYSTEM,
     PLAN_AND_SOLVE_USER,
@@ -104,13 +106,13 @@ class PromptRegistry:
             spec.name,
             spec.version,
             self._snapshot(spec),
-            messages,
+            with_time_context(messages),
         )
 
     @classmethod
     def _snapshot(cls, spec: PromptSpec) -> str:
         payload = json.dumps(
-            spec.model_dump(), ensure_ascii=False, sort_keys=True
+            {"spec": spec.model_dump(), "timeContextVersion": TIME_CONTEXT_VERSION}, ensure_ascii=False, sort_keys=True
         ).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()[:16]
 

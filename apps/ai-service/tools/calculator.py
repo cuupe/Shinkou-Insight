@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import ast
-import re
 from fractions import Fraction
 from typing import Any
 
@@ -10,7 +9,9 @@ from typing import Any
 def normalize_expression(expression: str) -> str:
     value = expression.strip().replace("−", "-").replace("×", "*").replace("÷", "/")
     value = value.replace("²", "**2").replace("³", "**3").replace("^", "**")
-    value = re.sub(r"(?<=\d)(?=[a-zA-Z(])|(?<=[a-zA-Z)])(?=[a-zA-Z(])", "*", value)
+    # Identifiers are tokens, not sequences of single-letter variables.
+    # The model must provide explicit multiplication, preserving names such
+    # as first_floor or unit_price exactly as it bound them.
     return value
 
 
@@ -67,8 +68,6 @@ def calculate(expression: str, variables: dict[str, Any] | None = None) -> dict[
 
 
 _CN_DIGITS = dict(zip("零一二三四五六七八九", range(10))) | {"两": 2, "〇": 0}
-_NUMBER = r"(?:[-+]?\d[\d,]*(?:\.\d+)?|[零〇一二两三四五六七八九十百千万亿]+)"
-_PAIR = re.compile(rf"({_NUMBER})\s*(加|减|乘以?|除以?|[+*×÷−-])\s*({_NUMBER})")
 
 
 def chinese_number(text: str) -> int | str:
@@ -88,62 +87,3 @@ def chinese_number(text: str) -> int | str:
             total = (total + section + digit) * 100000000
             section = digit = 0
     return total + section + digit
-
-
-def expression_in(text: str) -> str | None:
-    """Extract only an explicit arithmetic span, never numbers from prose."""
-    spans = re.findall(r"[a-zA-Z\d(][a-zA-Z\d\s.,()+*/^²³×÷−-]*", text)
-    spans = [span.strip(" .,\n") for span in spans if re.search(r"[+*/^²³×÷−-]", span)]
-    for span in sorted(spans, key=len, reverse=True):
-        if re.search(r"[a-zA-Z]{3,}|\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b", span):
-            continue
-        try:
-            tree = ast.parse(normalize_expression(span), mode="eval")
-            if all(isinstance(node, (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant, ast.Name,
-                                     ast.Load, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.USub, ast.UAdd))
-                   for node in ast.walk(tree)):
-                return span
-        except (ValueError, SyntaxError):
-            pass
-    pair = _PAIR.search(text)
-    if pair:
-        left, op, right = pair.groups()
-        operator = {"加": "+", "减": "-", "乘": "*", "乘以": "*", "除": "/", "除以": "/"}.get(op, op)
-        return f"{chinese_number(left)}{operator}{chinese_number(right)}"
-    return None
-
-
-def conversation_facts(messages: list[dict[str, Any]]) -> dict[str, Any]:
-    """Preserve explicit user values and provenance; assistant guesses are excluded."""
-    facts: dict[str, Any] = {"variables": {}}
-    for index, message in enumerate(messages):
-        if message.get("role") != "user":
-            continue
-        text = str(message.get("content", ""))
-        pair = _PAIR.search(text)
-        if pair:
-            facts["operands"] = [str(chinese_number(pair[1])), str(chinese_number(pair[3]))]
-            facts["operandsTurn"] = index
-        for name, raw in re.findall(rf"(?<![a-zA-Z])([a-zA-Z])\s*(?:=|等于|为)\s*({_NUMBER})", text):
-            facts["variables"][name] = str(chinese_number(raw))
-        if facts.get("operands") and re.search(r"(?:以上|上面|这两个|最开始|刚才|两个数字)", text) and re.search(r"(?<![a-zA-Z])x\s*(?:和|与|、|,|，|及)\s*y(?![a-zA-Z])", text, re.I):
-            facts["variables"].update(zip(("x", "y"), facts["operands"]))
-        expression = expression_in(text)
-        if expression:
-            facts["expression"] = expression
-    return facts
-
-
-def requested_calculation(goal: str, facts: dict[str, Any]) -> str | None:
-    # Questions about code, dates or explanatory formulas should stay with the model.
-    if any(word in goal for word in ("代码", "正则", "日期", "证明", "推导", "公式是什么", "解释", "为什么")):
-        return None
-    expression = expression_in(goal)
-    if expression:
-        remainder = goal.replace(expression, "").strip(" \n?？=。")
-        if not remainder or any(word in goal for word in ("计算", "算一下", "等于", "多少", "求值", "表达式", "calculate", "evaluate")):
-            return expression
-    if re.fullmatch(r"(?:那|再|现在)?\s*(?:相减|相加|相乘|相除)(?:呢|是多少)?[？?。！!\s]*", goal) and facts.get("operands"):
-        operator = next(op for word, op in (("减", "-"), ("加", "+"), ("乘", "*"), ("除", "/")) if word in goal)
-        return operator.join(facts["operands"])
-    return None

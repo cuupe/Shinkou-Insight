@@ -83,6 +83,7 @@ class Settings(BaseSettings):
 
     app_name: str = "ai-service"
     app_env: str = "local"
+    app_timezone: str = Field(default="Asia/Shanghai", validation_alias="TZ")
     internal_api_key: str = "local-dev-key"
     database_url: str | None = None
     retriever_mode: str = "milvus"
@@ -142,7 +143,7 @@ class Settings(BaseSettings):
     max_retries: int = Field(default=2, ge=0, le=5)
     llm_structured_output_method: str = "json_schema"
     max_research_rounds: int = Field(default=3, ge=1, le=8)
-    max_evidence: int = Field(default=12, ge=1, le=50)
+    max_evidence: int = Field(default=32, ge=1, le=50)
     enable_web_search: bool = False
     web_search_provider: str = "brave"
     web_search_api_key: str | None = Field(
@@ -183,6 +184,15 @@ class Settings(BaseSettings):
     agent_transport: str = "in-process"
     agent_worker_urls: Annotated[dict[str, str], NoDecode] = Field(default_factory=dict)
     agent_worker_role: str | None = None
+
+    @field_validator("app_timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        from core.clock import resolve_timezone
+
+        value = value.strip()
+        resolve_timezone(value)
+        return value
 
     @field_validator("mcp_allowed_tools", mode="before")
     @classmethod

@@ -507,6 +507,18 @@ onBeforeUnmount(() => {
 .breadcrumbs strong {
   color: var(--workspace-text);
   font-weight: 600;
+  white-space: nowrap;
+}
+
+.breadcrumbs .breadcrumb-link {
+  max-width: min(15rem, 14vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.breadcrumbs svg {
+  flex-shrink: 0;
 }
 
 .breadcrumbs a {
@@ -1088,10 +1100,23 @@ onBeforeUnmount(() => {
    Mobile
    ========================================================= */
 
+@media (max-width: 80rem) {
+  .app-topbar:has(.topbar-page-slot:not(:empty)) .breadcrumbs {
+    display: none;
+  }
+}
+
+@media (max-width: 68.75rem) {
+  .topbar-actions :deep(.search-field-topbar) {
+    display: none;
+  }
+}
+
 @media (max-width: 47.5rem) {
   .app-topbar {
     height: 4rem;
     padding: 0 1rem;
+    gap: 0.75rem;
   }
 
   .mobile-menu {

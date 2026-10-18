@@ -39,11 +39,11 @@ const workflowSteps = [
     icon: MessageCircle,
   },
   {
-    label: "评估回归",
-    description: "用真实问题检查知识库回答",
-    route: "project-evaluation",
-    routes: ["project-evaluation"],
-    icon: BarChart3,
+    label: "行动项落实",
+    description: "分派、执行并提交证据验收",
+    route: "project-action-items",
+    routes: ["project-action-items"],
+    icon: ListChecks,
   },
   {
     label: "审查定稿",
@@ -53,18 +53,11 @@ const workflowSteps = [
     icon: ShieldCheck,
   },
   {
-    label: "导出成果",
-    description: "通过审查后生成文件",
+    label: "发布导出",
+    description: "前置任务关闭并签署后发布",
     route: "project-reports",
     routes: ["project-reports"],
     icon: Download,
-  },
-  {
-    label: "行动项落地",
-    description: "把建议分派并跟踪完成",
-    route: "project-action-items",
-    routes: ["project-action-items"],
-    icon: ListChecks,
   },
 ];
 
@@ -99,7 +92,7 @@ function stepClass(index: number) {
       <span class="project-workflow-summary-copy">
         <span class="project-workflow-kicker">PROJECT DELIVERY FLOW</span>
         <strong>从项目输入到交付与跟进</strong>
-        <small>先定义问题并验证回答，再审查证据、发布成果并跟进建议。</small>
+        <small>先形成报告，落实前置行动并验收，再返回审查签署、发布成果。</small>
       </span>
       <span class="project-workflow-summary-side">
         <span v-if="activeStep" class="project-workflow-current">
@@ -148,6 +141,9 @@ function stepClass(index: number) {
         <RouterLink :to="projectRoute('project-files')">
           <FolderOpen :size="13" />对话文件
         </RouterLink>
+        <RouterLink :to="projectRoute('project-evaluation')">
+          <BarChart3 :size="13" />检索评估（按需）
+        </RouterLink>
         <RouterLink :to="projectRoute('project-overview')">
           <BarChart3 :size="13" />用量与结果
         </RouterLink>
@@ -163,9 +159,14 @@ function stepClass(index: number) {
   border: 0.0625rem solid var(--workspace-border);
   border-radius: 0.875rem;
   background:
-    linear-gradient(110deg, color-mix(in oklab, var(--teal) 7%, var(--surface)), var(--surface-raised)),
+    linear-gradient(
+      110deg,
+      color-mix(in oklab, var(--teal) 7%, var(--surface)),
+      var(--surface-raised)
+    ),
     var(--surface);
-  box-shadow: 0 0.75rem 2rem color-mix(in oklab, var(--workspace-border) 35%, transparent);
+  box-shadow: 0 0.75rem 2rem
+    color-mix(in oklab, var(--workspace-border) 35%, transparent);
 }
 
 .project-workflow-summary {
@@ -263,7 +264,8 @@ function stepClass(index: number) {
   align-items: center;
   gap: 0.375rem;
   padding: 0.35rem 0.55rem;
-  border: 0.0625rem solid color-mix(in oklab, var(--teal) 45%, var(--workspace-border));
+  border: 0.0625rem solid
+    color-mix(in oklab, var(--teal) 45%, var(--workspace-border));
   border-radius: 999px;
   color: var(--teal-dark);
   font-size: 0.7rem;
@@ -375,7 +377,8 @@ function stepClass(index: number) {
   align-items: center;
   gap: 0.45rem;
   padding-top: 0.65rem;
-  border-top: 0.0625rem solid color-mix(in oklab, var(--workspace-border) 75%, transparent);
+  border-top: 0.0625rem solid
+    color-mix(in oklab, var(--workspace-border) 75%, transparent);
   color: var(--workspace-muted);
   font-size: 0.7rem;
 }

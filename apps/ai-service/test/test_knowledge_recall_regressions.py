@@ -23,10 +23,14 @@ ROW = (17, 12, "test.txt", None, None, PASSAGE, 0.8)
 def recall_store(monkeypatch, *, timeout=0.05):
     store = MilvusKnowledgeStore("unused", "unused", HashEmbeddingProvider(dimension=8),
                                  retrieval_timeout_seconds=timeout)
+    # Exercise the real vector-channel path. Hash embeddings intentionally
+    # bypass it in production, so they cannot stand in for a semantic provider.
+    store.embedding.model_name = "semantic-fixture"
     store.pool, store.client = object(), object()
     monkeypatch.setattr(store, "_search_vectors", lambda *_args: [{"id": 17, "score": 0.9}])
     monkeypatch.setattr(store, "_fetch_rows_by_ids", AsyncMock(return_value=[ROW]))
     monkeypatch.setattr(store, "_fetch_keyword_rows", AsyncMock(return_value=[ROW]))
+    monkeypatch.setattr(store, "_fetch_short_document_rows", AsyncMock(return_value=[]))
     return store
 
 
@@ -143,6 +147,95 @@ async def test_explicit_filename_keeps_semantic_neighbors_from_other_files_out(m
 
     assert items
     assert [item.asset_name for item in items] == ["test.txt"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_scope", ["filename", "asset"])
+async def test_document_scope_preserves_lower_ranked_body_chapters(monkeypatch, source_scope):
+    store = recall_store(monkeypatch)
+    rows = [
+        (17, 12, "measurements.md", None, "测量结果", "试点测量结果", 10.0),
+        (18, 12, "measurements.md", None, "耗时", "基线120秒，试点66秒，降低45%。", 2.0),
+    ]
+    store._fetch_keyword_rows.return_value = rows
+    items = await store.retrieve(
+        workspace_id=7, project_id=8,
+        question="measurements.md" if source_scope == "filename" else "试点测量结果",
+        filters={"assetIds": [12]} if source_scope == "asset" else {},
+        retrieval_mode="KEYWORD", use_reranker=True, top_k=8,
+    )
+    assert {item.chunk_id for item in items} == {17, 18}
+    assert any("120秒" in item.content for item in items)
+
+
+@pytest.mark.asyncio
+async def test_keyword_recall_does_not_discard_lower_scoring_documents_in_multi_need_query(monkeypatch):
+    store = recall_store(monkeypatch)
+    store._fetch_keyword_rows.return_value = [
+        (17, 12, "measurements.md", None, None, "试点测量结果", 10.0),
+        (18, 13, "other.md", None, None, "无关资料的试点", 2.0),
+    ]
+    items = await store.retrieve(
+        workspace_id=7, project_id=8, question="试点测量结果",
+        retrieval_mode="KEYWORD", top_k=8,
+    )
+    assert [item.chunk_id for item in items] == [17,18]
+
+
+@pytest.mark.asyncio
+async def test_matched_short_document_supplies_body_without_repeating_search_terms(monkeypatch):
+    store = recall_store(monkeypatch)
+    header = (17, 12, "conditions.md", None, "推广条件", "文档XQ-05", 10.0)
+    body = (18, 12, "conditions.md", None, "扩大范围前", "完成权限撤销传播验收，新增50条独立问题回归。尚未关闭。", 0.0)
+    store._fetch_keyword_rows.return_value = [header]
+    store._fetch_short_document_rows.return_value = [header, body]
+    items = await store.retrieve(workspace_id=7, project_id=8, question="XQ-05", top_k=3, retrieval_mode="KEYWORD")
+    assert {item.chunk_id for item in items} == {17, 18}
+    assert "50条" in items[1].content
+    store._fetch_short_document_rows.assert_awaited_once_with(store.pool, 7, 8, [12])
+
+
+@pytest.mark.asyncio
+async def test_document_context_stays_bounded_and_preserves_other_primary_sources(monkeypatch):
+    store = recall_store(monkeypatch)
+    primary = [(key, key, f"{key}.md", None, None, "项目验收", 10.0) for key in [17, 18, 19]]
+    store._fetch_keyword_rows.return_value = primary
+    store._fetch_short_document_rows.return_value = [
+        (key*100+index, key, f"{key}.md", None, None, "独立正文章节"*index, 0.0)
+        for key in [17,18,19] for index in range(1,5)
+    ]
+    items = await store.retrieve(workspace_id=7, project_id=8, question="验收", top_k=8, retrieval_mode="KEYWORD")
+    assert len(items) == 8 and {item.asset_id for item in items[:3]} == {17,18,19}
+    assert [item.id for item in items] == [f"E{index}" for index in range(1,9)]
+    assert len({item.chunk_id for item in items}) == 8
+
+
+@pytest.mark.asyncio
+async def test_document_context_failure_keeps_successful_primary_recall(monkeypatch):
+    store = recall_store(monkeypatch)
+    store._fetch_short_document_rows.side_effect = TimeoutError("optional read timed out")
+    items = await store.retrieve(workspace_id=7, project_id=8, question=QUESTION, top_k=8)
+    assert [item.chunk_id for item in items] == [17]
+
+
+@pytest.mark.asyncio
+async def test_in_memory_document_read_retains_body_and_tenant_isolation():
+    chunks = [
+        {"workspace_id": workspace, "project_id": project, "asset_id": asset,
+         "asset_name": "measurements.md", "chunk_id": key, "content": content}
+        for workspace, project, asset, key, content in [
+            (7, 8, 12, "header", "试点测量结果"),
+            (7, 8, 12, "body", "120秒下降至66秒"),
+            (9, 8, 12, "other-tenant", "不能读取"),
+            (7, 9, 12, "other-project", "不能读取"),
+            (7, 8, 13, "other-asset", "不能读取"),
+        ]
+    ]
+    items = await InMemoryRetriever(chunks).retrieve(
+        workspace_id=7, project_id=8, question="measurements.md", top_k=8,
+        filters={"assetIds": [12]}, retrieval_mode="KEYWORD", use_reranker=True,
+    )
+    assert {item.chunk_id for item in items} == {"header", "body"}
 
 
 @pytest.mark.asyncio
@@ -287,7 +380,14 @@ async def test_in_memory_retriever_abstains_on_unrelated_semantic_fallback():
 async def test_chat_receives_source_and_fiction_qualification_when_vector_fails(monkeypatch):
     store = recall_store(monkeypatch)
     monkeypatch.setattr(store.embedding, "embed_query", AsyncMock(side_effect=RuntimeError("offline")))
-    model = ReflectingModelGateway()
+    from test_semantic_agent import ScriptedModel, decision, need, intent
+    model = ScriptedModel([
+        decision("execute", needs=[need()], tools=[intent(query=QUESTION)]),
+        decision(needs=[need(status="covered", evidence_ids=["E1"])],
+                 assessments=[dict(evidence_id="E1", relevant=True, reason="原文明确将该人物与奖项限定为虚构")],
+                 answer="资料中的艾伦·莫里斯与交通工程奖均为虚构信息。[E1]",
+                 claims=[dict(statement="文中信息虚构", supports=[dict(evidence_id="E1", quote="文中相关项目、机构和专家均为虚构信息。")])]),
+    ])
     runtime, repo = make_runtime(model)
     runtime.tools = ToolRegistry()
     runtime.tools.register(ToolSpec(name="search_knowledge", timeout_seconds=0.5), KnowledgeTool(store).search_knowledge)
@@ -298,8 +398,12 @@ async def test_chat_receives_source_and_fiction_qualification_when_vector_fails(
         ))
         run = repo.get("recall-regression")
         assert run.status == "COMPLETED", run.error_message
-        assert model.chat_calls == 1
-        prompt = "\n".join(message["content"] for message in model.chat_messages[0])
+        # Source-bound answers now receive one independent check of the body
+        # even when an optional reflection strategy is disabled.
+        assert len(model.requests) == 3
+        from agents.decisions import AnswerAudit
+        assert model.requests[-1][0] is AnswerAudit
+        prompt = "\n".join(message["content"] for message in model.requests[1][1])
         assert "艾伦·莫里斯" in prompt
         assert "均为虚构信息" in prompt
         assert "test.txt" in prompt

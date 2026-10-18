@@ -222,14 +222,16 @@ if (-not $Elevated -and -not (Test-IsAdministrator)) {
     if ($FrontendPort -ne 5173) { $elevatedArguments += @("-FrontendPort", "$FrontendPort") }
     if ($NetworkProbeUrl -ne "https://api.siliconflow.cn/v1/models") { $elevatedArguments += @("-NetworkProbeUrl", $NetworkProbeUrl) }
 
-    $elevated = Start-Process `
+    $elevatedProcess = Start-Process `
         -FilePath (Get-Command powershell.exe).Source `
         -ArgumentList $elevatedArguments `
         -WorkingDirectory $projectRoot `
         -Verb RunAs `
-        -Wait `
+        -WindowStyle Hidden `
         -PassThru
-    exit $elevated.ExitCode
+    # The detached services must outlive the launcher. -Wait includes descendants.
+    $elevatedProcess.WaitForExit()
+    exit $elevatedProcess.ExitCode
 }
 
 if (-not (Test-ExternalHttps -Uri $NetworkProbeUrl)) {

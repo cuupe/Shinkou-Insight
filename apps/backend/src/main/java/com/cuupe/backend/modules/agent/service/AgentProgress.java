@@ -15,6 +15,7 @@ final class AgentProgress {
         switch (type) {
             case "run.started" -> copy(event, message, "startedAt", "runStartedAt");
             case "event.updated" -> snapshot(message, "events", event.get("event"));
+            case "decision.updated" -> snapshot(message, "decisions", event.get("decision"));
             case "agent.task.updated" -> snapshot(message, "agentTasks", event.get("task"));
             case "thinking.started" -> {
                 copy(event, message, "startedAt", "thinkingStartedAt");
@@ -50,6 +51,8 @@ final class AgentProgress {
                 }
                 finishThinking(message, message.get("runFinishedAt"), null);
                 copy(event, message, "multiAgent", "multiAgent");
+                copy(event, message, "error", "executionError");
+                copy(event, message, "decisionMetrics", "decisionMetrics");
                 String status = "run.failed".equals(type) ? "failed" : "completed";
                 message.put("status", status);
                 message.put("runStatus", event.getOrDefault("status", status));

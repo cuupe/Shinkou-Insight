@@ -6,7 +6,7 @@ from core.cache import CacheService
 from models.schemas import Evidence
 from rag.retriever import Retriever
 
-RETRIEVAL_REVISION = 3
+RETRIEVAL_REVISION = 9
 
 
 class CachedRetriever:

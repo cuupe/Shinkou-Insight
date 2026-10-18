@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { ChevronDown, GitBranch, LoaderCircle, Sparkles } from "@lucide/vue";
-import type { AgentMessage, AgentEventStatus } from "@/api/types";
+import type { AgentMessage, AgentEventStatus, AgentExecutionError } from "@/api/types";
 import {
   currentMessageActivity,
   elapsedMs,
@@ -11,6 +11,9 @@ import {
 const props = defineProps<{ message: AgentMessage; now: number }>();
 const expanded = ref(false);
 const tasks = computed(() => props.message.agentTasks || []);
+const decisions = computed(() => props.message.decisions || []);
+const latestDecision = computed(() => decisions.value.at(-1));
+const failure = computed(() => props.message.executionError);
 const children = computed(() => tasks.value.filter((task) => task.parentId));
 const live = computed(() => props.message.status === "streaming");
 const visible = computed(
@@ -18,6 +21,8 @@ const visible = computed(
     live.value ||
     props.message.thinkingStartedAt ||
     props.message.events?.length ||
+    failure.value ||
+    decisions.value.length ||
     tasks.value.length,
 );
 const completedCount = computed(
@@ -33,7 +38,7 @@ const activity = computed(() =>
       ? "已停止"
       : props.message.status === "failed"
         ? "执行失败"
-        : "思考与执行记录",
+        : "决策与执行记录",
 );
 const elapsed = computed(() => messageElapsed(props.message, props.now));
 const reasoningElapsed = computed(
@@ -59,12 +64,19 @@ function status(value: AgentEventStatus) {
     completed: "已完成",
     failed: "失败",
     cancelled: "已停止",
+    blocked: "已阻止",
+    reused: "已复用",
+    empty: "无结果",
   }[value];
+}
+function eventError(meta: Record<string, unknown> | undefined) {
+  const error = meta?.error;
+  return error && typeof error === "object" ? error as AgentExecutionError : undefined;
 }
 </script>
 
 <template>
-  <section v-if="visible" class="answer-progress" aria-label="思考与执行过程">
+  <section v-if="visible" class="answer-progress" aria-label="决策与执行过程">
     <button
       class="progress-toggle"
       type="button"
@@ -82,6 +94,16 @@ function status(value: AgentEventStatus) {
       >
       <ChevronDown :size="14" :class="{ expanded }" />
     </button>
+    <p v-if="latestDecision" class="decision-preview" data-testid="decision-summary">{{ latestDecision.summary }}</p>
+    <aside v-if="failure" class="execution-error" role="alert">
+      <strong>{{ failure.code === "ANSWER_VALIDATION" ? "答案校验未通过" : "本轮执行未完成" }}</strong>
+      <p>{{ failure.remedy }}</p>
+      <details>
+        <summary>查看失败原因</summary>
+        <p>{{ failure.message }}</p>
+        <span>{{ failure.stage }} · {{ failure.code }}</span>
+      </details>
+    </aside>
     <div v-if="tasks.length" class="delegation-summary">
       <GitBranch :size="13" />
       <span>主智能体 → {{ children.length }} 个子任务</span>
@@ -92,6 +114,26 @@ function status(value: AgentEventStatus) {
       {{ message.multiAgent.reason }}
     </p>
     <div v-show="expanded" class="progress-details">
+      <div v-if="decisions.length" class="decision-list" aria-label="模型决策说明">
+        <article v-for="decision in decisions" :key="decision.id" class="decision-card">
+          <header><strong>第 {{ decision.sequence }} 轮决策</strong><span>剩余工具预算 {{ decision.remainingToolCalls }}</span></header>
+          <p class="decision-goal">{{ decision.resolvedGoal }}</p>
+          <p>{{ decision.summary }}</p>
+          <p
+            v-if="decision.rationale?.trim() && decision.rationale.trim() !== decision.summary?.trim()"
+            class="decision-rationale"
+          >{{ decision.rationale }}</p>
+          <ul v-if="decision.needs.length" class="evidence-needs">
+            <li v-for="need in decision.needs" :key="need.id" :class="need.status">
+              <span>{{ { covered: "已覆盖", missing: "待补充", unavailable: "无法核实" }[need.status] }}</span>
+              <div>{{ need.description }}<small v-if="need.basis">{{ { general:'稳定常识或创作', material:'给定材料', world:'现实状态核验', derived:'派生计算', context:'用户或系统上下文' }[need.basis] }}</small><small v-if="need.evidenceIds?.length">依据 {{ need.evidenceIds.join('、') }}</small></div>
+            </li>
+          </ul>
+          <p v-for="(tool, index) in decision.tools" :key="index" class="decision-tool">{{ tool.tool }}：{{ tool.purpose }}</p>
+          <details v-if="decision.assessments?.length"><summary>资料相关性判断</summary><p v-for="item in decision.assessments" :key="item.evidenceId">{{ item.evidenceId }} · {{ item.relevant ? '采用' : '排除' }}：{{ item.reason }}</p></details>
+          <p v-if="decision.stopReason" class="fallback-note">执行已收束：{{ { budget: '达到预算', no_progress: '检索没有新增证据', answer_support: '回答需要修正证据支持', clarification: '等待确认必要条件' }[decision.stopReason as 'budget' | 'no_progress' | 'answer_support' | 'clarification'] || decision.stopReason }}</p>
+        </article>
+      </div>
       <div
         v-if="tasks.length"
         class="agent-task-tree"
@@ -133,18 +175,22 @@ function status(value: AgentEventStatus) {
           <div>
             <strong>{{ event.title }}</strong>
             <p v-if="event.detail">{{ event.detail }}</p>
+            <aside v-if="eventError(event.meta)" class="execution-error">
+              <span>{{ eventError(event.meta)?.stage }} · {{ eventError(event.meta)?.code }}</span>
+              <p>{{ eventError(event.meta)?.remedy }}</p>
+            </aside>
           </div>
         </li>
       </ol>
       <details v-if="message.thinkingStartedAt" class="provider-thinking">
         <summary>
-          模型思考
+          模型响应阶段
           <span v-if="reasoningElapsed">{{ duration(reasoningElapsed) }}</span>
         </summary>
-        <div>{{ message.thinkingFinishedAt ? "模型思考阶段已结束。" : "模型仍在思考，正在等待最终回答。" }}</div>
+        <div>此项记录响应耗时。模型的公开决策说明显示在上方。</div>
       </details>
       <p
-        v-if="!tasks.length && !message.events?.length && !message.thinkingStartedAt"
+        v-if="!tasks.length && !message.events?.length && !message.thinkingStartedAt && !decisions.length"
         class="waiting-note"
       >
         等待服务返回执行状态。
@@ -224,6 +270,21 @@ time {
   padding: 0.75rem;
   border-top: 1px solid var(--workspace-border);
 }
+.decision-preview { margin: 0; padding: 0 0.75rem 0.75rem; color: var(--workspace-text); line-height: 1.7; overflow-wrap: anywhere; }
+.decision-card { margin-bottom: 0.75rem; padding: 0.75rem; border: 1px solid var(--workspace-border); border-radius: 0.375rem; }
+.decision-card header { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: space-between; }
+.decision-card header strong { color: var(--teal-dark); }
+.decision-card p { margin: 0.5rem 0; white-space: pre-wrap; line-height: 1.7; overflow-wrap: anywhere; }
+.decision-goal, .decision-rationale { color: var(--workspace-text); }
+.evidence-needs { list-style: none; margin: 0.75rem 0; padding: 0; }
+.evidence-needs li { display: flex; gap: 0.625rem; margin: 0.375rem 0; line-height: 1.6; }
+.evidence-needs li > span { flex-shrink: 0; min-width: 3rem; }
+.evidence-needs small { display: block; }
+.covered > span { color: var(--teal-dark); }
+.missing > span, .unavailable > span, .blocked, .empty { color: #d3a464; }
+.execution-error { margin: 0.5rem 0.75rem 0.75rem; padding: 0.625rem; border-left: 2px solid #dc8585; background: rgba(220, 133, 133, 0.07); line-height: 1.6; color: #dc8585; }
+.execution-error > span { display: block; font-size: 0.6875rem; }
+.execution-error p { margin: 0.375rem 0 0; }
 .agent-task {
   padding: 0.5rem 0;
 }

@@ -1,0 +1,730 @@
+{
+  "description": "运行12的合成资料与未覆盖需求，外加测试包XQ-05的完整前置章节。无凭据或回调。",
+  "request": {
+    "goal": "仅依据截至2026-10-16的本项目知识库，核对星桥六周试点的样本数、准确率、知识覆盖、检索耗时、严重错误、活跃率和成本，判断是否达标，说明推广限制，形成带引用、计算过程、风险和行动项的验收报告。。背景问题与机会：本项目是完全虚构的系统验收场景。试点历史周期为2026-08-31至2026-10-11。客服和售前检索资料耗时较长，需用已上传的合成测量记录验证改善情况。。成功指标：样本≥300；准确率≥90%；资料可定位覆盖率≥95%；平均检索耗时降低≥40%；严重错误率<2%；周活跃率≥70%；周期≤6周；六周含税成本≤150000元。以上是判定门槛，实际测量须从知识库取得。。约束与假设：关闭联网，只用本项目资料；不将目标当结果；成本是六周全量含税人民币合计，不再乘人数或月份；区分检索耗时和完整处理时长；识别XQ-05的推广前置条件；没有来源的结论明确说明缺口。。项目负责人：王思宁。期望决策日期：2026-10-16",
+    "project_context": {
+      "name": "",
+      "code": "",
+      "description": "",
+      "status": "",
+      "objective": "",
+      "problem": "",
+      "success_metrics": "",
+      "constraints": "",
+      "owner": "",
+      "deadline": ""
+    },
+    "run_id": "context-regression",
+    "workspace_id": 1,
+    "project_id": 1,
+    "user_id": 1,
+    "agent_message_id": null,
+    "config": {
+      "generation": {
+        "context_window": 128000,
+        "max_tokens": 4096
+      }
+    }
+  },
+  "evidence": [
+    {
+      "id": "E1",
+      "chunk_id": 22716,
+      "content": "## 项目信息\n星桥知识助手试点的项目代号是 XQ-PILOT-2026，项目负责人是虚拟角色王思宁。项目由产品、客服和 IT 三个团队共同参与。\n试点只面向内部客服和售前人员。参与者共 20 人，其中客服 12 人、售前 8 人。所有用户编号和业务样本均为合成数据。\n试点从 2026-08-31 开始，到 2026-10-11 结束，共 42 个自然日，即 6 周。报告评估这些历史试点结果，不代表 2026-10-16 之后仍然有效的生产表现。",
+      "source_name": "01-项目背景与范围.md",
+      "page_number": 1,
+      "section_title": "项目信息",
+      "score": 1.0,
+      "url": null,
+      "source_type": "internal",
+      "asset_id": 20,
+      "asset_name": "01-项目背景与范围.md",
+      "vector_score": null,
+      "keyword_score": 0.3380281690140845,
+      "fusion_score": 1.0,
+      "rerank_score": 1.0,
+      "content_kind": null,
+      "published_at": null,
+      "retrieved_at": null
+    },
+    {
+      "id": "E2",
+      "chunk_id": 22705,
+      "content": "# 星桥试点测量结果\n\n项目：星桥知识助手试点验收\n文档编号：XQ-03\n版本：V1.0\n资料截止日：2026-10-16\n性质：完全虚构的系统验收资料。本文模拟记录不是现实业务结果。",
+      "source_name": "03-试点测量结果.md",
+      "page_number": 1,
+      "section_title": "星桥试点测量结果",
+      "score": 0.6,
+      "url": null,
+      "source_type": "internal",
+      "asset_id": 17,
+      "asset_name": "03-试点测量结果.md",
+      "vector_score": null,
+      "keyword_score": 0.22535211267605634,
+      "fusion_score": 0.6,
+      "rerank_score": 0.6,
+      "content_kind": null,
+      "published_at": null,
+      "retrieved_at": null
+    },
+    {
+      "id": "E3",
+      "chunk_id": 22711,
+      "content": "# 星桥试点验收指标与统计口径\n\n项目：星桥知识助手试点验收\n文档编号：XQ-02\n版本：V1.0\n资料截止日：2026-10-16\n性质：完全虚构的系统验收资料。本文模拟记录不是现实业务结果。",
+      "source_name": "02-验收指标与统计口径.md",
+      "page_number": 1,
+      "section_title": "星桥试点验收指标与统计口径",
+      "score": 0.6,
+      "url": null,
+      "source_type": "internal",
+      "asset_id": 19,
+      "asset_name": "02-验收指标与统计口径.md",
+      "vector_score": null,
+      "keyword_score": 0.22535211267605634,
+      "fusion_score": 0.6,
+      "rerank_score": 0.6,
+      "content_kind": null,
+      "published_at": null,
+      "retrieved_at": null
+    },
+    {
+      "id": "E4",
+      "chunk_id": 22720,
+      "content": "## 决策边界\n现有指标可以支持继续进行受限内部验证，不能据此批准正式推广或对外上线。应在验收报告中记录上述前置条件，并形成行动项。\n三项条件关闭后仍需要另行复核和批准扩大范围。本资料没有证明条件已经关闭，也没有批准生产上线。",
+      "source_name": "05-数据权限与推广条件.md",
+      "page_number": 1,
+      "section_title": "决策边界",
+      "score": 0.5,
+      "url": null,
+      "source_type": "internal",
+      "asset_id": 21,
+      "asset_name": "05-数据权限与推广条件.md",
+      "vector_score": null,
+      "keyword_score": 0.19718309859154928,
+      "fusion_score": 0.5,
+      "rerank_score": 0.5,
+      "content_kind": null,
+      "published_at": null,
+      "retrieved_at": null
+    },
+    {
+      "id": "E5",
+      "chunk_id": 22710,
+      "content": "# 星桥数据权限与推广条件\n\n项目：星桥知识助手试点验收\n文档编号：XQ-05\n版本：V1.0\n资料截止日：2026-10-16\n性质：完全虚构的系统验收资料。本文模拟记录不是现实业务结果。",
+      "source_name": "05-数据权限与推广条件.md",
+      "page_number": 1,
+      "section_title": "星桥数据权限与推广条件",
+      "score": 0.45,
+      "url": null,
+      "source_type": "internal",
+      "asset_id": 21,
+      "asset_name": "05-数据权限与推广条件.md",
+      "vector_score": null,
+      "keyword_score": 0.18309859154929578,
+      "fusion_score": 0.45,
+      "rerank_score": 0.45,
+      "content_kind": null,
+      "published_at": null,
+      "retrieved_at": null
+    },
+    {
+      "id": "E6",
+      "chunk_id": 22706,
+      "content": "## 待完成事项\n| 编号 | 事项 | 文档责任角色 | 截止日期 | 验收标准 | 当前状态 |\n| --- | --- | --- | --- | --- | --- |\n| A01 | 权限撤销传播回归 | 林澈 / IT | 2026-10-20 | 成员移出后，重新请求检索和资料详情均被拒绝，其他成员不受影响，保留两个会话的记录 | 待处理 |\n| A02 | 值班与故障处置演练 | 周策 / 运维 | 2026-10-21 | 明确故障负责人、响应入口、回滚办法并完成一次演练 | 待处理 |\n| A03 | 新增 50 条独立样本回归 | 吴敏 / 质量 | 2026-10-22 | 样本与既有 300 条不重复，按 XQ-02 同口径评分并记录问题 | 待处理 |\n\n报告负责人为王思宁，期望决策日期为 2026-10-23。A01、A02、A03 都是下一阶段前置条件，不属于当前 300 条已测结果。\n文档责任人全部为虚拟角色。实际在系统创建行动项时，选择你工作区内已有的测试成员，并在描述中注明其承担的文档角色即可。\n资料只规定上述后续计划，没有证明任务已经完成；不允许仅凭指标达标把三项任务标为已关闭。",
+      "source_name": "06-风险与后续行动.md",
+      "page_number": 1,
+      "section_title": "待完成事项",
+      "score": 0.4,
+      "url": null,
+      "source_type": "internal",
+      "asset_id": 18,
+      "asset_name": "06-风险与后续行动.md",
+      "vector_score": null,
+      "keyword_score": 0.16901408450704225,
+      "fusion_score": 0.4,
+      "rerank_score": 0.4,
+      "content_kind": null,
+      "published_at": null,
+      "retrieved_at": null
+    },
+    {
+      "id": "E7",
+      "chunk_id": 22708,
+      "content": "## 使用活跃\n观察周为 2026-10-05 至 2026-10-11。20 名试点用户中 15 人在该周至少有一次有效使用，5 人未使用。周活跃率为 15 / 20 = 75%。\n上述数据不能证明人工完整处理时长降低 45%，也不能证明未来每周都保持 75% 活跃。",
+      "source_name": "03-试点测量结果.md",
+      "page_number": 1,
+      "section_title": "使用活跃",
+      "score": 0.4,
+      "url": null,
+      "source_type": "internal",
+      "asset_id": 17,
+      "asset_name": "03-试点测量结果.md",
+      "vector_score": null,
+      "keyword_score": 0.16901408450704225,
+      "fusion_score": 0.4,
+      "rerank_score": 0.4,
+      "content_kind": null,
+      "published_at": null,
+      "retrieved_at": null
+    },
+    {
+      "id": "E8",
+      "chunk_id": 22714,
+      "content": "## 验收门槛\n| 指标 | 门槛 | 口径 |\n| --- | --- | --- |\n| 样本数 | 不少于 300 条 | 去重后的合成业务测试问题 |\n| 答案准确率 | 不低于 90% | 正确回答数 / 全部测试问题数 |\n| 资料可定位覆盖率 | 不低于 95% | 能定位有效知识依据的问题数 / 全部测试问题数 |\n| 平均检索耗时降低比例 | 不低于 40% | (人工基线平均秒数 - 助手平均秒数) / 人工基线平均秒数 |\n| 严重错误回答率 | 严格低于 2% | 严重错误问题数 / 全部测试问题数，分母不是错误回答数 |\n| 试点用户周活跃率 | 不低于 70% | 指定观察周内活跃用户数 / 20 名试点用户 |\n| 试点周期 | 不超过 6 周 | 42 个自然日，起止日均计入 |\n| 六周总成本 | 不高于 150000 元 | 含税人民币六周全量成本，不能按人或按月再次乘算 |",
+      "source_name": "02-验收指标与统计口径.md",
+      "page_number": 1,
+      "section_title": "验收门槛",
+      "score": 1.0,
+      "url": null,
+      "source_type": "internal",
+      "asset_id": 19,
+      "asset_name": "02-验收指标与统计口径.md",
+      "vector_score": null,
+      "keyword_score": 0.4661016949152542,
+      "fusion_score": 1.0,
+      "rerank_score": 1.0,
+      "content_kind": null,
+      "published_at": null,
+      "retrieved_at": null
+    },
+    {
+      "id": "E9",
+      "chunk_id": 22707,
+      "content": "## 问答、覆盖与耗时\n测量批次 XQ-MEASURE-20261011，使用 300 条去重的合成问题。正确回答数为 276；错误回答数为 24，其中普通错误为 21，严重错误为 3。\n可以定位有效知识依据的问题有 288 条；无法定位有效依据的有 12 条。没有依据时不应猜测答案。\n300 次人工检索的总耗时为 36000 秒，平均为 120 秒。相同 300 条问题使用助手时总耗时为 19800 秒，平均为 66 秒。耗时仅指定位资料，不包含完整人工业务处理时长。\n准确率为 276 / 300 = 92%；资料可定位覆盖率为 288 / 300 = 96%；严重错误率为 3 / 300 = 1%。\n平均每次检索节省 54 秒，检索耗时降低比例为 (120 - 66) / 120 = 45%；300 次检索合计节省 16200 秒，即 4.5 小时。",
+      "source_name": "03-试点测量结果.md",
+      "page_number": 1,
+      "section_title": "问答、覆盖与耗时",
+      "score": 0.716981,
+      "url": null,
+      "source_type": "internal",
+      "asset_id": 17,
+      "asset_name": "03-试点测量结果.md",
+      "vector_score": null,
+      "keyword_score": 0.3389830508474576,
+      "fusion_score": 0.716981,
+      "rerank_score": 0.716981,
+      "content_kind": null,
+      "published_at": null,
+      "retrieved_at": null
+    },
+    {
+      "id": "E10",
+      "chunk_id": 22709,
+      "content": "## 可追溯说明\n原始合成测量记录在测试包 raw-data/measurement-300.json；观察周用户记录在 raw-data/weekly-users-20.json。它们是确定性生成的测试记录，不是对真实员工或客户的观测。\n测量记录的 baseline_seconds 依次循环 110、120、130；assistant_seconds 依次循环 60、66、72。Q001 至 Q276 正确，Q277 至 Q300 错误；Q277 至 Q279 是严重错误。Q001 至 Q288 有可定位来源。\n这 300 条记录用于测试统计和文件处理，不应当作 300 道独立的知识质量评估题；实际问答验收问题另见测试包 questions。",
+      "source_name": "03-试点测量结果.md",
+      "page_number": 1,
+      "section_title": "可追溯说明",
+      "score": 0.528302,
+      "url": null,
+      "source_type": "internal",
+      "asset_id": 17,
+      "asset_name": "03-试点测量结果.md",
+      "vector_score": null,
+      "keyword_score": 0.2542372881355932,
+      "fusion_score": 0.528302,
+      "rerank_score": 0.528302,
+      "content_kind": null,
+      "published_at": null,
+      "retrieved_at": null
+    },
+    {
+      "id": "E11",
+      "chunk_id": 22719,
+      "content": "## 背景与交付目标\n模拟业务的问题是资料分散、检索时间较长和答复口径不一致。试点需要验证知识覆盖、答案正确性、检索耗时、使用活跃和实施成本。\n本次交付物是一份试点验收报告，包含指标计算、依据、适用范围、推广限制和后续行动。发布这份报告只是发布结论，不代表部署系统或批准对外服务。",
+      "source_name": "01-项目背景与范围.md",
+      "page_number": 1,
+      "section_title": "背景与交付目标",
+      "score": 0.692308,
+      "url": null,
+      "source_type": "internal",
+      "asset_id": 20,
+      "asset_name": "01-项目背景与范围.md",
+      "vector_score": null,
+      "keyword_score": 0.47619047619047616,
+      "fusion_score": 0.692308,
+      "rerank_score": 0.692308,
+      "content_kind": null,
+      "published_at": null,
+      "retrieved_at": null
+    },
+    {
+      "id": "E12",
+      "chunk_id": 22721,
+      "content": "## 现行成本口径\n本表为 2026-10-14 确认的六周结算口径，覆盖整个 20 人试点，币种为人民币，全部含税。\n预算上限为 150000 元。以下每一项已经是六周合计，不是每月、每人或每周单价；不得再次乘以 6、20 或任何月份数。\n\n| 费用编号 | 项目 | 六周含税合计（元） |\n| --- | --- | ---: |\n| C01 | 平台与模型调用 | 36000 |\n| C02 | 接入与检索集成 | 48000 |\n| C03 | 问题集标注和质量核验 | 24000 |\n| C04 | 培训与试用支持 | 19000 |\n| C05 | 运维与监控 | 12000 |\n\n总成本计算为 36000 + 48000 + 24000 + 19000 + 12000 = 139000 元。\n预算剩余金额为 150000 - 139000 = 11000 元。预算使用比例为 139000 / 150000，约 92.67%。\n平均每名试点用户的六周分摊成本为 139000 / 20 = 6950 元；这只是分摊指标，不是收费价格，也不需要再加回总成本。\n本表没有提供正式推广后的月度单价或未来生产成本估算。",
+      "source_name": "04-预算与成本明细.md",
+      "page_number": 1,
+      "section_title": "现行成本口径",
+      "score": 1.0,
+      "url": null,
+      "source_type": "internal",
+      "asset_id": 16,
+      "asset_name": "04-预算与成本明细.md",
+      "vector_score": null,
+      "keyword_score": 0.40425531914893614,
+      "fusion_score": 1.0,
+      "rerank_score": 1.0,
+      "content_kind": null,
+      "published_at": null,
+      "retrieved_at": null
+    }
+  ],
+  "additional": {
+    "id": "E13",
+    "chunk_id": "synthetic-scope-conditions",
+    "content": "## 扩大范围前的条件\n1. 完成成员移出项目后的权限撤销传播验收，保证移出用户无法再检索原项目资料。此项截至 2026-10-16 尚未关闭。\n2. 明确下一阶段的值班与故障处置责任，完成演练并留存记录。此项截至 2026-10-16 尚未关闭。\n3. 增加 50 条未用于当前试点的合成问题并完成回归，确认新样本表现。此项截至 2026-10-16 尚未关闭，不能与已完成的 300 条混成 350 条已测样本。",
+    "source_name": "05-数据权限与推广条件.md",
+    "page_number": 1,
+    "section_title": "扩大范围前的条件",
+    "score": 0.45,
+    "url": null,
+    "source_type": "internal",
+    "asset_id": 21,
+    "asset_name": "05-数据权限与推广条件.md",
+    "vector_score": null,
+    "keyword_score": 0.18309859154929578,
+    "fusion_score": 0.45,
+    "rerank_score": 0.45,
+    "content_kind": null,
+    "published_at": null,
+    "retrieved_at": null
+  },
+  "needs": [
+    {
+      "id": "n1",
+      "description": "试点样本数、准确率、知识覆盖率、严重错误率、周活跃率等核心测量指标",
+      "source": "internal",
+      "basis": "material",
+      "temporal": "historical",
+      "timeScope": "period",
+      "dateFrom": "2026-08-31",
+      "dateTo": "2026-10-11",
+      "status": "covered",
+      "evidenceIds": [
+        "E8",
+        "E9",
+        "E7"
+      ]
+    },
+    {
+      "id": "n2",
+      "description": "检索耗时基线与试点期数据，用于计算降低比例",
+      "source": "internal",
+      "basis": "material",
+      "temporal": "historical",
+      "timeScope": "period",
+      "dateFrom": "2026-08-31",
+      "dateTo": "2026-10-11",
+      "status": "missing",
+      "evidenceIds": []
+    },
+    {
+      "id": "n3",
+      "description": "六周全量含税成本明细",
+      "source": "internal",
+      "basis": "material",
+      "temporal": "historical",
+      "timeScope": "period",
+      "dateFrom": "2026-08-31",
+      "dateTo": "2026-10-11",
+      "status": "missing",
+      "evidenceIds": []
+    },
+    {
+      "id": "n4",
+      "description": "XQ-05推广前置条件",
+      "source": "internal",
+      "basis": "material",
+      "temporal": "stable",
+      "timeScope": "period",
+      "dateFrom": null,
+      "dateTo": null,
+      "status": "missing",
+      "evidenceIds": []
+    },
+    {
+      "id": "n5",
+      "description": "试点周期起止日期确认",
+      "source": "internal",
+      "basis": "material",
+      "temporal": "historical",
+      "timeScope": "period",
+      "dateFrom": "2026-08-31",
+      "dateTo": "2026-10-11",
+      "status": "missing",
+      "evidenceIds": []
+    }
+  ],
+  "ledger": [
+    {
+      "callId": "12:tool:1",
+      "tool": "search_knowledge",
+      "purpose": "检索星桥试点核心测量指标：样本数、准确率、知识覆盖率、严重错误率、周活跃率",
+      "needIds": [
+        "n1"
+      ],
+      "query": "星桥六周试点 样本数 准确率 知识覆盖率 严重错误率 周活跃率 测量记录",
+      "expression": "",
+      "status": "ok",
+      "newEvidenceCount": 3,
+      "detail": "返回 3 条候选资料，新增 3 条；等待模型核对覆盖",
+      "evidenceIds": [
+        "E8",
+        "E9",
+        "E10"
+      ],
+      "result": {
+        "candidateCount": 3,
+        "evidenceIds": [
+          "E8",
+          "E9",
+          "E10"
+        ]
+      },
+      "durationMs": 36
+    },
+    {
+      "callId": "12:tool:2",
+      "tool": "search_knowledge",
+      "purpose": "检索检索耗时基线与试点期数据及六周含税成本",
+      "needIds": [
+        "n2",
+        "n3"
+      ],
+      "query": "星桥试点 检索耗时 基线 降低 成本 含税 六周",
+      "expression": "",
+      "status": "ok",
+      "newEvidenceCount": 1,
+      "detail": "返回 5 条候选资料，新增 1 条；等待模型核对覆盖",
+      "evidenceIds": [
+        "E8",
+        "E11",
+        "E9",
+        "E2",
+        "E3"
+      ],
+      "result": {
+        "candidateCount": 5,
+        "evidenceIds": [
+          "E8",
+          "E11",
+          "E9",
+          "E2",
+          "E3"
+        ]
+      },
+      "durationMs": 40
+    },
+    {
+      "callId": "12:tool:3",
+      "tool": "search_knowledge",
+      "purpose": "检索XQ-05推广前置条件及试点周期确认",
+      "needIds": [
+        "n4",
+        "n5"
+      ],
+      "query": "XQ-05 推广前置条件 星桥试点 周期 2026-08-31 2026-10-11",
+      "expression": "",
+      "status": "ok",
+      "newEvidenceCount": 7,
+      "detail": "返回 7 条候选资料，新增 7 条；等待模型核对覆盖",
+      "evidenceIds": [
+        "E1",
+        "E2",
+        "E3",
+        "E4",
+        "E5",
+        "E6",
+        "E7"
+      ],
+      "result": {
+        "candidateCount": 7,
+        "evidenceIds": [
+          "E1",
+          "E2",
+          "E3",
+          "E4",
+          "E5",
+          "E6",
+          "E7"
+        ]
+      },
+      "durationMs": 34
+    },
+    {
+      "callId": "12:tool:4",
+      "tool": "search_knowledge",
+      "purpose": "检索检索耗时基线数据（baseline_seconds）和试点期检索耗时，用于计算降低比例",
+      "needIds": [
+        "n2"
+      ],
+      "query": "星桥试点 检索耗时 baseline_seconds 平均耗时 降低 秒 客服 售前",
+      "expression": "",
+      "status": "ok",
+      "newEvidenceCount": 0,
+      "detail": "返回 6 条候选资料，新增 0 条；等待模型核对覆盖",
+      "evidenceIds": [
+        "E8",
+        "E9",
+        "E11",
+        "E2",
+        "E10",
+        "E3"
+      ],
+      "result": {
+        "candidateCount": 6,
+        "evidenceIds": [
+          "E8",
+          "E9",
+          "E11",
+          "E2",
+          "E10",
+          "E3"
+        ]
+      },
+      "durationMs": 16
+    },
+    {
+      "callId": "12:tool:5",
+      "tool": "search_knowledge",
+      "purpose": "检索六周全量含税成本明细",
+      "needIds": [
+        "n3"
+      ],
+      "query": "星桥试点 成本 含税 人民币 六周 费用 预算 实施成本",
+      "expression": "",
+      "status": "ok",
+      "newEvidenceCount": 1,
+      "detail": "返回 5 条候选资料，新增 1 条；等待模型核对覆盖",
+      "evidenceIds": [
+        "E12",
+        "E11",
+        "E2",
+        "E3",
+        "E8"
+      ],
+      "result": {
+        "candidateCount": 6,
+        "evidenceIds": [
+          "E12",
+          "E11",
+          "E2",
+          "E3",
+          "E8"
+        ]
+      },
+      "durationMs": 16
+    },
+    {
+      "callId": "12:tool:6",
+      "tool": "search_knowledge",
+      "purpose": "检索XQ-05推广前置条件完整内容及试点周期起止日期",
+      "needIds": [
+        "n4",
+        "n5"
+      ],
+      "query": "XQ-05 推广前置条件 三项条件 权限 数据 试点周期 2026-08-31 2026-10-11 六周",
+      "expression": "",
+      "status": "ok",
+      "newEvidenceCount": 0,
+      "detail": "返回 6 条候选资料，新增 0 条；等待模型核对覆盖",
+      "evidenceIds": [
+        "E4",
+        "E1",
+        "E8",
+        "E6",
+        "E5",
+        "E7"
+      ],
+      "result": {
+        "candidateCount": 8,
+        "evidenceIds": [
+          "E4",
+          "E1",
+          "E8",
+          "E6",
+          "E5",
+          "E7"
+        ]
+      },
+      "durationMs": 17
+    },
+    {
+      "callId": "12:tool:7",
+      "tool": "search_knowledge",
+      "purpose": "检索03-试点测量结果中检索耗时基线（baseline_seconds）和试点期平均检索耗时数据",
+      "needIds": [
+        "n2"
+      ],
+      "query": "03-试点测量结果 检索耗时 baseline_seconds 平均检索耗时 客服 售前 降低比例",
+      "expression": "",
+      "status": "ok",
+      "newEvidenceCount": 0,
+      "detail": "返回 3 条候选资料，新增 0 条；等待模型核对覆盖",
+      "evidenceIds": [
+        "E8",
+        "E9",
+        "E2"
+      ],
+      "result": {
+        "candidateCount": 3,
+        "evidenceIds": [
+          "E8",
+          "E9",
+          "E2"
+        ]
+      },
+      "durationMs": 20
+    },
+    {
+      "callId": "12:tool:8",
+      "tool": "search_knowledge",
+      "purpose": "检索04-预算与成本明细中六周全量含税成本各项费用明细",
+      "needIds": [
+        "n3"
+      ],
+      "query": "04-预算与成本明细 六周 含税 人民币 费用项 合计 150000",
+      "expression": "",
+      "status": "ok",
+      "newEvidenceCount": 0,
+      "detail": "返回 2 条候选资料，新增 0 条；等待模型核对覆盖",
+      "evidenceIds": [
+        "E12",
+        "E8"
+      ],
+      "result": {
+        "candidateCount": 3,
+        "evidenceIds": [
+          "E12",
+          "E8"
+        ]
+      },
+      "durationMs": 23
+    },
+    {
+      "callId": "12:tool:9",
+      "tool": "search_knowledge",
+      "purpose": "检索05-数据权限与推广条件中XQ-05三项推广前置条件完整内容",
+      "needIds": [
+        "n4",
+        "n5"
+      ],
+      "query": "05-数据权限与推广条件 XQ-05 三项前置条件 权限 数据 推广 试点周期 起止日期",
+      "expression": "",
+      "status": "ok",
+      "newEvidenceCount": 0,
+      "detail": "返回 3 条候选资料，新增 0 条；等待模型核对覆盖",
+      "evidenceIds": [
+        "E5",
+        "E6",
+        "E8"
+      ],
+      "result": {
+        "candidateCount": 4,
+        "evidenceIds": [
+          "E5",
+          "E6",
+          "E8"
+        ]
+      },
+      "durationMs": 20
+    },
+    {
+      "callId": "12:tool:10",
+      "tool": "search_knowledge",
+      "purpose": "检索检索耗时基线数据（baseline_seconds）和试点期检索耗时，用于计算降低比例",
+      "needIds": [
+        "n2"
+      ],
+      "query": "星桥试点 检索耗时 baseline_seconds 平均耗时 降低 秒 客服 售前",
+      "expression": "",
+      "status": "reused",
+      "newEvidenceCount": 0,
+      "result": {
+        "candidateCount": 6,
+        "evidenceIds": [
+          "E8",
+          "E9",
+          "E11",
+          "E2",
+          "E10",
+          "E3"
+        ]
+      },
+      "evidenceIds": [
+        "E8",
+        "E9",
+        "E11",
+        "E2",
+        "E10",
+        "E3"
+      ],
+      "reusedCallId": "12:tool:4",
+      "detail": "已复用此前结果；没有再次执行或消耗工具预算"
+    },
+    {
+      "callId": "12:tool:11",
+      "tool": "search_knowledge",
+      "purpose": "检索六周全量含税成本明细",
+      "needIds": [
+        "n3"
+      ],
+      "query": "星桥试点 成本 含税 人民币 六周 费用 预算 实施成本",
+      "expression": "",
+      "status": "reused",
+      "newEvidenceCount": 0,
+      "result": {
+        "candidateCount": 6,
+        "evidenceIds": [
+          "E12",
+          "E11",
+          "E2",
+          "E3",
+          "E8"
+        ]
+      },
+      "evidenceIds": [
+        "E12",
+        "E11",
+        "E2",
+        "E3",
+        "E8"
+      ],
+      "reusedCallId": "12:tool:5",
+      "detail": "已复用此前结果；没有再次执行或消耗工具预算"
+    },
+    {
+      "callId": "12:tool:12",
+      "tool": "search_knowledge",
+      "purpose": "检索XQ-05推广前置条件完整内容及试点周期起止日期",
+      "needIds": [
+        "n4",
+        "n5"
+      ],
+      "query": "XQ-05 推广前置条件 三项条件 权限 数据 试点周期 2026-08-31 2026-10-11 六周",
+      "expression": "",
+      "status": "reused",
+      "newEvidenceCount": 0,
+      "result": {
+        "candidateCount": 8,
+        "evidenceIds": [
+          "E4",
+          "E1",
+          "E8",
+          "E6",
+          "E5",
+          "E7"
+        ]
+      },
+      "evidenceIds": [
+        "E4",
+        "E1",
+        "E8",
+        "E6",
+        "E5",
+        "E7"
+      ],
+      "reusedCallId": "12:tool:6",
+      "detail": "已复用此前结果；没有再次执行或消耗工具预算"
+    }
+  ]
+}

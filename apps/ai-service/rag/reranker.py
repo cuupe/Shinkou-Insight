@@ -36,7 +36,9 @@ class LexicalReranker:
                 if item.fusion_score is not None
                 else item.score or 0.0
             )
-            score = min(1.0, lexical * 0.65 + min(1.0, base) * 0.2 + phrase_bonus)
+            # A strong vector/fusion rank alone cannot turn zero lexical
+            # support into an apparently relevant result in this lexical adapter.
+            score = min(1.0, lexical * (0.65 + min(1.0, base) * 0.2) + phrase_bonus)
             item.rerank_score = round(score, 6)
             ranked.append(item)
         return sorted(ranked, key=lambda item: item.rerank_score or 0, reverse=True)

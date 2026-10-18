@@ -39,7 +39,12 @@ def render_evidence_context(
             max_chars=160,
         )
         content = sanitize_untrusted_text(item.get("content"), max_chars=4_000)
-        block = f'<evidence id="{evidence_id}" source="{source}">{content}</evidence>'
+        metadata = " ".join(
+            f'{key}="{sanitize_untrusted_text(item.get(key) or item.get(alias), max_chars=300)}"'
+            for key, alias in (("url", "url"), ("published_at", "publishedAt"), ("retrieved_at", "retrievedAt"), ("content_kind", "contentKind"))
+            if item.get(key) or item.get(alias)
+        )
+        block = f'<evidence id="{evidence_id}" source="{source}" {metadata}>{content}</evidence>'
         if used + len(block) + 1 > max_chars:
             break
         sections.append(block)

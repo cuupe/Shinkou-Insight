@@ -60,6 +60,24 @@ class AgentServiceProgressTest {
     }
 
     @Test
+    void durableSnapshotRecoversTerminalContentWhenNoStreamEventRemains() {
+        run.setStatus("COMPLETED");
+        answer.setStatus("COMPLETED"); answer.setContent("1+1=2");
+        when(mapper.findEvents("run-1", 100L)).thenReturn(List.of());
+        var snapshot = service.snapshot(1L,1L,1L,"run-1",100L);
+        assertEquals("COMPLETED",snapshot.get("status"));
+        assertEquals("1+1=2",snapshot.get("content"));
+        assertEquals("answer-1",snapshot.get("messageId"));
+        assertEquals(List.of(),snapshot.get("events"));
+    }
+
+    @Test
+    void snapshotDoesNotLeakRunsAcrossWorkspaceAccess() {
+        assertThrows(com.cuupe.backend.common.exception.ApiException.class,
+                () -> service.snapshot(99L,1L,1L,"run-1",null));
+    }
+
+    @Test
     void storedContextIsAnchoredToTheCurrentTurnAndExcludesFailedAnswers() {
         run.setUserMessageId(25L);
         AgentMessage earlier = new AgentMessage();
@@ -87,6 +105,33 @@ class AgentServiceProgressTest {
     private void callback(String type, Map<String, Object> payload) {
         service.handleAiCallback("run-1", Map.of("projectId", 1L, "userId", 1L,
                 "eventType", type, "payload", payload));
+    }
+
+    @Test
+    void semanticDecisionsAndStructuredFailureSurviveHistoryReplay() {
+        Map<String, Object> decision = Map.of("id", "decision-1", "summary", "只查到了附加费，尚缺基础房费",
+                "rationale", "补查费用组成", "needs", List.of(Map.of("id", "base", "status", "missing")));
+        callback("decision.updated", Map.of("decision", decision));
+        callback("decision.updated", Map.of("decision", decision));
+        var error = Map.of("code", "DECISION_SCHEMA", "stage", "decision", "message", "模型决策格式无效", "remedy", "检查结构化输出能力", "retryable", false);
+        callback("run.failed", Map.of("message", "模型决策格式无效", "error", error));
+        var restored = restoredAnswer();
+        assertEquals(1, ((List<?>) restored.get("decisions")).size());
+        assertEquals(error, restored.get("executionError"));
+        assertNull(restored.get("thinking"));
+    }
+
+    @Test
+    void oneToolCallHasOneLifecycleAndEmptyReuseBlockedHaveDistinctStatuses() {
+        callback("tool.started", Map.of("tool", "search_knowledge", "callId", "call-1", "detail", "核对房费"));
+        callback("tool.completed", Map.of("tool", "search_knowledge", "callId", "call-1", "status", "no_results", "detail", "没有候选"));
+        callback("tool.reused", Map.of("tool", "search_knowledge", "callId", "call-2", "detail", "复用结果"));
+        callback("tool.blocked", Map.of("tool", "search_web", "callId", "call-3", "detail", "来源不匹配"));
+        List<?> steps = (List<?>) restoredAnswer().get("events");
+        assertEquals(3, steps.size());
+        assertEquals("empty", ((Map<?, ?>) steps.get(0)).get("status"));
+        assertEquals("reused", ((Map<?, ?>) steps.get(1)).get("status"));
+        assertEquals("blocked", ((Map<?, ?>) steps.get(2)).get("status"));
     }
 
     @SuppressWarnings("unchecked")

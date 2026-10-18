@@ -14,6 +14,7 @@ from agents.contracts import AgentMessage
 from agents.runtime import AgentRuntime
 from api.dependencies import http_model_error, verify_internal_api_key
 from config import get_settings
+from core import clock
 from models.llm import ModelGatewayError, build_model_gateway, fetch_model_context_window
 from models.schemas import (
     HealthResponse,
@@ -45,7 +46,9 @@ def _whisper_available() -> bool:
 
 @router.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    return HealthResponse(status="ok", service=settings.app_name, mode=settings.llm_mode)
+    now = clock.current_time()
+    return HealthResponse(status="ok", service=settings.app_name, mode=settings.llm_mode,
+                          current_date=now.date().isoformat(), current_time=now.isoformat(), time_zone=clock.timezone_name())
 
 
 @router.get(
@@ -54,7 +57,7 @@ async def health() -> HealthResponse:
     dependencies=[Depends(verify_internal_api_key)],
 )
 async def internal_health() -> HealthResponse:
-    return HealthResponse(status="ok", service=settings.app_name, mode=settings.llm_mode)
+    return await health()
 
 
 @router.get("/internal/runtime/status", dependencies=[Depends(verify_internal_api_key)])

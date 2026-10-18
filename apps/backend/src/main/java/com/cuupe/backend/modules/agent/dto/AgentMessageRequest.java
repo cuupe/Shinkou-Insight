@@ -28,6 +28,7 @@ public class AgentMessageRequest {
     private Integer maxTokens;
     private Double frequencyPenalty;
     private String reasoningEffort;
+    private String decisionReasoningEffort;
     private Long modelConfigId;
     private List<Map<String, Object>> contextMessages = new ArrayList<>();
 }

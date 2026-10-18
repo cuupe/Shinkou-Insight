@@ -77,7 +77,7 @@ async def test_evidence_analyst_does_not_stop_on_irrelevant_hits():
 
 
 @pytest.mark.asyncio
-async def test_web_researcher_uses_focused_query_for_provider():
+async def test_web_worker_preserves_query_selected_by_semantic_planner():
     class Search:
         def __init__(self):
             self.queries = []
@@ -109,7 +109,7 @@ async def test_web_researcher_uses_focused_query_for_provider():
     )
     assert len(search.queries) == 1
     assert "光伏产业" in search.queries[0]
-    assert "整理一个报告" not in search.queries[0]
+    assert search.queries[0] == "梳理一下当前光伏产业的情况，整理一个报告给我，内容要全面"
 
 
 def test_complex_evaluation_requires_multiple_steps_and_synthesis():

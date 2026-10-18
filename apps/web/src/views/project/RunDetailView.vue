@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import DOMPurify from "dompurify";
+import MarkdownIt from "markdown-it";
 import { ArrowLeft, ArrowRight, Check, CircleAlert, Clock3, Copy, Database, FileText, LoaderCircle, Pause, Play, Plus, RefreshCw, Square } from "@lucide/vue";
 import { useRoute, useRouter } from "vue-router";
 import PageHeader from "@/components/common/PageHeader.vue";
@@ -8,7 +10,7 @@ import { useWorkspace } from "@/composables/useWorkspace";
 import { useResearchRun } from "@/composables/useResearchRun";
 import { runsApi } from "@/api/runs";
 import type { ResearchPlanStep } from "@/api/types";
-import { researchElapsed, researchErrorHelp, researchEvents, researchReport, researchStageIndex, researchStages, researchSummary } from "@/utils/researchRun";
+import { researchElapsed, researchErrorHelp, researchEvents, researchMarkdown, researchOutcome, researchSections, researchVisibleList, researchStageIndex, researchStages, researchSummary } from "@/utils/researchRun";
 
 const router = useRouter();
 const route = useRoute();
@@ -19,7 +21,10 @@ const selectedEvidence = ref("");
 const newStep = ref({ objective: "", action: "SEARCH_INTERNAL" as ResearchPlanStep["action"], query: "" });
 const status = computed(() => String(run.value?.status || "PENDING").toUpperCase());
 const labels: Record<string, string> = { PENDING: "等待执行", QUEUED: "排队中", RUNNING: "分析中", PAUSED: "已请求暂停", CANCELLING: "正在取消", COMPLETED: "分析完成", FAILED: "分析失败", CANCELLED: "已取消" };
-const statusText = computed(() => labels[status.value] || status.value);
+const outcome = computed(() => researchOutcome(run.value));
+const statusText = computed(() => status.value === "COMPLETED" && outcome.value !== "COMPLETE"
+  ? outcome.value === "NEEDS_INPUT" ? "待补充资料" : "部分结果" : labels[status.value] || status.value);
+const canReview = computed(() => status.value === "COMPLETED" && outcome.value === "COMPLETE");
 const progress = computed(() => Math.min(100, Math.max(0, Number(run.value?.progress) || 0)));
 const events = computed(() => researchEvents(run.value));
 const latestWait = computed(() => [...events.value].reverse().find(event => event.type === "node.waiting" && (!event.node || event.node === run.value?.currentNode))?.detail || "");
@@ -27,11 +32,13 @@ const stageIndex = computed(() => researchStageIndex(run.value));
 const elapsed = computed(() => researchElapsed(run.value, now.value));
 const planData = computed(() => run.value?.plan as { summary?: string; steps?: ResearchPlanStep[] } | undefined);
 const plan = computed(() => Array.isArray(planData.value?.steps) ? planData.value.steps : []);
-const report = computed(() => researchReport(run.value));
 const summary = computed(() => researchSummary(run.value));
-const reportSections = computed(() => Array.isArray(report.value?.sections) ? report.value.sections as { title?: string; content?: string }[] : []);
-const recommendations = computed(() => Array.isArray(report.value?.recommendations) ? report.value.recommendations : []);
-const limitations = computed(() => Array.isArray(report.value?.limitations) ? report.value.limitations : []);
+const reportSections = computed(() => researchSections(run.value));
+const recommendations = computed(() => researchVisibleList(run.value, "recommendations"));
+const limitations = computed(() => researchVisibleList(run.value, "limitations"));
+const markdown = new MarkdownIt({ html: false, linkify: false });
+markdown.disable("image");
+function renderSection(content: string) { return DOMPurify.sanitize(markdown.render(content)); }
 const editable = computed(() => active.value && status.value !== "CANCELLING");
 const disconnected = computed(() => Boolean(error.value) || run.value?.runtimeAvailable === false);
 const sinceActivity = computed(() => {
@@ -49,7 +56,8 @@ const tasks = computed(() => {
 const activityTitle = computed(() => {
   if (disconnected.value) return "暂时无法同步分析状态";
   if (status.value === "FAILED") return "本次分析未完成";
-  if (status.value === "COMPLETED") return "分析已完成，可以检查结论与证据";
+  if (status.value === "COMPLETED") return outcome.value === "NEEDS_INPUT" ? "需要补充资料后继续分析"
+    : outcome.value === "PARTIAL" ? "已整理部分结果，仍有待核实事项" : "分析已完成，可以检查结论与证据";
   if (status.value === "CANCELLED") return "本次分析已取消";
   if (status.value === "PAUSED") return "已请求暂停，将在当前步骤结束后等待";
   return String(run.value?.currentStep || "等待分析服务接收任务");
@@ -101,9 +109,7 @@ async function copyEvidence() {
   catch { notify("复制失败，请手动选择引用内容"); }
 }
 function exportReport() {
-  const content = [`# ${report.value?.title || "分析报告"}`, summary.value,
-    ...reportSections.value.map(section => `## ${section.title || "分析"}\n\n${section.content || ""}`),
-    "## 建议", ...recommendations.value.map(value => `- ${value}`), "## 限制与待确认事项", ...limitations.value.map(value => `- ${value}`)].join("\n\n");
+  const content = researchMarkdown(run.value);
   const url = URL.createObjectURL(new Blob([content], { type: "text/markdown;charset=utf-8" }));
   const link = document.createElement("a"); link.href = url; link.download = `分析报告-${route.params.runId}.md`; link.click(); URL.revokeObjectURL(url);
 }
@@ -125,7 +131,7 @@ function exportReport() {
         <div class="analysis-actions">
           <template v-if="editable"><button class="button button-secondary button-sm" :disabled="busy || disconnected" @click="control('pause')"><Play v-if="run.paused" :size="14" /><Pause v-else :size="14" />{{ run.paused ? '继续分析' : '暂停' }}</button><button class="button button-secondary button-sm" :disabled="busy" @click="control('cancel')"><Square :size="13" />取消</button></template>
           <button v-if="['FAILED','CANCELLED'].includes(status)" class="button button-primary button-sm" :disabled="busy" @click="control('retry')"><RefreshCw :size="14" />重新分析</button>
-          <button v-if="status === 'COMPLETED'" class="button button-primary button-sm" @click="go('project-review')">进入审查<ArrowRight :size="14" /></button>
+          <button v-if="canReview" class="button button-primary button-sm" @click="go('project-review')">进入审查<ArrowRight :size="14" /></button>
         </div>
       </header>
       <section class="analysis-progress" :class="{ 'has-error': status === 'FAILED' }" aria-label="分析进度">
@@ -155,9 +161,9 @@ function exportReport() {
           </section>
           <section class="analysis-section analysis-result">
             <div class="section-title"><div><h2>分析结果</h2><p>{{ summary ? '请结合来源与限制审阅以下结论' : '分析完成后显示真实结论、建议和限制' }}</p></div><button v-if="summary" class="text-button" @click="exportReport"><FileText :size="14" />导出</button></div>
-            <template v-if="summary"><p class="result-summary">{{ summary }}</p><div v-for="(section,index) in reportSections" :key="index" class="result-section"><h3>{{ section.title }}</h3><p>{{ section.content }}</p></div><div v-if="recommendations.length" class="result-section"><h3>建议</h3><ul><li v-for="(item,index) in recommendations" :key="index">{{ item }}</li></ul></div><div v-if="limitations.length" class="result-section"><h3>限制与待确认事项</h3><ul><li v-for="(item,index) in limitations" :key="index">{{ item }}</li></ul></div></template>
+            <template v-if="summary"><p class="result-summary">{{ summary }}</p><div v-for="(section,index) in reportSections" :key="index" class="result-section"><h3>{{ section.title }}</h3><div class="result-markdown" v-html="renderSection(section.content)"></div></div><div v-if="recommendations.length" class="result-section"><h3>建议</h3><ul><li v-for="(item,index) in recommendations" :key="index">{{ item }}</li></ul></div><div v-if="limitations.length" class="result-section"><h3>限制与待确认事项</h3><ul><li v-for="(item,index) in limitations" :key="index">{{ item }}</li></ul></div></template>
             <p v-else class="result-placeholder">{{ status === 'FAILED' ? '本次分析未完成，尚无可用结论。请处理失败原因后重新分析。' : status === 'COMPLETED' ? '本次运行未返回结论内容，请查看报告记录。' : '尚未生成分析结论。' }}</p>
-            <div v-if="status === 'COMPLETED'" class="result-next"><button class="button button-secondary button-sm" @click="go('project-reports')">查看报告<FileText :size="14" /></button><button class="text-button" @click="go('project-review')">下一步：审查定稿<ArrowRight :size="14" /></button></div>
+            <div v-if="status === 'COMPLETED'" class="result-next"><button class="button button-secondary button-sm" @click="go('project-reports')">查看报告<FileText :size="14" /></button><button v-if="canReview" class="text-button" @click="go('project-review')">下一步：审查定稿<ArrowRight :size="14" /></button><button v-else class="text-button" @click="go('project-assets')">查看资料与缺口<ArrowRight :size="14" /></button></div>
           </section>
         </div>
         <aside class="analysis-sidebar">
@@ -171,6 +177,14 @@ function exportReport() {
 
 <style scoped>
 .analysis-page { color: var(--workspace-text); width: 100%; max-width: 90rem; margin: 0 auto; }
+.result-markdown { overflow-x: auto; font-size: .8rem; line-height: 1.9; overflow-wrap: anywhere; white-space: normal; }
+.result-markdown :deep(p) { margin: .65rem 0; }
+.result-markdown :deep(table) { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+.result-markdown :deep(th),.result-markdown :deep(td) { padding: .65rem; border: 1px solid var(--workspace-divider); text-align: left; min-width: 5rem; }
+.result-markdown :deep(th) { background: var(--surface-soft); }
+.result-markdown :deep(h1),.result-markdown :deep(h2),.result-markdown :deep(h3) { margin: 1.2rem 0 .6rem; font-size: 1rem; }
+.result-markdown :deep(blockquote) { margin: .8rem 0; padding-left: .8rem; border-left: 2px solid var(--workspace-border); color: var(--workspace-muted); }
+.result-markdown :deep(pre) { overflow-x: auto; padding: .8rem; background: var(--surface-soft); }
 .analysis-nav,.analysis-heading,.analysis-actions,.section-title,.analysis-stats,.result-next { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .analysis-nav { margin-bottom: 1rem; }
 .analysis-heading { margin: 1.75rem 0 1.1rem; }
