@@ -64,13 +64,27 @@ watch([workspaceId, projectId], loadQuota);
     </div>
 
     <template v-if="quota">
-      <div class="storage-usage-track" role="progressbar" :aria-valuenow="quota.usagePercent" aria-valuemin="0" aria-valuemax="100">
+      <div
+        class="storage-usage-track"
+        role="progressbar"
+        :aria-valuenow="quota.usagePercent"
+        aria-valuemin="0"
+        aria-valuemax="100"
+      >
         <i :style="progressStyle" />
       </div>
       <div class="storage-usage-facts">
-        <span><i class="storage-dot file-dot" />文件库 <strong>{{ formatBytes(quota.fileBytes) }}</strong></span>
-        <span><i class="storage-dot knowledge-dot" />知识库 <strong>{{ formatBytes(quota.knowledgeBytes) }}</strong></span>
-        <span class="storage-remaining">剩余 {{ formatBytes(quota.remainingBytes) }}</span>
+        <span
+          ><i class="storage-dot file-dot" />文件库
+          <strong>{{ formatBytes(quota.fileBytes) }}</strong></span
+        >
+        <span
+          ><i class="storage-dot knowledge-dot" />知识库
+          <strong>{{ formatBytes(quota.knowledgeBytes) }}</strong></span
+        >
+        <span class="storage-remaining"
+          >剩余 {{ formatBytes(quota.remainingBytes) }}</span
+        >
       </div>
     </template>
   </section>
@@ -175,16 +189,38 @@ watch([workspaceId, projectId], loadQuota);
   border-radius: 50%;
 }
 
-.file-dot { background: #5c8bea; }
-.knowledge-dot { background: var(--teal); }
-.storage-remaining { margin-left: auto; color: var(--teal-dark); }
-.storage-usage-loading { color: var(--teal-dark); }
-.storage-usage-spin { animation: storage-usage-spin 1s linear infinite; }
-@keyframes storage-usage-spin { to { transform: rotate(360deg); } }
+.file-dot {
+  background: #5c8bea;
+}
+.knowledge-dot {
+  background: var(--teal);
+}
+.storage-remaining {
+  margin-left: auto;
+  color: var(--teal-dark);
+}
+.storage-usage-loading {
+  color: var(--teal-dark);
+}
+.storage-usage-spin {
+  animation: storage-usage-spin 1s linear infinite;
+}
+@keyframes storage-usage-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 @media (max-width: 42rem) {
-  .storage-usage-heading { align-items: flex-start; flex-direction: column; }
-  .storage-usage-total { align-self: flex-end; }
-  .storage-remaining { margin-left: 0; }
+  .storage-usage-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .storage-usage-total {
+    align-self: flex-end;
+  }
+  .storage-remaining {
+    margin-left: 0;
+  }
 }
 </style>

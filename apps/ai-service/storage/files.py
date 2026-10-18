@@ -62,7 +62,10 @@ class MinioFileStorage:
         self.bucket = bucket
         host = endpoint.removeprefix("http://").removeprefix("https://")
         self.client = Minio(
-            host, access_key=access_key, secret_key=secret_key, secure=secure,
+            host,
+            access_key=access_key,
+            secret_key=secret_key,
+            secure=secure,
             # The SDK default can wait minutes per connection attempt. Bound
             # failed connects so indexing can report a storage failure promptly.
             http_client=PoolManager(
@@ -98,9 +101,13 @@ class MinioFileStorage:
         except S3Error as exc:
             if exc.code == "NoSuchKey":
                 raise FileNotFoundError("资料原文件不存在，请重新上传") from exc
-            raise StorageUnavailableError("无法读取资料原文件，请检查文件存储服务的权限与存储桶配置") from exc
+            raise StorageUnavailableError(
+                "无法读取资料原文件，请检查文件存储服务的权限与存储桶配置"
+            ) from exc
         except HTTPError as exc:
-            raise StorageUnavailableError("文件存储服务连接失败，请恢复连接后重新索引") from exc
+            raise StorageUnavailableError(
+                "文件存储服务连接失败，请恢复连接后重新索引"
+            ) from exc
 
     async def delete(self, key: str) -> None:
         await asyncio.to_thread(self.client.remove_object, self.bucket, key)

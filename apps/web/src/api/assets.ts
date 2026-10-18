@@ -68,12 +68,24 @@ export const assetsApi = {
     workspaceId: number | string,
     projectId: number,
     assetId: number | string,
-    options: { page?: number; pageSize?: number; chunkId?: string; pageNumber?: number } = {},
+    options: {
+      page?: number;
+      pageSize?: number;
+      chunkId?: string;
+      pageNumber?: number;
+    } = {},
   ) =>
     unwrap<Record<string, unknown>[]>(
       anet.get<ApiResponse<Record<string, unknown>[]>>(
         `${projectPath(workspaceId, projectId)}/assets/${assetId}/chunks`,
-        { params: { page: options.page ?? 1, pageSize: options.pageSize ?? 30, chunkId: options.chunkId, pageNumber: options.pageNumber } },
+        {
+          params: {
+            page: options.page ?? 1,
+            pageSize: options.pageSize ?? 30,
+            chunkId: options.chunkId,
+            pageNumber: options.pageNumber,
+          },
+        },
       ),
     ),
 

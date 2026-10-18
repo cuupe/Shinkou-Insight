@@ -122,7 +122,11 @@ onMounted(async () => {
     ]);
     if (detail) remoteAsset.value = mapRemoteAsset(detail);
     remoteContent.value = content;
-    if (!content && !citationTargetRequested.value && detail?.indexStatus === "SUCCESS") {
+    if (
+      !content &&
+      !citationTargetRequested.value &&
+      detail?.indexStatus === "SUCCESS"
+    ) {
       await loadChunkPage(1);
     }
     await applyCitationTarget();
@@ -168,7 +172,9 @@ const chunkRows = computed(() =>
   }),
 );
 const activeChunkRow = computed(
-  () => chunkRows.value.find((chunk) => chunk.index === activeChunk.value) ?? chunkRows.value[0],
+  () =>
+    chunkRows.value.find((chunk) => chunk.index === activeChunk.value) ??
+    chunkRows.value[0],
 );
 
 async function loadChunkPage(
@@ -186,7 +192,9 @@ async function loadChunkPage(
     );
     remoteChunks.value = chunks;
     chunkPage.value = target.chunkId || target.pageNumber ? 1 : page;
-    const firstIndex = Number(chunks[0]?.index ?? ((chunkPage.value - 1) * CHUNKS_PER_PAGE));
+    const firstIndex = Number(
+      chunks[0]?.index ?? (chunkPage.value - 1) * CHUNKS_PER_PAGE,
+    );
     activeChunk.value = firstIndex;
     await nextTick();
     document
@@ -217,7 +225,7 @@ async function applyCitationTarget() {
       : undefined;
     await loadChunkPage(1, {
       chunkId,
-      pageNumber: !chunkId ? citationPage.value ?? undefined : undefined,
+      pageNumber: !chunkId ? (citationPage.value ?? undefined) : undefined,
     });
   }
   if (!remoteChunks.value.length) return;
@@ -246,7 +254,9 @@ watch(
   () => void applyCitationTarget(),
 );
 
-const previewTruncated = computed(() => remoteContent.value.includes("[预览已截断]"));
+const previewTruncated = computed(() =>
+  remoteContent.value.includes("[预览已截断]"),
+);
 const statusDescription = computed(() => {
   if (asset.value.status === "indexed")
     return "资料已经完成解析和向量索引，可供 Agent 检索。";
@@ -436,7 +446,11 @@ async function copyChunkId() {
           <div v-if="activeSection === 'preview'" class="document-preview-wrap">
             <div class="document-toolbar">
               <span>{{ asset.type }} 文档预览</span
-              ><span>{{ previewTruncated ? "原文预览已截断" : "最后更新 " + asset.updated }}</span>
+              ><span>{{
+                previewTruncated
+                  ? "原文预览已截断"
+                  : "最后更新 " + asset.updated
+              }}</span>
             </div>
             <article class="document-preview">
               <p class="document-kicker">PROJECT KNOWLEDGE BASE</p>
@@ -473,7 +487,12 @@ async function copyChunkId() {
                     v-if="previewPageCount > 1"
                     type="button"
                     :disabled="previewPage + 1 >= previewPageCount"
-                    @click="previewPage = Math.min(previewPage + 1, previewPageCount - 1)"
+                    @click="
+                      previewPage = Math.min(
+                        previewPage + 1,
+                        previewPageCount - 1,
+                      )
+                    "
                   >
                     下一段<ChevronRight :size="15" />
                   </button>

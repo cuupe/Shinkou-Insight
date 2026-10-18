@@ -3,7 +3,10 @@ declare module "markdown-it-texmath" {
 
   type TexMathOptions = {
     engine?: {
-      renderToString(expression: string, options?: Record<string, unknown>): string;
+      renderToString(
+        expression: string,
+        options?: Record<string, unknown>,
+      ): string;
     };
     delimiters?: string | string[];
     outerSpace?: boolean;

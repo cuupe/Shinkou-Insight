@@ -14,7 +14,9 @@ async def test_standard_security_harness_passes_without_external_model():
 
 @pytest.mark.asyncio
 async def test_harness_can_run_selected_case_only():
-    report = await run_harness(workspace_id=1, project_id=2, case_ids=["tenant-scope-boundary"])
+    report = await run_harness(
+        workspace_id=1, project_id=2, case_ids=["tenant-scope-boundary"]
+    )
     assert report["totalCases"] == 1
     assert report["results"][0]["status"] == "PASS"
 

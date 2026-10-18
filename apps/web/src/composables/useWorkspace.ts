@@ -33,7 +33,7 @@ import { statisticsApi } from "@/api/statistics";
 import { getLastProjectId, rememberLastProject } from "@/utils/lastProject";
 import { formatDateTime } from "@/lib/utils";
 import { reportTextFields } from "@/utils/reportContent";
-import {actionRow, type ActionRow} from "@/utils/actionWorkflow";
+import { actionRow, type ActionRow } from "@/utils/actionWorkflow";
 import type {
   AuthUser,
   KnowledgeAsset,

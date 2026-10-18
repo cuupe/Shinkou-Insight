@@ -44,7 +44,9 @@ class LexicalReranker:
         return sorted(ranked, key=lambda item: item.rerank_score or 0, reverse=True)
 
 
-def retain_relevant_items(query: str, items: list[RetrievalItem]) -> list[RetrievalItem]:
+def retain_relevant_items(
+    query: str, items: list[RetrievalItem]
+) -> list[RetrievalItem]:
     """Drop weak lexical matches while honoring an explicit file constraint.
 
     The current deterministic reranker scores irrelevant vector neighbors near
@@ -56,6 +58,7 @@ def retain_relevant_items(query: str, items: list[RetrievalItem]) -> list[Retrie
     if explicit_file_names(query):
         return items
     return [
-        item for item in items
+        item
+        for item in items
         if item.rerank_score is not None and item.rerank_score >= MIN_RELEVANCE_SCORE
     ]

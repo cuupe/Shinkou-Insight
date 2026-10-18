@@ -80,7 +80,8 @@ class InMemoryRetriever:
             if allowed_assets and str(chunk.get("asset_id")) not in allowed_assets:
                 continue
             if file_names and not asset_name_matches(
-                str(chunk.get("asset_name") or chunk.get("source_name") or ""), file_names
+                str(chunk.get("asset_name") or chunk.get("source_name") or ""),
+                file_names,
             ):
                 continue
             candidates.append(chunk)
@@ -111,7 +112,11 @@ class InMemoryRetriever:
         )
         # A document constraint permits reading its other chapters even when
         # the body does not repeat the filename or the query's search terms.
-        matched = ranked if file_names or allowed_assets else [item for item in ranked if item[0] > 0]
+        matched = (
+            ranked
+            if file_names or allowed_assets
+            else [item for item in ranked if item[0] > 0]
+        )
         if not matched and ranked and retrieval_mode.upper() != "KEYWORD":
             # The legacy in-memory adapter may have no multilingual embedding
             # provider. Keep semantic-mode behavior useful in local/dev mode
@@ -134,7 +139,11 @@ class InMemoryRetriever:
         ]
         if use_reranker:
             reranked = await LexicalReranker().rerank(question, items)
-            return reranked if file_names or allowed_assets else retain_relevant_items(question, reranked)
+            return (
+                reranked
+                if file_names or allowed_assets
+                else retain_relevant_items(question, reranked)
+            )
         return items
 
 
@@ -182,7 +191,12 @@ class PostgresKeywordRetriever:
         filters = filters or {}
         asset_ids = [int(value) for value in filters.get("assetIds", [])]
         rows = await fetch_keyword_rows(
-            self._pool, workspace_id, project_id, question, asset_ids, top_k,
+            self._pool,
+            workspace_id,
+            project_id,
+            question,
+            asset_ids,
+            top_k,
         )
         items = [
             Evidence(
@@ -201,5 +215,9 @@ class PostgresKeywordRetriever:
         ]
         if use_reranker:
             reranked = await LexicalReranker().rerank(question, items)
-            return reranked if asset_ids or explicit_file_names(question) else retain_relevant_items(question, reranked)
+            return (
+                reranked
+                if asset_ids or explicit_file_names(question)
+                else retain_relevant_items(question, reranked)
+            )
         return items

@@ -2,7 +2,12 @@ import httpx
 import pytest
 
 from tools.multi_source_search import MultiSourceWebSearch
-from tools.web import BingWebSearch, BraveWebSearch, DuckDuckGoWebSearch, validate_web_source
+from tools.web import (
+    BingWebSearch,
+    BraveWebSearch,
+    DuckDuckGoWebSearch,
+    validate_web_source,
+)
 
 
 @pytest.mark.asyncio
@@ -28,7 +33,9 @@ async def test_brave_search_maps_results_to_citable_evidence():
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
-        results = await BraveWebSearch(client=client, api_key="key", base_url="https://search.test").search("PostgreSQL vector search")
+        results = await BraveWebSearch(
+            client=client, api_key="key", base_url="https://search.test"
+        ).search("PostgreSQL vector search")
 
     assert len(results) == 1
     assert results[0].source_type == "web"
@@ -62,9 +69,9 @@ async def test_brave_preserves_candidates_for_semantic_relevance_assessment():
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
-        results = await BraveWebSearch(client=client, api_key="key", base_url="https://search.test").search(
-            "ZUN 最新作品是什么", top_k=5
-        )
+        results = await BraveWebSearch(
+            client=client, api_key="key", base_url="https://search.test"
+        ).search("ZUN 最新作品是什么", top_k=5)
 
     assert len(results) == 2
     assert results[1].url == "https://example.com/zun"
@@ -99,7 +106,9 @@ async def test_duckduckgo_search_maps_redirected_html_results():
 async def test_duckduckgo_search_falls_back_to_bing_when_no_results_are_parseable():
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "duck.test":
-            return httpx.Response(200, text="<html><body>challenge</body></html>", request=request)
+            return httpx.Response(
+                200, text="<html><body>challenge</body></html>", request=request
+            )
         assert request.url.host == "www.bing.com"
         return httpx.Response(
             200,
@@ -114,9 +123,9 @@ async def test_duckduckgo_search_falls_back_to_bing_when_no_results_are_parseabl
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
-        results = await DuckDuckGoWebSearch(client=client, base_url="https://duck.test").search(
-            "graphics", top_k=1
-        )
+        results = await DuckDuckGoWebSearch(
+            client=client, base_url="https://duck.test"
+        ).search("graphics", top_k=1)
         assert results[0].url == "https://graphics.example.org"
 
 
@@ -136,7 +145,9 @@ async def test_bing_search_maps_html_results_to_citable_evidence():
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
-        results = await BingWebSearch(client=client).search("graphics progress", top_k=1)
+        results = await BingWebSearch(client=client).search(
+            "graphics progress", top_k=1
+        )
 
     assert len(results) == 1
     assert results[0].url == "https://graphics.example.org"
@@ -153,7 +164,15 @@ async def test_multi_source_search_fuses_general_and_technical_sources():
         if request.url.host == "api.github.com":
             return httpx.Response(
                 200,
-                json={"items": [{"full_name": "psycopg/psycopg", "html_url": "https://github.com/psycopg/psycopg", "description": "PostgreSQL driver"}]},
+                json={
+                    "items": [
+                        {
+                            "full_name": "psycopg/psycopg",
+                            "html_url": "https://github.com/psycopg/psycopg",
+                            "description": "PostgreSQL driver",
+                        }
+                    ]
+                },
                 request=request,
             )
         raise AssertionError(f"unexpected host: {request.url.host}")
@@ -164,8 +183,14 @@ async def test_multi_source_search_fuses_general_and_technical_sources():
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
-        search = MultiSourceWebSearch(client=client, general=General(), sources=["general", "github"])
-        results = await search.search_semantic("PostgreSQL technical implementation", top_k=3, sources=["general", "github"])
+        search = MultiSourceWebSearch(
+            client=client, general=General(), sources=["general", "github"]
+        )
+        results = await search.search_semantic(
+            "PostgreSQL technical implementation",
+            top_k=3,
+            sources=["general", "github"],
+        )
 
     assert calls == ["api.github.com"]
     assert results[0].url == "https://github.com/psycopg/psycopg"

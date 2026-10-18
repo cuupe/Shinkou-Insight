@@ -96,7 +96,9 @@ export function formatDateTime(
   }
 
   const date =
-    value instanceof Date || typeof value === "string" || typeof value === "number"
+    value instanceof Date ||
+    typeof value === "string" ||
+    typeof value === "number"
       ? parseDateTime(value)
       : null;
   if (date && !Number.isNaN(date.getTime())) {

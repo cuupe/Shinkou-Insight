@@ -177,8 +177,14 @@ class ReportDraft(ApiModel):
     sections: list[dict[str, Any]] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
-    evidence_ids: list[str] = Field(default_factory=list, description="Retrieved knowledge/web evidence IDs only, such as E1. User inputs and project fields belong in context_source_ids")
-    context_source_ids: list[str] = Field(default_factory=list, description="Exact trusted user/project source IDs such as U1 or project.constraints. These identify supplied inputs, not independent measurements or knowledge citations")
+    evidence_ids: list[str] = Field(
+        default_factory=list,
+        description="Retrieved knowledge/web evidence IDs only, such as E1. User inputs and project fields belong in context_source_ids",
+    )
+    context_source_ids: list[str] = Field(
+        default_factory=list,
+        description="Exact trusted user/project source IDs such as U1 or project.constraints. These identify supplied inputs, not independent measurements or knowledge citations",
+    )
 
 
 class ReviewResult(ApiModel):
@@ -274,7 +280,12 @@ class ResearchConfig(ApiModel):
     audit_reasoning_effort: Literal["none", "low", "medium", "high"] = "low"
     audit_thinking_budget: int = Field(default=256, ge=128, le=32768)
     decision_timeout_seconds: float = Field(default=180, gt=0, le=600)
-    research_completion_grace_seconds: float = Field(default=120, ge=0, le=300, description="One fixed completion grace for research decisions with visible response content; does not extend idle waits or the total run deadline")
+    research_completion_grace_seconds: float = Field(
+        default=120,
+        ge=0,
+        le=300,
+        description="One fixed completion grace for research decisions with visible response content; does not extend idle waits or the total run deadline",
+    )
     model_first_response_timeout_seconds: float = Field(default=25, gt=0, le=120)
     model_idle_timeout_seconds: float = Field(default=20, gt=0, le=120)
     chat_timeout_seconds: float = Field(default=180, gt=0, le=1800)

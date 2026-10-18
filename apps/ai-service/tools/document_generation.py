@@ -59,7 +59,9 @@ def _normalise_markdown(markdown: str, sources: list[dict[str, Any]]) -> str:
     protected = re.sub(r"(```[\s\S]*?```|~~~[\s\S]*?~~~)", protect, content)
     protected = re.sub(r"^(#{1,6})(?=[^#\s])", r"\1 ", protected, flags=re.MULTILINE)
     protected = re.sub(r"^(\s*)([-+])(?=\S)", r"\1\2 ", protected, flags=re.MULTILINE)
-    protected = re.sub(r"^(\s*)(\d+[.)])(?=\S)", r"\1\2 ", protected, flags=re.MULTILINE)
+    protected = re.sub(
+        r"^(\s*)(\d+[.)])(?=\S)", r"\1\2 ", protected, flags=re.MULTILINE
+    )
 
     def restore(match: re.Match[str]) -> str:
         return fenced_blocks[int(match.group(1))]
@@ -149,12 +151,16 @@ def _add_markdown_runs(paragraph: Any, text: str) -> None:
             run = paragraph.add_run(text[cursor : match.start()])
             _set_run_font(run)
         if match.group("link_label") and match.group("link_url"):
-            _add_hyperlink(paragraph, match.group("link_label"), match.group("link_url"))
+            _add_hyperlink(
+                paragraph, match.group("link_label"), match.group("link_url")
+            )
         elif match.group("image_label"):
             run = paragraph.add_run(match.group("image_label"))
             _set_run_font(run, italic=True, color="666666")
         elif match.group("strong_text") or match.group("strong_alt"):
-            run = paragraph.add_run(match.group("strong_text") or match.group("strong_alt"))
+            run = paragraph.add_run(
+                match.group("strong_text") or match.group("strong_alt")
+            )
             _set_run_font(run, bold=True)
         elif match.group("strike_text"):
             run = paragraph.add_run(match.group("strike_text"))
@@ -215,7 +221,11 @@ def _is_block_start(lines: list[str], index: int) -> bool:
         return True
     if re.match(r"^\s*(?:[-*_]\s*){3,}$", value):
         return True
-    return index + 1 < len(lines) and "|" in value and _is_table_separator(lines[index + 1])
+    return (
+        index + 1 < len(lines)
+        and "|" in value
+        and _is_table_separator(lines[index + 1])
+    )
 
 
 def _parse_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
@@ -243,16 +253,32 @@ def _parse_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
                 index += 1
             if index < len(lines):
                 index += 1
-            blocks.append({"kind": "code", "language": fence.group(2), "text": "\n".join(code_lines)})
+            blocks.append(
+                {
+                    "kind": "code",
+                    "language": fence.group(2),
+                    "text": "\n".join(code_lines),
+                }
+            )
             continue
 
         heading = re.match(r"^\s*(#{1,6})\s+(.+?)\s*#*\s*$", line)
         if heading:
-            blocks.append({"kind": "heading", "level": len(heading.group(1)), "text": heading.group(2).strip()})
+            blocks.append(
+                {
+                    "kind": "heading",
+                    "level": len(heading.group(1)),
+                    "text": heading.group(2).strip(),
+                }
+            )
             index += 1
             continue
 
-        if index + 1 < len(lines) and "|" in line and _is_table_separator(lines[index + 1]):
+        if (
+            index + 1 < len(lines)
+            and "|" in line
+            and _is_table_separator(lines[index + 1])
+        ):
             headers = _split_table_row(line)
             alignments = _split_table_row(lines[index + 1])
             rows: list[list[str]] = []
@@ -260,7 +286,14 @@ def _parse_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
             while index < len(lines) and lines[index].strip() and "|" in lines[index]:
                 rows.append(_split_table_row(lines[index]))
                 index += 1
-            blocks.append({"kind": "table", "headers": headers, "alignments": alignments, "rows": rows})
+            blocks.append(
+                {
+                    "kind": "table",
+                    "headers": headers,
+                    "alignments": alignments,
+                    "rows": rows,
+                }
+            )
             continue
 
         if re.match(r"^\s*(?:[-*_]\s*){3,}$", line):
@@ -299,7 +332,11 @@ def _parse_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
                     )
                     index += 1
                     continue
-                if items and current.strip() and len(current) - len(current.lstrip()) > base_indent:
+                if (
+                    items
+                    and current.strip()
+                    and len(current) - len(current.lstrip()) > base_indent
+                ):
                     items[-1]["text"] += " " + current.strip()
                     index += 1
                     continue
@@ -395,7 +432,9 @@ def _write_docx(path: Path, markdown: str) -> None:
         kind = block["kind"]
         if kind == "heading":
             level = min(6, int(block["level"]))
-            style_name = "Title" if level == 1 and first_heading else f"Heading {min(level, 3)}"
+            style_name = (
+                "Title" if level == 1 and first_heading else f"Heading {min(level, 3)}"
+            )
             paragraph = document.add_paragraph(style=style_name)
             _add_markdown_runs(paragraph, block["text"])
             first_heading = False
@@ -437,14 +476,19 @@ def _write_docx(path: Path, markdown: str) -> None:
                 cell = table.rows[0].cells[column]
                 cell.text = ""
                 paragraph = cell.paragraphs[0]
-                _add_markdown_runs(paragraph, headers[column] if column < len(headers) else "")
+                _add_markdown_runs(
+                    paragraph, headers[column] if column < len(headers) else ""
+                )
                 for run in paragraph.runs:
                     run.bold = True
             for row in block["rows"]:
                 cells = table.add_row().cells
                 for column in range(width):
                     cells[column].text = ""
-                    _add_markdown_runs(cells[column].paragraphs[0], row[column] if column < len(row) else "")
+                    _add_markdown_runs(
+                        cells[column].paragraphs[0],
+                        row[column] if column < len(row) else "",
+                    )
         elif kind == "rule":
             paragraph = document.add_paragraph()
             properties = paragraph._p.get_or_add_pPr()

@@ -9,6 +9,7 @@ def test_mcp_bridge_rejects_non_allowlisted_tools():
     bridge = MCPToolBridge("http://localhost:1/mcp", allowed_tools={"search_knowledge"})
     with pytest.raises(MCPBridgeError):
         import asyncio
+
         asyncio.run(bridge.call("delete_everything", {}))
 
 
@@ -30,7 +31,9 @@ async def test_tool_registry_keeps_redacted_audit_history():
         return {"ok": True}
 
     registry.register(ToolSpec(name="demo", permission="READ"), handler)
-    await registry.execute("demo", run_id="run-1", input_data={"apiKey": "do-not-store"})
+    await registry.execute(
+        "demo", run_id="run-1", input_data={"apiKey": "do-not-store"}
+    )
     record = registry.history("run-1")[0]
     assert record["status"] == "SUCCEEDED"
     assert record["input_data"]["apiKey"] == "[REDACTED]"

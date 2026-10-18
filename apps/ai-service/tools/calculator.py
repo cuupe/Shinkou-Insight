@@ -1,4 +1,5 @@
 """Bounded arithmetic only: no eval, imports, attributes or arbitrary Python."""
+
 from __future__ import annotations
 
 import ast
@@ -15,7 +16,9 @@ def normalize_expression(expression: str) -> str:
     return value
 
 
-def calculate(expression: str, variables: dict[str, Any] | None = None) -> dict[str, str]:
+def calculate(
+    expression: str, variables: dict[str, Any] | None = None
+) -> dict[str, str]:
     value = normalize_expression(expression)
     if not value or len(value) > 2048:
         raise ValueError("表达式为空或过长")
@@ -25,7 +28,10 @@ def calculate(expression: str, variables: dict[str, Any] | None = None) -> dict[
     variables = variables or {}
 
     def bounded(number: Fraction) -> Fraction:
-        if number.numerator.bit_length() > 12000 or number.denominator.bit_length() > 12000:
+        if (
+            number.numerator.bit_length() > 12000
+            or number.denominator.bit_length() > 12000
+        ):
             raise ValueError("计算结果超出安全长度")
         return number
 
@@ -55,7 +61,11 @@ def calculate(expression: str, variables: dict[str, Any] | None = None) -> dict[
             elif isinstance(node.op, ast.Pow):
                 if right.denominator != 1 or abs(right) > 1000:
                     raise ValueError("仅支持绝对值不超过 1000 的整数指数")
-                if max(left.numerator.bit_length(), left.denominator.bit_length()) * abs(right) > 12000:
+                if (
+                    max(left.numerator.bit_length(), left.denominator.bit_length())
+                    * abs(right)
+                    > 12000
+                ):
                     raise ValueError("幂运算超出安全长度")
                 result = left ** int(right)
             else:

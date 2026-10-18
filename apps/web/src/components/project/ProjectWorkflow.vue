@@ -92,7 +92,9 @@ function stepClass(index: number) {
       <span class="project-workflow-summary-copy">
         <span class="project-workflow-kicker">PROJECT DELIVERY FLOW</span>
         <strong>从项目输入到交付与跟进</strong>
-        <small>先形成报告，落实前置行动并验收，再返回审查签署、发布成果。</small>
+        <small
+          >先形成报告，落实前置行动并验收，再返回审查签署、发布成果。</small
+        >
       </span>
       <span class="project-workflow-summary-side">
         <span v-if="activeStep" class="project-workflow-current">

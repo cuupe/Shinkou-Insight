@@ -238,8 +238,7 @@ def diversify_candidates(
                         len(current & token_sets[item.key])
                         / max(len(current | token_sets[item.key]), 1)
                         for item in selected
-                        if groups is None
-                        or groups[candidate.key] == groups[item.key]
+                        if groups is None or groups[candidate.key] == groups[item.key]
                     ),
                     default=0.0,
                 )
@@ -250,9 +249,7 @@ def diversify_candidates(
                 # relevance for the MMR decision only; preserve the original
                 # fused score in the returned candidate.
                 relevance = (
-                    candidate.score / max_relevance
-                    if max_relevance > 0
-                    else 1.0
+                    candidate.score / max_relevance if max_relevance > 0 else 1.0
                 )
                 return value * relevance - (1.0 - value) * redundancy
 

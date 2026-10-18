@@ -1207,9 +1207,7 @@ async function saveModel() {
               class="connection-reuse-note edit-connection-note"
             >
               <Settings2 :size="14" />正在编辑
-              {{
-                editingModel?.name || "当前模型"
-              }}
+              {{ editingModel?.name || "当前模型" }}
               的服务连接。修改地址或提供方只影响当前模型，不会自动修改同一平台下的其他模型。
             </p>
             <p v-if="usingExistingConnection" class="connection-reuse-note">

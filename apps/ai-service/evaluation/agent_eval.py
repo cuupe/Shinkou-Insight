@@ -51,8 +51,12 @@ class AgentEvaluation:
 
 def _event_parts(event: Any) -> tuple[str, dict[str, Any]]:
     if isinstance(event, dict):
-        return str(event.get("event_type") or event.get("type") or ""), dict(event.get("payload") or {})
-    return str(getattr(event, "event_type", "")), dict(getattr(event, "payload", {}) or {})
+        return str(event.get("event_type") or event.get("type") or ""), dict(
+            event.get("payload") or {}
+        )
+    return str(getattr(event, "event_type", "")), dict(
+        getattr(event, "payload", {}) or {}
+    )
 
 
 def evaluate_tool_usage(
@@ -67,7 +71,10 @@ def evaluate_tool_usage(
             started.append(str(payload["tool"]))
         if event_type in {"tool.failed", "tool.error"} or payload.get("failed") is True:
             failed += 1
-        if event_type in {"tool.denied", "tool.blocked"} or payload.get("denied") is True:
+        if (
+            event_type in {"tool.denied", "tool.blocked"}
+            or payload.get("denied") is True
+        ):
             denied += 1
     used = set(started)
     expected = expected_tools or set()
@@ -87,7 +94,13 @@ def evaluate_tool_usage(
         passed=not failed and not missing,
         score=round(max(score, 0.0), 4),
         findings=tuple(findings),
-        metrics={"calls": len(started), "tools": sorted(used), "failed": failed, "denied": denied, "missing": missing},
+        metrics={
+            "calls": len(started),
+            "tools": sorted(used),
+            "failed": failed,
+            "denied": denied,
+            "missing": missing,
+        },
     )
 
 
@@ -102,7 +115,10 @@ def evaluate_resource_quality(
     relevant = [
         item
         for item in rows
-        if topic_score(goal, f"{item.source_name}\n{item.section_title or ''}\n{item.content}") > 0
+        if topic_score(
+            goal, f"{item.source_name}\n{item.section_title or ''}\n{item.content}"
+        )
+        > 0
     ]
     web_rows = [item for item in relevant if item.source_type == "web"]
     citation_ready_web = [
@@ -117,7 +133,11 @@ def evaluate_resource_quality(
     else:
         passed = bool(relevant) or not requires_evidence
     usable = len(relevant)
-    score = 1.0 if passed else (0.0 if not rows else round(min(0.75, usable / max(len(rows), 1)), 4))
+    score = (
+        1.0
+        if passed
+        else (0.0 if not rows else round(min(0.75, usable / max(len(rows), 1)), 4))
+    )
     findings = () if passed else ("没有获取到与问题直接相关且可追溯的资料",)
     return AgentDimensionResult(
         name="resource_quality",
@@ -162,8 +182,12 @@ def evaluate_complexity(
     complex_request: bool,
 ) -> AgentDimensionResult:
     steps = [dict(step) for step in plan]
-    executable = [step for step in steps if str(step.get("action", "")).upper() != "SYNTHESIZE"]
-    has_synthesis = any(str(step.get("action", "")).upper() == "SYNTHESIZE" for step in steps)
+    executable = [
+        step for step in steps if str(step.get("action", "")).upper() != "SYNTHESIZE"
+    ]
+    has_synthesis = any(
+        str(step.get("action", "")).upper() == "SYNTHESIZE" for step in steps
+    )
     agents = set()
     for event in events:
         event_type, payload = _event_parts(event)
@@ -181,7 +205,12 @@ def evaluate_complexity(
         passed=passed,
         score=round(score, 4),
         findings=findings,
-        metrics={"steps": len(steps), "executableSteps": len(executable), "hasSynthesis": has_synthesis, "agents": sorted(agents)},
+        metrics={
+            "steps": len(steps),
+            "executableSteps": len(executable),
+            "hasSynthesis": has_synthesis,
+            "agents": sorted(agents),
+        },
     )
 
 
@@ -203,7 +232,9 @@ def evaluate_agent_run(
     return AgentEvaluation(
         dimensions=(
             evaluate_tool_usage(event_list, expected_tools),
-            evaluate_resource_quality(goal, evidence_list, requires_external=requires_external),
+            evaluate_resource_quality(
+                goal, evidence_list, requires_external=requires_external
+            ),
             evaluate_answer_quality(answer, valid_evidence_ids, expected_evidence_ids),
             evaluate_complexity(plan, event_list, complex_request=complex_request),
         )

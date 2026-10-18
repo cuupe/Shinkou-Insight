@@ -26,7 +26,10 @@ export function recordMessageFailure(message: AgentMessage, error: unknown) {
   message.executionError ||= {
     code: "RUN_FAILED",
     stage: "execution",
-    message: error instanceof Error ? error.message : String(error || "Agent 运行失败"),
+    message:
+      error instanceof Error
+        ? error.message
+        : String(error || "Agent 运行失败"),
     remedy: "查看执行记录中的具体原因后重试",
     retryable: true,
   };
@@ -45,9 +48,14 @@ export function visibleAnswerContent(message: AgentMessage) {
   return content.endsWith(suffix) ? content.slice(0, -suffix.length) : content;
 }
 
-export function conversationStatusLabel(messages: AgentMessage[], running: boolean) {
+export function conversationStatusLabel(
+  messages: AgentMessage[],
+  running: boolean,
+) {
   if (running) return "Agent 正在工作";
-  const latest = messages.filter(message => message.role === "assistant").at(-1);
+  const latest = messages
+    .filter((message) => message.role === "assistant")
+    .at(-1);
   if (latest?.status === "failed") return "上次运行未完成";
   if (latest?.decisions?.at(-1)?.action === "clarify") return "待你确认条件";
   return "对话已就绪";
@@ -149,7 +157,9 @@ export function applyMessageProgress(
       break;
     case "decision.updated": {
       const decisions = (message.decisions ||= []);
-      const index = decisions.findIndex((decision) => decision.id === event.decision.id);
+      const index = decisions.findIndex(
+        (decision) => decision.id === event.decision.id,
+      );
       if (index < 0) decisions.push(event.decision);
       else decisions[index] = event.decision;
       break;
@@ -192,10 +202,14 @@ export function applyMessageProgress(
         elapsedMs(message.runStartedAt, message.runFinishedAt, Date.now());
       if (event.type === "run.completed")
         message.multiAgent = event.multiAgent || event.data?.multiAgent;
-      if (event.type === "run.failed") message.executionError = event.error || {
-        code: "RUN_FAILED", stage: "execution", message: event.message || "Agent 运行失败",
-        remedy: "查看执行记录中的具体原因后重试", retryable: true,
-      };
+      if (event.type === "run.failed")
+        message.executionError = event.error || {
+          code: "RUN_FAILED",
+          stage: "execution",
+          message: event.message || "Agent 运行失败",
+          remedy: "查看执行记录中的具体原因后重试",
+          retryable: true,
+        };
       else message.decisionMetrics = event.decisionMetrics;
       finishMessageProgress(
         message,

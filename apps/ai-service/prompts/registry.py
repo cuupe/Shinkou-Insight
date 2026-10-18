@@ -112,7 +112,9 @@ class PromptRegistry:
     @classmethod
     def _snapshot(cls, spec: PromptSpec) -> str:
         payload = json.dumps(
-            {"spec": spec.model_dump(), "timeContextVersion": TIME_CONTEXT_VERSION}, ensure_ascii=False, sort_keys=True
+            {"spec": spec.model_dump(), "timeContextVersion": TIME_CONTEXT_VERSION},
+            ensure_ascii=False,
+            sort_keys=True,
         ).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()[:16]
 

@@ -100,7 +100,7 @@ AI 服务同时支持向量检索、关键词检索和混合检索，并使用 R
                     └───────────┘
 ~~~
 
-仓库中的 docker-compose.yml 主要负责 AI 服务和基础设施；Java 后端与 Vue 前端通常在本机启动。也可以单独通过 Compose 启动 ai-service，此时容器内部端口为 8000，宿主机端口由 AI_SERVICE_PORT 控制。Windows 快速启动脚本默认让本机 AI 服务监听 8003，这是为了匹配根目录 .env.example 中的后端配置。
+仓库中的 docker-compose.yml 可以构建并启动完整应用：Vue 前端由 Nginx 提供静态页面并代理 API，Java 后端、Python AI 服务及基础设施通过容器网络互通。也可以只启动基础设施，在本机调试应用。Windows 快速启动脚本默认让本机 AI 服务监听 8003，这是为了匹配根目录 .env.example 中的后端配置。
 
 ## 代码结构
 
@@ -115,12 +115,35 @@ AI 服务同时支持向量检索、关键词检索和混合检索，并使用 R
 ├─ infra/                   # 基础设施资源目录
 ├─ scripts/                 # Windows 启动、检查和维护脚本
 ├─ tools/runtime/           # 可选的本地 OCR / PDF / Office 工具
-├─ docker-compose.yml       # AI 服务与基础设施编排
+├─ docker-compose.yml       # Vue、Java、Python 与基础设施编排
 ├─ .env.example             # 环境变量模板
 └─ STRUCTURES.md            # 项目结构参考
 ~~~
 
 ## 快速开始
+
+### Docker 一键打包与启动
+
+只需 Docker Desktop（Linux 容器模式）与 Compose，无需在宿主机安装 Node、Java、Maven 或 Python：
+
+~~~powershell
+Copy-Item .env.example .env
+# 在 .env 中设置并保存 SHINKOU_ENCRYPTION_KEY（Base64 编码的 32 字节密钥）
+docker compose --env-file .env up -d --build
+docker compose ps
+~~~
+
+前端访问 `http://localhost`，后端健康检查 `http://localhost:8080/actuator/health`，AI 健康检查 `http://localhost:8000/health`。`WEB_PORT`、`BACKEND_PORT`、`AI_SERVICE_PORT` 可调整宿主机端口；Compose 内部固定使用 `backend:8080`、`ai-service:8000` 和基础设施服务名，不受本机开发 URL 影响。运行本机开发栈时，先停止容器中的应用服务以释放端口：`docker compose stop web backend ai-service`。
+
+仅打包镜像、不启动服务：
+
+~~~powershell
+docker compose build web backend ai-service
+~~~
+
+镜像默认标记为 `shinkou-insight/web:local`、`shinkou-insight/backend:local`、`shinkou-insight/ai-service:local`，可用 `.env` 中的 `IMAGE_TAG` 指定版本。初次构建会下载语言依赖和 OCR、Office、音视频工具，耗时较长。完整说明见 [Docker 部署文档](docs/docs/21-docker-infrastructure.md)。
+
+以下步骤用于在本机调试应用。
 
 ### 环境要求
 
