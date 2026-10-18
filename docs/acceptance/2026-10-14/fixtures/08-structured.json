@@ -1,0 +1,9 @@
+{
+  "marker": "QA-JSON-5812",
+  "budgetWan": 26,
+  "weeks": 6,
+  "engineers": 3,
+  "targetQps": 12000,
+  "targetSlaPercent": 99.95,
+  "measured": false
+}

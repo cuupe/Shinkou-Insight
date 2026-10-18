@@ -14,6 +14,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from models.schemas import Evidence
+from core import clock
 from security.policy import SecurityPolicyError, validate_external_url
 from tools.search_quality import rank_web_evidence, topic_score
 
@@ -203,6 +204,7 @@ async def _hydrate_one(
     item: Evidence,
     query: str,
     parser: Any | None,
+    semantic: bool = False,
 ) -> Evidence | None:
     if not item.url:
         return None
@@ -248,10 +250,10 @@ async def _hydrate_one(
             return None
         title, pages = parsed
         ranked = sorted(((topic_score(query, text), page, text) for page, text in pages), key=lambda value: (-value[0], value[1]))
-        if not ranked or ranked[0][0] <= 0:
+        if not ranked or (not semantic and ranked[0][0] <= 0):
             return None
         score, page_number, text = ranked[0]
-        passage = _passage([text], query, max_chars=2_400)
+        passage = (text[:6000], score) if semantic else _passage([text], query, max_chars=2_400)
         if passage is None:
             return None
         content, _ = passage
@@ -265,22 +267,24 @@ async def _hydrate_one(
             "url": item.url,
             "content_kind": "fulltext",
             "score": max(float(item.score or 0), float(score)),
+            "retrieved_at": clock.current_time().isoformat(),
         })
 
     extracted = await asyncio.to_thread(_html_blocks, response.content, str(response.url), item.source_name)
     if extracted is None:
         return None
     title, blocks, published_at = extracted
-    passage = _passage(blocks, query)
+    passage = ("\n".join(blocks)[:6000], 0.0) if semantic else _passage(blocks, query)
     if passage is None:
         return None
     content, score = passage
     return item.model_copy(update={
         "content": content,
         "source_name": title,
-        "url": item.url,
+        "url": str(response.url),
         "content_kind": "fulltext",
         "published_at": published_at,
+        "retrieved_at": clock.current_time().isoformat(),
         "score": max(float(item.score or 0), float(score)),
     })
 
@@ -292,6 +296,7 @@ async def hydrate_web_evidence(
     *,
     parser: Any | None = None,
     max_concurrency: int = 4,
+    semantic: bool = False,
 ) -> list[Evidence]:
     """Replace search snippets with source passages, dropping unextractable pages."""
 
@@ -301,7 +306,8 @@ async def hydrate_web_evidence(
 
     async def load(item: Evidence) -> Evidence | None:
         async with semaphore:
-            return await _hydrate_one(client, item, query, parser)
+            return await _hydrate_one(client, item, query, parser, semantic=semantic)
 
     results = await asyncio.gather(*(load(item) for item in evidence), return_exceptions=True)
-    return rank_web_evidence(query, [item for item in results if isinstance(item, Evidence)], len(evidence), require_body=True)
+    items = [item for item in results if isinstance(item, Evidence) and item.content.strip()]
+    return items if semantic else rank_web_evidence(query, items, len(evidence), require_body=True)

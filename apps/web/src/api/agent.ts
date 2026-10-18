@@ -7,6 +7,7 @@ import type {
   AgentRunAccepted,
   AgentStreamEvent,
   AgentThreadHistory,
+  AgentRunSnapshot,
   ApiResponse,
 } from "./types";
 
@@ -17,6 +18,11 @@ import type {
  * 3. 前端只依赖事件类型，不依赖具体模型或工作流实现。
  */
 export const agentApi = {
+  runSnapshot: (workspaceId: number | string, projectId: number, runId: number | string, afterId?: string) =>
+    unwrap<AgentRunSnapshot>(anet.get<ApiResponse<AgentRunSnapshot>>(
+      `${projectPath(workspaceId, projectId)}/agent/runs/${runId}`,
+      { params: afterId ? { afterId } : {} },
+    )),
   threads: (workspaceId: number | string, projectId: number) =>
     unwrap<AgentThreadHistory[]>(
       anet.get<ApiResponse<AgentThreadHistory[]>>(

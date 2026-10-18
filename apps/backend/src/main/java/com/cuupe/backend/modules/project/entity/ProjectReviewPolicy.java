@@ -15,4 +15,5 @@ public class ProjectReviewPolicy {
     private Long updatedBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    private boolean canManage;
 }

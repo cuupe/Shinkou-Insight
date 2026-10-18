@@ -48,7 +48,8 @@ def test_candidate_ranking_ignores_url_keyword_spam_and_reranks():
         ("Artificial intelligence evaluation", "https://lab.example.org/report", "人工智能评测数据"),
         ("AI report", "https://lab.example.org/report?utm_source=ad#intro", "人工智能评测数据"),
     ]
-    assert _relevant_candidates("人工智能 最新进展 2026 官方", candidates, 5) == [candidates[1]]
+    # Candidate admission no longer guesses semantic relevance from query words.
+    assert _relevant_candidates("人工智能 最新进展 2026 官方", candidates, 5) == candidates
     assert canonical_url("https://example.org/a?id=2&utm_campaign=x#toc") == "https://example.org/a?id=2"
     assert canonical_url("https://example.org/a?id=1") != canonical_url("https://example.org/a?id=2")
 
@@ -139,7 +140,7 @@ async def test_overfetch_replaces_unreadable_top_hits_and_cache_is_versioned():
             assert result and all(item.content_kind == "fulltext" for item in result)
             assert all(int(item.id[1:]) >= 6 for item in result)
             assert await search.search("人工智能", 2) == result
-            assert calls == [10, 10]  # One translated retry, none on the cache hit.
+            assert calls == [6]  # One explicit query, no hidden retry or cache-hit request.
         finally:
             await cache.close()
 
@@ -170,7 +171,7 @@ def test_primary_publisher_outweighs_community_digest_with_equal_relevance():
 
 
 @pytest.mark.asyncio
-async def test_bounded_retry_finds_original_but_does_not_accept_query_drift():
+async def test_empty_web_search_never_silently_rewrites_or_adds_queries():
     calls = []
     class Provider:
         async def search(self, query, top_k=5):
@@ -181,6 +182,5 @@ async def test_bounded_retry_finds_original_but_does_not_accept_query_drift():
                     source(2, content="住房销售市场变化", source_name="住房报告", content_kind="fulltext", published_at=date.today().isoformat())]
     query = "当前最新的人工智能相关的进展"
     results = await CachedWebSearch(Provider(), None, ttl_seconds=30).search(query)
-    assert [item.id for item in results] == ["W1"]
-    assert len(calls) == 3
-    assert set(calls[1:]) == set(fallback_queries(query))
+    assert results == []
+    assert calls == [query]  # Query rewriting belongs to the semantic decision layer.

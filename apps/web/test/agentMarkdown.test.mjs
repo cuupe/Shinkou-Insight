@@ -16,6 +16,15 @@ const markdown = new MarkdownIt({
 });
 const render = (source) => markdown.render(normalizeAgentMarkdown(source));
 
+test("bold warnings followed by Chinese paragraphs do not become stray list markers", () => {
+  const source = "**当前资料还不能确定唯一结果。**\n\n需要确认计费单位。\n\n- 第四层两人是否共用基础费\n\n**不能。**\n\n该结果只是条件性计算。按人 - 按层是不同规则。";
+  assert.equal(normalizeAgentMarkdown(source), source);
+  const html = render(source);
+  assert.match(html, /<strong>当前资料还不能确定唯一结果。<\/strong>/);
+  assert.match(html, /<strong>不能。<\/strong>/);
+  assert.equal((html.match(/<li>/g) || []).length, 1);
+});
+
 test("the calculation response keeps its title and section hierarchy without visible hashes", () => {
   const source =
     "# 计算结果\n\n## 直接结论\n\n1 + 1 的结果是 **2**。\n\n## 分点依据\n\n- **算术定义**：两个单位合并。\n\n## 限制与不确定性\n\n此结果基于标准实数或整数加法运算。\n\n## 可执行建议\n\n使用标准算术。";

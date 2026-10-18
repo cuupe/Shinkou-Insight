@@ -1,920 +1,156 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
-import { useRoute } from "vue-router";
-import {
-  AlertCircle,
-  ArrowRight,
-  CalendarDays,
-  Check,
-  CheckCircle2,
-  CircleDot,
-  Clock3,
-  Pencil,
-  Plus,
-  Search,
-  SlidersHorizontal,
-  UserRound,
-} from "@lucide/vue";
+import {computed,ref,watch} from "vue";
+import {useLocalStorage} from "@vueuse/core";
+import {ArrowRight,CheckCircle2,ChevronDown,ClipboardCheck,FileText,LayoutGrid,List,Plus,RefreshCw,Search,ShieldCheck,X} from "@lucide/vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import ProjectWorkflow from "@/components/project/ProjectWorkflow.vue";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { useWorkspace } from "@/composables/useWorkspace";
-import { actionItemsApi } from "@/api/action-items";
-import { workspaceApi } from "@/api/workspace";
-import type { WorkspaceMember } from "@/api/types";
+import ActionTaskCard from "@/components/project/ActionTaskCard.vue";
+import ActionTaskPanel from "@/components/project/ActionTaskPanel.vue";
+import ReportActionImportDialog from "@/components/project/ReportActionImportDialog.vue";
+import {Dialog,DialogContent,DialogDescription,DialogFooter,DialogHeader,DialogTitle} from "@/components/ui/dialog";
+import {Field,FieldGroup,FieldLabel} from "@/components/ui/field";
+import {Alert,AlertDescription,AlertTitle} from "@/components/ui/alert";
+import {Badge} from "@/components/ui/badge";
+import {Button} from "@/components/ui/button";
+import {Input} from "@/components/ui/input";
+import {Tabs,TabsContent,TabsList,TabsTrigger} from "@/components/ui/tabs";
+import {useActionWorkflow} from "@/composables/useActionWorkflow";
+import {actionBoardBucket,isActionVerified} from "@/utils/actionWorkflow";
 
-const { actionItems, notify, workspaceId, projectId, router, routeTo } =
-  useWorkspace();
-const route = useRoute();
-const items = reactive(actionItems);
-const searchQuery = ref("");
-const filterStatus = ref("全部");
-const filterPriority = ref("全部");
-const itemDialogOpen = ref(false);
-const editingItemId = ref<string | null>(null);
-const owners = ref<WorkspaceMember[]>([]);
-
-onMounted(async () => {
-  const actionTitle = route.query.actionTitle;
-  const actionDescription = route.query.actionDescription;
-  if (typeof actionTitle === "string" && actionTitle.trim()) {
-    openCreateDialog();
-    actionForm.title = actionTitle.trim();
-    actionForm.description =
-      typeof actionDescription === "string" ? actionDescription : "";
-    void router.replace(routeTo("project-action-items"));
-  }
-
-  try {
-    const members = await workspaceApi.members(workspaceId.value);
-    owners.value = members.filter((member) => member.userName);
-  } catch {
-    owners.value = [];
-  }
-});
-const priorityOptions = ["全部", "高", "中", "低"];
-const filterLabelMap: Record<string, string> = {
-  全部: "全部状态",
-  todo: "待处理",
-  "in-progress": "进行中",
-  done: "已完成",
-};
-const statusColumns = [
-  {
-    value: "todo",
-    label: "待处理",
-    detail: "已确认，等待推进",
-    tone: "slate",
-    icon: CircleDot,
-  },
-  {
-    value: "in-progress",
-    label: "进行中",
-    detail: "团队正在处理",
-    tone: "amber",
-    icon: Clock3,
-  },
-  {
-    value: "done",
-    label: "已完成",
-    detail: "已经完成并归档",
-    tone: "teal",
-    icon: CheckCircle2,
-  },
-] as const;
-
-const actionForm = reactive({
-  title: "",
-  description: "",
-  owner: "",
-  due: "",
-  priority: "中",
-  status: "todo",
-});
-const actionItemStatusFilters = ["全部", "todo", "in-progress", "done"];
-
-const filteredActionItems = computed(() => {
-  const query = searchQuery.value.trim().toLowerCase();
-  return items.filter((item) => {
-    const matchesStatus =
-      filterStatus.value === "全部" || item.status === filterStatus.value;
-    const matchesPriority =
-      filterPriority.value === "全部" || item.priority === filterPriority.value;
-    const matchesQuery =
-      !query ||
-      [item.title, item.description, item.owner, item.due]
-        .join(" ")
-        .toLowerCase()
-        .includes(query);
-    return matchesStatus && matchesPriority && matchesQuery;
-  });
-});
-
-const pendingCount = computed(
-  () => items.filter((item) => item.status !== "done").length,
-);
-const inProgressCount = computed(
-  () => items.filter((item) => item.status === "in-progress").length,
-);
-const highPriorityCount = computed(
-  () =>
-    items.filter((item) => item.priority === "高" && item.status !== "done")
-      .length,
-);
-const completedCount = computed(
-  () => items.filter((item) => item.status === "done").length,
-);
-const dialogTitle = computed(() =>
-  editingItemId.value ? "编辑行动项" : "新建行动项",
-);
-
-function itemsForStatus(status: string) {
-  return filteredActionItems.value.filter((item) => item.status === status);
-}
-
-function resetForm() {
-  Object.assign(actionForm, {
-    title: "",
-    description: "",
-    owner: owners.value[0]?.userName || "",
-    due: "",
-    priority: "中",
-    status: "todo",
-  });
-}
-
-function openCreateDialog() {
-  editingItemId.value = null;
-  resetForm();
-  itemDialogOpen.value = true;
-}
-
-function openEditDialog(item: (typeof items)[number]) {
-  editingItemId.value = item.id;
-  Object.assign(actionForm, {
-    title: item.title,
-    description: item.description,
-    owner: item.owner,
-    due: item.due,
-    priority: item.priority,
-    status: item.status,
-  });
-  itemDialogOpen.value = true;
-}
-
-async function saveActionItem() {
-  if (!actionForm.title.trim()) return;
-  if (editingItemId.value) {
-    const item = items.find(
-      (candidate) => candidate.id === editingItemId.value,
-    );
-    if (!item) return;
-    try {
-      await actionItemsApi.update(
-        workspaceId.value,
-        projectId.value,
-        editingItemId.value,
-        {
-          title: actionForm.title.trim(),
-          description: actionForm.description.trim(),
-          ownerId: owners.value.find(
-            (owner) => owner.userName === actionForm.owner,
-          )?.userId,
-          dueAt: actionForm.due || null,
-          status: actionForm.status,
-          priority: actionForm.priority,
-        },
-      );
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "行动项保存失败");
-      return;
-    }
-    Object.assign(item, {
-      ...actionForm,
-      title: actionForm.title.trim(),
-      description: actionForm.description.trim(),
-    });
-    notify("行动项已更新");
-  } else {
-    try {
-      const created = await actionItemsApi.create(
-        workspaceId.value,
-        projectId.value,
-        {
-          title: actionForm.title.trim(),
-          description: actionForm.description.trim(),
-          ownerId: owners.value.find(
-            (owner) => owner.userName === actionForm.owner,
-          )?.userId,
-          dueAt: actionForm.due || null,
-          status: actionForm.status,
-          priority: actionForm.priority,
-        },
-      );
-      items.unshift({
-        id: String(created.id),
-        ...actionForm,
-        title: created.title || actionForm.title.trim(),
-        description: String(
-          created.description || actionForm.description.trim(),
-        ),
-      });
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "行动项创建失败");
-      return;
-    }
-    notify("行动项已创建");
-  }
-  itemDialogOpen.value = false;
-}
-
-async function advanceItem(item: (typeof items)[number]) {
-  const nextStatus: Record<string, string> = {
-    todo: "in-progress",
-    "in-progress": "done",
-    done: "todo",
-  };
-  const next = nextStatus[item.status] || "todo";
-  try {
-    await actionItemsApi.update(workspaceId.value, projectId.value, item.id, {
-      status: next,
-    });
-  } catch (error) {
-    notify(error instanceof Error ? error.message : "行动项状态保存失败");
-    return;
-  }
-  item.status = next;
-  notify(
-    item.status === "done"
-      ? "行动项已完成"
-      : item.status === "in-progress"
-        ? "行动项已开始处理"
-        : "行动项已重新打开",
-  );
-}
-
-function advanceLabel(status: string) {
-  return status === "todo"
-    ? "开始处理"
-    : status === "in-progress"
-      ? "标记完成"
-      : "重新打开";
-}
-
-function priorityClass(priority: string) {
-  return `priority-${priority === "高" ? "high" : priority === "中" ? "medium" : "low"}`;
-}
+const workflow=useActionWorkflow();
+const {workspaceId,projectId,items,searchQuery,filterStatus,filterPriority,reportFilter,sourceReports,itemsLoading,itemsError,canManage,saving,
+ filteredActionItems,pendingCount,completedCount,statusColumns,actionItemStatusFilters,filterLabelMap,priorityOptions,activeSource,
+ loadActionItems,openCreateDialog,openDetailDialog,advanceItem,goSource,returnToReview}=workflow;
+const mobile=window.matchMedia("(max-width:760px)").matches;
+const viewMode=useLocalStorage<string>(mobile?"shinkou-action-mobile-view":"shinkou-action-desktop-view",mobile?"list":"board");
+const importOpen=ref(false),reportPickerOpen=ref(false),importReportId=ref(""),showWorkflow=ref(false),completedExpanded=ref<boolean|null>(null);
+if(!["board","list"].includes(viewMode.value))viewMode.value=mobile?"list":"board";
+const scopeItems=computed(()=>items.filter(item=>!reportFilter.value||String(item.sourceReportId||"")===reportFilter.value));
+const countFor=(bucket:string)=>scopeItems.value.filter(item=>actionBoardBucket(item)===bucket).length;
+const releasePending=computed(()=>scopeItems.value.filter(item=>item.blocksRelease!==false&&!isActionVerified(item)).length);
+const progress=computed(()=>scopeItems.value.length?Math.round(completedCount.value/scopeItems.value.length*100):0);
+const activeFilters=computed(()=>!!searchQuery.value.trim()||filterStatus.value!=="全部"||filterPriority.value!=="全部");
+const groups=computed(()=>statusColumns.slice(0,3).map(column=>({...column,items:filteredActionItems.value.filter(item=>actionBoardBucket(item)===column.value)})).filter(column=>filterStatus.value==="全部"||column.items.length));
+const openTasks=computed(()=>filteredActionItems.value.filter(item=>!isActionVerified(item)));
+const closedTasks=computed(()=>filteredActionItems.value.filter(isActionVerified));
+const showClosed=computed(()=>completedExpanded.value??(filterStatus.value==="done"||!openTasks.value.length));
+watch([filterStatus,reportFilter],()=>{completedExpanded.value=null;});
+const memberNote=computed(()=>items.some(item=>item.canEdit)?"你可以处理分派给自己的任务；分派和验收由项目管理者负责。":"你可以查看任务与验收记录；任务分派和验收由项目管理者负责。");
+function resetFilters(){searchQuery.value="";filterStatus.value="全部";filterPriority.value="全部";}
+function openImport(){if(reportFilter.value&&activeSource.value)importOpen.value=true;else{importReportId.value="";reportPickerOpen.value=true;}}
+function chooseImportReport(){if(!importReportId.value)return;reportFilter.value=importReportId.value;reportPickerOpen.value=false;importOpen.value=true;}
+function imported(id:number|string){reportFilter.value=String(id);void loadActionItems();}
 </script>
 
 <template>
-  <PageHeader
-    eyebrow="PROJECT / FOLLOW-UP"
-    title="行动项"
-    subtitle="承接报告建议，分派负责人并跟踪每项后续工作的完成状态"
-  >
-    <template #action
-      ><button
-        class="button button-primary"
-        type="button"
-        @click="openCreateDialog"
-      >
-        <Plus :size="16" />新建行动项
-      </button></template
-    >
+ <div class="actions-page">
+  <PageHeader eyebrow="交付" title="行动项" subtitle="分派、执行与验收">
+   <template #action><Button aria-label="新建行动项" :disabled="!canManage||itemsLoading" @click="openCreateDialog"><Plus data-icon="inline-start"/><span class="create-label-wide">新建行动项</span><span class="create-label-small">新建</span></Button></template>
   </PageHeader>
 
-  <ProjectWorkflow />
-
-  <div class="action-summary">
-    <div class="action-summary-card">
-      <span class="summary-icon teal-bg"><CheckCircle2 :size="16" /></span>
-      <div>
-        <strong>{{ pendingCount }}</strong
-        ><span>待完成</span>
-      </div>
-      <small>需要继续推进</small>
-    </div>
-    <div class="action-summary-card">
-      <span class="summary-icon violet-bg"><Clock3 :size="16" /></span>
-      <div>
-        <strong>{{ inProgressCount }}</strong
-        ><span>进行中</span>
-      </div>
-      <small>正在处理</small>
-    </div>
-    <div class="action-summary-card">
-      <span class="summary-icon amber-bg"><AlertCircle :size="16" /></span>
-      <div>
-        <strong>{{ highPriorityCount }}</strong
-        ><span>高优先级</span>
-      </div>
-      <small>需要优先确认</small>
-    </div>
-    <div class="action-summary-card">
-      <span class="summary-icon blue-bg"><Check :size="16" /></span>
-      <div>
-        <strong>{{ completedCount }}</strong
-        ><span>已完成</span>
-      </div>
-      <small>已归档事项</small>
-    </div>
-  </div>
-
-  <div class="action-toolbar">
-    <label class="search-control"
-      ><Search :size="15" /><input
-        v-model="searchQuery"
-        type="search"
-        placeholder="搜索行动项、负责人或截止日期"
-        aria-label="搜索行动项"
-    /></label>
-    <div class="toolbar-filters">
-      <SlidersHorizontal :size="14" /><span>筛选</span>
-      <select v-model="filterStatus" aria-label="筛选行动项状态">
-        <option
-          v-for="filter in actionItemStatusFilters"
-          :key="filter"
-          :value="filter"
-        >
-          {{ filterLabelMap[filter] }}
-        </option>
-      </select>
-      <select v-model="filterPriority" aria-label="筛选行动项优先级">
-        <option
-          v-for="priority in priorityOptions"
-          :key="priority"
-          :value="priority"
-        >
-          {{ priority === "全部" ? "全部优先级" : `${priority}优先级` }}
-        </option>
-      </select>
-    </div>
-  </div>
-
-  <section class="action-board">
-    <article
-      v-for="column in statusColumns"
-      :key="column.value"
-      class="action-column"
-    >
-      <header class="action-column-header">
-        <div>
-          <h2>
-            <span class="column-dot" :class="`dot-${column.tone}`" />{{
-              column.label
-            }}
-            <b>{{ itemsForStatus(column.value).length }}</b>
-          </h2>
-          <p>{{ column.detail }}</p>
-        </div>
-        <component
-          :is="column.icon"
-          :size="16"
-          :class="`column-icon ${column.tone}-text`"
-        />
-      </header>
-      <div class="action-card-list">
-        <article
-          v-for="item in itemsForStatus(column.value)"
-          :key="item.id"
-          class="action-card"
-          :class="{ 'action-card-done': item.status === 'done' }"
-        >
-          <div class="action-card-top">
-            <span class="priority-badge" :class="priorityClass(item.priority)"
-              >{{ item.priority }}优先级</span
-            ><button
-              class="card-edit"
-              type="button"
-              :aria-label="`编辑${item.title}`"
-              @click="openEditDialog(item)"
-            >
-              <Pencil :size="13" />
-            </button>
-          </div>
-          <h3>{{ item.title }}</h3>
-          <p v-if="item.description" class="action-card-description">
-            {{ item.description }}
-          </p>
-          <div class="action-card-meta">
-            <span><UserRound :size="13" />{{ item.owner }}</span
-            ><span :class="{ 'due-highlight': item.due === '今天' }"
-              ><CalendarDays :size="13" />{{ item.due }}</span
-            >
-          </div>
-          <div class="action-card-footer">
-            <button
-              class="card-detail-button"
-              type="button"
-              @click="openEditDialog(item)"
-            >
-              查看详情</button
-            ><button
-              class="card-action-button"
-              type="button"
-              @click="advanceItem(item)"
-            >
-              {{ advanceLabel(item.status) }}<ArrowRight :size="13" />
-            </button>
-          </div>
-        </article>
-        <div v-if="!itemsForStatus(column.value).length" class="empty-column">
-          <component :is="column.icon" :size="18" /><span>{{
-            filteredActionItems.length ? "暂无匹配项" : "没有行动项"
-          }}</span>
-        </div>
-      </div>
-      <button class="add-card-button" type="button" @click="openCreateDialog">
-        <Plus :size="14" />添加行动项
-      </button>
-    </article>
+  <section class="scope-bar" aria-label="任务范围与交付入口">
+   <Field class="scope-field"><FieldLabel for="action-filter-report" class="sr-only">筛选来源报告</FieldLabel><FileText :size="16"/><select id="action-filter-report" v-model="reportFilter" class="action-select" :title="activeSource?.title||'全部来源报告'"><option value="">项目全部行动项</option><option v-for="report in sourceReports" :key="report.id" :value="String(report.id)">{{report.title}}</option></select></Field>
+   <div class="scope-actions"><Button v-if="canManage" variant="outline" size="sm" :disabled="itemsLoading||!sourceReports.length" @click="openImport">从报告导入任务</Button><Button v-if="reportFilter" variant="outline" size="sm" @click="returnToReview">返回报告审查<ArrowRight data-icon="inline-end"/></Button><Button variant="ghost" size="sm" :aria-expanded="showWorkflow" @click="showWorkflow=!showWorkflow">流程说明<ChevronDown data-icon="inline-end"/></Button></div>
   </section>
+  <ProjectWorkflow v-if="showWorkflow"/>
 
-  <Dialog v-model:open="itemDialogOpen">
-    <DialogContent class="action-editor-dialog">
-      <DialogHeader
-        ><DialogTitle>{{ dialogTitle }}</DialogTitle
-        ><DialogDescription
-          >明确负责人和截止时间，让调研结论更容易落地。</DialogDescription
-        ></DialogHeader
-      >
-      <div class="editor-form">
-        <label
-          >行动项名称<input
-            v-model="actionForm.title"
-            type="text"
-            placeholder="例如：确认跨地域复制的 RPO 目标"
-        /></label>
-        <label
-          >背景与验收说明<textarea
-            v-model="actionForm.description"
-            rows="3"
-            placeholder="可注明来源报告、决策依据和完成标准"
-        /></label>
-        <div class="form-grid">
-          <label
-            >负责人<select v-model="actionForm.owner">
-              <option
-                v-for="owner in owners"
-                :key="owner.userId || owner.id"
-                :value="owner.userName"
-              >
-                {{ owner.userName }}
-              </option>
-            </select></label
-          ><label>截止时间<input v-model="actionForm.due" type="date" /></label>
-        </div>
-        <div class="form-grid">
-          <label
-            >优先级<select v-model="actionForm.priority">
-              <option value="高">高优先级</option>
-              <option value="中">中优先级</option>
-              <option value="低">低优先级</option>
-            </select></label
-          ><label
-            >状态<select v-model="actionForm.status">
-              <option value="todo">待处理</option>
-              <option value="in-progress">进行中</option>
-              <option value="done">已完成</option>
-            </select></label
-          >
-        </div>
-      </div>
-      <DialogFooter
-        ><button
-          class="button button-secondary"
-          type="button"
-          @click="itemDialogOpen = false"
-        >
-          取消</button
-        ><button
-          class="button button-primary"
-          type="button"
-          @click="saveActionItem"
-        >
-          保存行动项
-        </button></DialogFooter
-      >
-    </DialogContent>
-  </Dialog>
+  <div class="task-progress-strip">
+   <div class="progress-counts"><span>待处理 <strong>{{countFor('todo')}}</strong></span><span>进行中 <strong>{{countFor('in-progress')}}</strong></span><span>待验收 <strong>{{countFor('pending-acceptance')}}</strong></span><span>已验收 <strong>{{completedCount}}</strong></span></div>
+   <div class="progress-completion"><span>{{completedCount}} / {{scopeItems.length}} 已验收</span><div class="completion-track" role="progressbar" aria-label="任务验收进度" :aria-valuenow="progress" aria-valuemin="0" aria-valuemax="100"><span :style="{width:progress+'%'}"/></div></div>
+  </div>
+  <p v-if="reportFilter&&releasePending" class="release-note"><ShieldCheck :size="14"/>{{releasePending}} 项发布前置任务尚未验收，关闭后可返回审查。</p>
+  <p v-else-if="reportFilter&&scopeItems.length" class="release-note"><CheckCircle2 :size="14"/>当前已建立的前置任务已验收，请更新报告后重新审查签署。</p>
+  <p v-if="!canManage&&!itemsLoading" class="member-note">{{memberNote}}</p>
+  <Alert v-if="itemsError" variant="destructive"><AlertTitle>行动项读取失败</AlertTitle><AlertDescription>{{itemsError}}<Button variant="outline" size="sm" @click="loadActionItems">重新加载</Button></AlertDescription></Alert>
+
+  <Tabs v-model="viewMode" class="task-workspace">
+   <div class="action-toolbar">
+    <Field class="search-field"><FieldLabel for="action-search" class="sr-only">搜索行动项</FieldLabel><Search :size="16"/><Input id="action-search" v-model="searchQuery" type="search" placeholder="搜索任务、负责人或验收要求"/></Field>
+    <FieldGroup class="filter-fields"><Field><FieldLabel for="action-filter-status" class="sr-only">筛选行动项状态</FieldLabel><select id="action-filter-status" v-model="filterStatus" class="action-select"><option v-for="filter in actionItemStatusFilters" :key="filter" :value="filter">{{filterLabelMap[filter]}}</option></select></Field><Field><FieldLabel for="action-filter-priority" class="sr-only">筛选行动项优先级</FieldLabel><select id="action-filter-priority" v-model="filterPriority" class="action-select"><option v-for="priority in priorityOptions" :key="priority" :value="priority">{{priority==='全部'?'全部优先级':priority+'优先级'}}</option></select></Field></FieldGroup>
+    <TabsList aria-label="任务展示方式"><TabsTrigger value="board"><LayoutGrid/>看板</TabsTrigger><TabsTrigger value="list"><List/>列表</TabsTrigger></TabsList>
+   </div>
+   <div class="task-view-heading"><span>{{filteredActionItems.length}} 项任务<span v-if="activeFilters">符合筛选</span></span><Button v-if="activeFilters" variant="ghost" size="sm" @click="resetFilters"><X data-icon="inline-start"/>清除筛选</Button></div>
+
+   <div v-if="itemsLoading" class="task-loading" role="status"><RefreshCw class="is-spinning" :size="20"/>正在读取任务与验收记录…</div>
+   <section v-else-if="!itemsError&&!filteredActionItems.length" class="task-empty">
+    <ClipboardCheck :size="30"/><h2>{{activeFilters?'没有找到匹配的行动项':reportFilter?'该报告尚未建立行动项':'开始落实下一步行动'}}</h2><p>{{activeFilters?'调整关键词或清除筛选，查看其他任务。':'从报告导入任务，或手工建立行动项。'}}</p>
+    <div><Button v-if="activeFilters" variant="outline" @click="resetFilters">清除筛选</Button><template v-else-if="canManage"><Button v-if="sourceReports.length" variant="outline" @click="openImport">从报告建立任务</Button><Button @click="openCreateDialog">手工建立行动项</Button></template></div>
+   </section>
+
+   <template v-else-if="!itemsError&&!itemsLoading">
+    <TabsContent value="board" class="board-panel">
+     <section v-if="openTasks.length" class="action-board" :class="{'single-group':filterStatus!=='全部'}" aria-label="执行任务看板">
+      <article v-for="column in groups" :key="column.value" class="action-column" :data-status="column.value">
+       <header class="action-column-header"><div><h2><component :is="column.icon" :size="16"/>{{column.label}}<Badge variant="secondary">{{column.items.length}}</Badge></h2><p>{{column.detail}}<span v-if="column.value==='todo'"> · 退回的任务也在这里</span></p></div><Button v-if="column.value==='todo'&&canManage" variant="ghost" size="icon-sm" aria-label="新建待处理任务" @click="openCreateDialog"><Plus/></Button></header>
+       <div class="action-card-list"><ActionTaskCard v-for="item in column.items" :key="item.id" :item="item" :saving="saving" :show-source="!reportFilter" @open="openDetailDialog" @advance="advanceItem" @source="goSource"/><p v-if="!column.items.length" class="empty-column">暂无{{column.label}}任务</p></div>
+      </article>
+     </section>
+     <section v-if="closedTasks.length" class="completed-section"><button class="completed-heading" type="button" :aria-expanded="showClosed" @click="completedExpanded=!showClosed"><span><CheckCircle2 :size="16"/>已验收 <Badge variant="secondary">{{closedTasks.length}}</Badge></span><span>{{showClosed?'收起记录':'查看验收记录'}}<ChevronDown :size="14" :class="{'is-expanded':showClosed}"/></span></button><div v-if="showClosed" class="completed-grid"><ActionTaskCard v-for="item in closedTasks" :key="item.id" :item="item" :saving="saving" :show-source="!reportFilter" @open="openDetailDialog" @advance="advanceItem" @source="goSource"/></div></section>
+    </TabsContent>
+    <TabsContent value="list" class="list-panel"><div class="task-list-legend"><span>任务与优先级</span><span>状态 · 负责人 · 截止日期</span><span>操作</span></div><div class="action-list"><ActionTaskCard v-for="item in filteredActionItems" :key="item.id" :item="item" view="list" :saving="saving" :show-source="!reportFilter" @open="openDetailDialog" @advance="advanceItem" @source="goSource"/></div></TabsContent>
+   </template>
+  </Tabs>
+
+  <ReportActionImportDialog v-model:open="importOpen" :workspace-id="workspaceId" :project-id="projectId" :report-id="reportFilter||undefined" @imported="imported" @manual="openCreateDialog"/>
+  <Dialog v-model:open="reportPickerOpen"><DialogContent><DialogHeader><DialogTitle>选择来源报告</DialogTitle><DialogDescription>选择一份报告，确认任务清单后再导入。</DialogDescription></DialogHeader><FieldGroup><Field><FieldLabel for="import-source-report">来源报告</FieldLabel><select id="import-source-report" v-model="importReportId" class="action-select"><option value="" disabled>请选择报告</option><option v-for="report in sourceReports" :key="report.id" :value="String(report.id)">{{report.title}}</option></select></Field></FieldGroup><DialogFooter><Button variant="outline" @click="reportPickerOpen=false">取消</Button><Button :disabled="!importReportId" @click="chooseImportReport">查看报告任务<ArrowRight data-icon="inline-end"/></Button></DialogFooter></DialogContent></Dialog>
+  <ActionTaskPanel :workflow="workflow"/>
+ </div>
 </template>
 
 <style scoped>
-.blue-bg {
-  color: #4b86c8;
-  background: #e8f2fd;
-}
-.action-summary {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.75rem;
-  margin-bottom: 1.125rem;
-}
-.action-summary-card {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  column-gap: 0.625rem;
-  align-items: center;
-  padding: 0.875rem 1rem;
-  border: 0.0625rem solid var(--workspace-border);
-  border-radius: 0.6875rem;
-  background: var(--surface);
-}
-.summary-icon {
-  display: grid;
-  grid-row: span 2;
-  place-items: center;
-  width: 1.9375rem;
-  height: 1.9375rem;
-  border-radius: 0.5rem;
-}
-.action-summary-card > div {
-  display: flex;
-  align-items: baseline;
-  gap: 0.375rem;
-}
-.action-summary-card strong {
-  color: var(--workspace-text);
-  font-size: 1.125rem;
-  letter-spacing: -0.04em;
-}
-.action-summary-card span:not(.summary-icon) {
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-}
-.action-summary-card small {
-  grid-column: 2;
-  margin-top: 0.125rem;
-  color: var(--workspace-subtle);
-  font-size: 0.75rem;
-}
-.action-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.875rem;
-}
-.search-control {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  min-width: 14rem;
-  flex: 1;
-  max-width: 26rem;
-  padding: 0 0.625rem;
-  border: 0.0625rem solid var(--workspace-border);
-  border-radius: 0.4375rem;
-  color: var(--workspace-muted);
-  background: var(--surface);
-}
-.search-control:focus-within {
-  border-color: var(--teal);
-  box-shadow: 0 0 0 0.1875rem color-mix(in oklab, var(--teal) 16%, transparent);
-}
-.search-control input {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  padding: 0.5625rem 0;
-  background: transparent;
-  color: var(--workspace-text);
-  font: inherit;
-  font-size: 0.75rem;
-}
-.search-control input::placeholder {
-  color: var(--workspace-subtle);
-}
-.toolbar-filters {
-  display: flex;
-  align-items: center;
-  gap: 0.4375rem;
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-}
-.toolbar-filters select,
-.editor-form select {
-  border: 0.0625rem solid var(--workspace-border);
-  border-radius: 0.4375rem;
-  outline: 0;
-  padding: 0.5rem 1.75rem 0.5rem 0.625rem;
-  background: var(--surface);
-  color: var(--workspace-text);
-  font: inherit;
-  font-size: 0.75rem;
-}
-.toolbar-filters select:focus,
-.editor-form select:focus {
-  border-color: var(--teal);
-}
-.action-board {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.875rem;
-  align-items: start;
-}
-.action-column {
-  min-width: 0;
-  padding: 0.875rem;
-  border: 0.0625rem solid var(--workspace-border);
-  border-radius: 0.75rem;
-  background: color-mix(in oklab, var(--surface-soft) 80%, var(--surface));
-}
-.action-column-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-  min-height: 3rem;
-  padding: 0.125rem 0.125rem 0.75rem;
-}
-.action-column-header h2 {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  margin: 0;
-  color: var(--workspace-text);
-  font-size: 0.75rem;
-}
-.action-column-header h2 b {
-  display: inline-grid;
-  place-items: center;
-  min-width: 1.25rem;
-  height: 1.125rem;
-  border-radius: 0.3125rem;
-  background: var(--surface);
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-}
-.action-column-header p {
-  margin: 0.3125rem 0 0 0.8125rem;
-  color: var(--workspace-subtle);
-  font-size: 0.75rem;
-}
-.column-dot {
-  width: 0.4375rem;
-  height: 0.4375rem;
-  border-radius: 999px;
-  background: var(--workspace-muted);
-}
-.dot-amber {
-  background: var(--amber);
-}
-.dot-teal {
-  background: var(--teal);
-}
-.dot-slate {
-  background: #8d9aa0;
-}
-.amber-text {
-  color: var(--amber) !important;
-}
-.teal-text {
-  color: var(--teal-dark) !important;
-}
-.slate-text {
-  color: var(--workspace-muted) !important;
-}
-.action-card-list {
-  display: grid;
-  gap: 0.625rem;
-}
-.action-card {
-  padding: 0.75rem;
-  border: 0.0625rem solid var(--workspace-border);
-  border-radius: 0.625rem;
-  background: var(--surface);
-  box-shadow: 0 0.25rem 0.75rem rgba(21, 53, 52, 0.035);
-  transition:
-    transform 160ms ease,
-    border-color 160ms ease,
-    box-shadow 160ms ease;
-}
-.action-card:hover {
-  transform: translateY(-0.125rem);
-  border-color: color-mix(in oklab, var(--teal) 38%, var(--workspace-border));
-  box-shadow: 0 0.625rem 1.25rem rgba(21, 53, 52, 0.07);
-}
-.action-card-done {
-  opacity: 0.72;
-}
-.action-card-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.priority-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.25rem 0.375rem;
-  border-radius: 0.25rem;
-  font-size: 0.75rem;
-}
-.priority-high {
-  color: #bd5f5f;
-  background: #fff0ef;
-}
-.priority-medium {
-  color: #af7a26;
-  background: #fff4df;
-}
-.priority-low {
-  color: #71898c;
-  background: #f0f4f4;
-}
-.card-edit {
-  display: grid;
-  place-items: center;
-  width: 1.625rem;
-  height: 1.625rem;
-  border: 0;
-  border-radius: 0.375rem;
-  background: transparent;
-  color: var(--workspace-subtle);
-  cursor: pointer;
-}
-.card-edit:hover {
-  color: var(--teal-dark);
-  background: var(--surface-soft);
-}
-.action-card h3 {
-  margin: 0.625rem 0;
-  color: var(--workspace-text);
-  font-size: 0.75rem;
-  font-weight: 650;
-  line-height: 1.5;
-}
-.action-card-description {
-  margin: -0.25rem 0 0.625rem;
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-  line-height: 1.5;
-  white-space: pre-line;
-}
-.action-card-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-}
-.action-card-meta span {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-}
-.due-highlight {
-  color: var(--amber);
-}
-.action-card-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  margin-top: 0.625rem;
-  padding-top: 0.5rem;
-  border-top: 0.0625rem solid var(--workspace-divider);
-}
-.card-detail-button,
-.card-action-button {
-  border: 0;
-  background: transparent;
-  font: inherit;
-  font-size: 0.75rem;
-  cursor: pointer;
-}
-.card-detail-button {
-  padding: 0.25rem 0;
-  color: var(--workspace-muted);
-}
-.card-detail-button:hover {
-  color: var(--workspace-text);
-}
-.card-action-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.3125rem 0.4375rem;
-  border-radius: 0.3125rem;
-  color: var(--teal-dark);
-  background: color-mix(in oklab, var(--teal) 9%, var(--surface));
-}
-.card-action-button:hover {
-  background: color-mix(in oklab, var(--teal) 17%, var(--surface));
-}
-.empty-column {
-  display: grid;
-  place-items: center;
-  gap: 0.375rem;
-  min-height: 7.5rem;
-  color: var(--workspace-subtle);
-  font-size: 0.75rem;
-}
-.add-card-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.3125rem;
-  width: 100%;
-  margin-top: 0.625rem;
-  padding: 0.5rem;
-  border: 0.0625rem dashed var(--workspace-border);
-  border-radius: 0.4375rem;
-  background: transparent;
-  color: var(--workspace-muted);
-  font: inherit;
-  font-size: 0.75rem;
-  cursor: pointer;
-}
-.add-card-button:hover {
-  border-color: var(--teal);
-  color: var(--teal-dark);
-  background: color-mix(in oklab, var(--teal) 5%, var(--surface));
-}
-.action-editor-dialog {
-  max-width: 38rem !important;
-}
-.editor-form {
-  display: grid;
-  gap: 0.875rem;
-}
-.editor-form label {
-  display: grid;
-  gap: 0.375rem;
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-}
-.editor-form input,
-.editor-form select,
-.editor-form textarea {
-  width: 100%;
-  box-sizing: border-box;
-}
-.editor-form input,
-.editor-form textarea {
-  border: 0.0625rem solid var(--workspace-border);
-  border-radius: 0.4375rem;
-  outline: 0;
-  padding: 0.625rem 0.6875rem;
-  background: var(--surface-soft);
-  color: var(--workspace-text);
-  font: inherit;
-  font-size: 0.8125rem;
-}
-.editor-form textarea {
-  resize: vertical;
-  min-height: 5rem;
-}
-.editor-form input:focus,
-.editor-form textarea:focus {
-  border-color: var(--teal);
-  box-shadow: 0 0 0 0.1875rem color-mix(in oklab, var(--teal) 16%, transparent);
-}
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.75rem;
-}
-@media (max-width: 68.75rem) {
-  .action-summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .action-board {
-    grid-template-columns: 1fr;
-  }
-}
-@media (max-width: 47.5rem) {
-  .action-toolbar {
-    align-items: stretch;
-    flex-direction: column;
-  }
-  .search-control {
-    max-width: none;
-  }
-  .toolbar-filters {
-    flex-wrap: wrap;
-  }
-  .toolbar-filters select {
-    flex: 1;
-  }
-  .form-grid {
-    grid-template-columns: 1fr;
-  }
-}
-@media (max-width: 30rem) {
-  .action-summary {
-    grid-template-columns: 1fr;
-  }
-  .action-card-meta {
-    flex-wrap: wrap;
-  }
-}
+.actions-page{--card:var(--surface);--card-foreground:var(--workspace-text);--background:var(--surface);--foreground:var(--workspace-text);--input:var(--workspace-border);--border:var(--workspace-border);--muted:var(--surface-soft);--muted-foreground:var(--workspace-muted);display:flex;flex-direction:column;gap:.85rem;flex:1 1 0;min-width:0;min-height:0;overflow:auto;padding:.125rem .125rem 1rem;scrollbar-gutter:stable}
+.actions-page>*{flex-shrink:0}
+.create-label-small{display:none}
+@media(max-width:47.5rem){.create-label-wide{display:none}.create-label-small{display:inline}}
+.scope-bar{display:flex;align-items:center;justify-content:space-between;gap:1rem;min-width:0}
+.scope-field{position:relative;min-width:0;flex:1 1 18rem;max-width:34rem}
+.scope-field>svg{position:absolute;left:.6rem;top:50%;translate:0 -50%;width:1rem;height:1rem;color:var(--workspace-muted);pointer-events:none}
+.scope-field select{padding-left:2rem}
+.scope-actions{display:flex;align-items:center;gap:.4rem;flex-shrink:0}
+.action-select{height:2.3rem;min-width:0;width:100%;padding:.35rem .5rem .35rem .65rem;border:1px solid var(--input);border-radius:.5rem;background:var(--background);color:var(--foreground);font:inherit;font-size:.75rem;text-overflow:ellipsis;outline:none}
+.action-select:focus-visible{border-color:var(--ring);box-shadow:0 0 0 3px color-mix(in oklab,var(--ring) 25%,transparent)}
+.task-progress-strip{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.8rem 0;border-bottom:1px solid var(--workspace-border)}
+.progress-counts{display:flex;align-items:center;gap:1.3rem;flex-wrap:wrap;font-size:.75rem;color:var(--workspace-muted)}
+.progress-counts strong{font-size:.9rem;color:var(--workspace-text);font-variant-numeric:tabular-nums;margin-left:.3rem}
+.progress-completion{display:flex;align-items:center;gap:.7rem;color:var(--workspace-subtle);font-size:.72rem;white-space:nowrap}
+.completion-track{height:.3rem;width:6rem;border-radius:1rem;background:var(--surface-soft);overflow:hidden}
+.completion-track>span{display:block;height:100%;background:var(--teal)}
+.release-note,.member-note{display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:var(--workspace-muted);margin:0;line-height:1.7}
+.release-note svg{flex-shrink:0}
+.task-workspace{min-width:0;gap:.65rem}
+.action-toolbar{display:grid;grid-template-columns:minmax(12rem,1fr) auto auto;align-items:center;gap:.65rem}
+.search-field{position:relative;display:block;min-width:0}
+.search-field>svg{position:absolute;top:50%;left:.65rem;width:1rem;height:1rem;translate:0 -50%;color:var(--workspace-muted);pointer-events:none}
+.search-field :deep(input){padding-left:2rem;height:2.3rem}
+.filter-fields{display:grid;grid-template-columns:8rem 8rem;gap:.5rem;min-width:0}
+.filter-fields :deep([data-slot=field]){min-width:0}
+.action-toolbar :deep([role=tab]){gap:.3rem}
+.task-view-heading{display:flex;align-items:center;justify-content:space-between;min-height:1.7rem;color:var(--workspace-subtle);font-size:.72rem}
+.board-panel,.list-panel{min-width:0}
+.action-board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem;min-width:0;max-width:100%;overflow:visible;align-items:start}
+.action-column{min-width:0;border:1px solid var(--workspace-border);border-radius:.75rem;background:var(--surface-soft);overflow:hidden}
+.action-column-header{display:flex;align-items:flex-start;justify-content:space-between;gap:.5rem;padding:1rem .85rem .8rem;border-bottom:1px solid var(--workspace-border)}
+.action-column-header h2{display:flex;align-items:center;gap:.45rem;font-size:.85rem;font-weight:600;margin:0}
+.action-column-header p{color:var(--workspace-subtle);font-size:.68rem;line-height:1.7;margin:.4rem 0 0}
+.action-card-list{display:flex;flex-direction:column;gap:.75rem;padding:.85rem;min-width:0}
+.empty-column{font-size:.75rem;color:var(--workspace-subtle);text-align:center;margin:1.5rem 0}
+.single-group{grid-template-columns:1fr}
+.single-group .action-card-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,19rem),1fr))}
+.completed-section{border:1px solid var(--workspace-border);border-radius:.75rem;margin-top:1rem;overflow:hidden}
+.completed-heading{display:flex;align-items:center;justify-content:space-between;gap:1rem;width:100%;border:0;background:var(--surface);color:var(--workspace-text);padding:1rem;cursor:pointer;text-align:left}
+.completed-heading>span{display:flex;align-items:center;gap:.5rem;font-size:.8rem}
+.completed-heading>span:last-child{font-size:.72rem;color:var(--workspace-muted)}
+.completed-heading svg.is-expanded{rotate:180deg}
+.completed-heading:focus-visible{outline:2px solid var(--ring);outline-offset:-2px}
+.completed-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,19rem),1fr));gap:.75rem;padding:1rem;border-top:1px solid var(--workspace-border)}
+.task-loading{min-height:12rem;display:flex;align-items:center;justify-content:center;gap:.6rem;color:var(--workspace-muted);font-size:.8rem}
+.task-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.9rem;min-height:15rem;border:1px dashed var(--workspace-border);border-radius:.75rem;padding:1.5rem;text-align:center}
+.task-empty h2{font-size:1rem;margin:0}.task-empty p{font-size:.8rem;color:var(--workspace-muted);margin:0}.task-empty>div{display:flex;gap:.6rem;flex-wrap:wrap;justify-content:center}
+.task-list-legend{display:grid;grid-template-columns:minmax(13rem,1fr) minmax(20rem,.9fr) auto;gap:.75rem;padding:.65rem 1rem;font-size:.7rem;color:var(--workspace-subtle)}
+.task-list-legend>span:last-child{min-width:10rem;text-align:right}
+.action-list{border:1px solid var(--workspace-border);border-radius:.75rem;overflow:hidden}
+.action-list :deep(.action-card:last-child){border-bottom:0}
+@media(max-width:80rem){.scope-bar{align-items:stretch;flex-wrap:wrap}.scope-field{max-width:none}.scope-actions{flex-wrap:wrap}.task-list-legend{grid-template-columns:1fr 1fr}.task-list-legend>span:last-child{display:none}}
+@media(max-width:68.75rem){.action-board{grid-template-columns:1fr}.action-card-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))}.action-column-header{align-items:center}.action-column-header p span{display:none}}
+@media(max-width:47.5rem){.actions-page{gap:.65rem;scrollbar-gutter:auto}.scope-bar{gap:.6rem}.scope-field{flex-basis:100%}.scope-actions{width:100%}.scope-actions :deep(button){flex:1;font-size:.68rem}.task-progress-strip{padding:.6rem 0;flex-wrap:wrap;gap:.6rem}.progress-counts{justify-content:space-between;gap:.6rem;width:100%;font-size:.7rem}.progress-counts strong{font-size:.8rem}.progress-completion{width:100%;justify-content:space-between}.completion-track{width:45%}.action-toolbar{grid-template-columns:1fr auto}.search-field{grid-column:1/-1}.filter-fields{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:.4rem}.action-select{font-size:.72rem}.action-toolbar :deep([role=tab]){font-size:.72rem}.action-board{gap:.8rem}.action-card-list{display:flex}.action-column-header h2{font-size:.8rem}.completed-heading{padding:.85rem}.task-list-legend{display:none}.action-list{border:0;display:flex;flex-direction:column;gap:.75rem;overflow:visible}.action-list :deep(.action-card:last-child){border-bottom:1px solid var(--workspace-border)}}
 </style>

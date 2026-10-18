@@ -88,6 +88,14 @@ public class AgentController {
                 parseEventId(lastEventId == null || lastEventId.isBlank() ? afterId : lastEventId));
     }
 
+    @GetMapping("/runs/{runId}")
+    public Result<Map<String, Object>> runSnapshot(
+            @PathVariable Long workspaceId, @PathVariable Long projectId, @PathVariable String runId,
+            @RequestParam(value = "afterId", required = false) String afterId,
+            Authentication authentication) {
+        return Result.success(agentService.snapshot(workspaceId, projectId, userId(authentication), runId, parseEventId(afterId)));
+    }
+
     @PostMapping("/runs/{runId}/cancel")
     public Result<Void> cancel(
             @PathVariable Long workspaceId,

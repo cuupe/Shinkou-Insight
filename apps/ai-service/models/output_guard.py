@@ -9,15 +9,20 @@ class GenerationAborted(RuntimeError):
 
 
 class GenerationGuard:
-    def __init__(self, max_chars: int = 64000):
+    def __init__(self, max_chars: int = 64000, *, structured: bool = False):
         self.max_chars = max_chars
         self.text = ""
         self._checked = 0
+        self.structured = structured
 
     def feed(self, text: str) -> None:
         self.text += text
         if len(self.text) > self.max_chars:
             raise GenerationAborted("生成超过长度上限，已停止本次输出")
+        if self.structured:
+            # JSON legitimately repeats field names, IDs and quoted evidence.
+            # Length and schema validation still bound machine output.
+            return
         if len(self.text) - self._checked < 64:
             return
         self._checked = len(self.text)

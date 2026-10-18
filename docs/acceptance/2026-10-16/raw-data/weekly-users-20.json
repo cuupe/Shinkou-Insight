@@ -1,0 +1,166 @@
+{
+  "dataset_type": "synthetic_weekly_users",
+  "project": "星桥知识助手试点验收",
+  "records": [
+    {
+      "user_id": "U001",
+      "synthetic": true,
+      "team": "客服",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": true
+    },
+    {
+      "user_id": "U002",
+      "synthetic": true,
+      "team": "客服",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": true
+    },
+    {
+      "user_id": "U003",
+      "synthetic": true,
+      "team": "客服",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": true
+    },
+    {
+      "user_id": "U004",
+      "synthetic": true,
+      "team": "客服",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": true
+    },
+    {
+      "user_id": "U005",
+      "synthetic": true,
+      "team": "客服",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": true
+    },
+    {
+      "user_id": "U006",
+      "synthetic": true,
+      "team": "客服",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": true
+    },
+    {
+      "user_id": "U007",
+      "synthetic": true,
+      "team": "客服",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": true
+    },
+    {
+      "user_id": "U008",
+      "synthetic": true,
+      "team": "客服",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": true
+    },
+    {
+      "user_id": "U009",
+      "synthetic": true,
+      "team": "客服",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": true
+    },
+    {
+      "user_id": "U010",
+      "synthetic": true,
+      "team": "客服",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": true
+    },
+    {
+      "user_id": "U011",
+      "synthetic": true,
+      "team": "客服",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": true
+    },
+    {
+      "user_id": "U012",
+      "synthetic": true,
+      "team": "客服",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": true
+    },
+    {
+      "user_id": "U013",
+      "synthetic": true,
+      "team": "售前",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": true
+    },
+    {
+      "user_id": "U014",
+      "synthetic": true,
+      "team": "售前",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": true
+    },
+    {
+      "user_id": "U015",
+      "synthetic": true,
+      "team": "售前",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": true
+    },
+    {
+      "user_id": "U016",
+      "synthetic": true,
+      "team": "售前",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": false
+    },
+    {
+      "user_id": "U017",
+      "synthetic": true,
+      "team": "售前",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": false
+    },
+    {
+      "user_id": "U018",
+      "synthetic": true,
+      "team": "售前",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": false
+    },
+    {
+      "user_id": "U019",
+      "synthetic": true,
+      "team": "售前",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": false
+    },
+    {
+      "user_id": "U020",
+      "synthetic": true,
+      "team": "售前",
+      "week_start": "2026-10-05",
+      "week_end": "2026-10-11",
+      "active": false
+    }
+  ]
+}

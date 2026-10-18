@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from agents.contracts import AgentContext, AgentMessage, AgentResult
 from models.schemas import Evidence
-from tools.search_quality import focused_query, rank_web_evidence
+from core.clock import current_date, timezone_name
 
 
 class WebResearcherAgent:
@@ -17,14 +17,9 @@ class WebResearcherAgent:
         requested_query = str(
             message.payload.get("search_query") or message.payload.get("goal") or ""
         ).strip()
-        provider_query = focused_query(requested_query)
+        provider_query = requested_query
         web_items = await context.web_search.search(provider_query, top_k=5)
-        external = rank_web_evidence(
-            requested_query,
-            [Evidence.model_validate(item) for item in web_items],
-            5,
-            require_body=True,
-        )
+        external = [item for item in (Evidence.model_validate(raw) for raw in web_items) if item.url and item.content_kind == "fulltext"][:5]
         unique: dict[str, Evidence] = {
             item.id: item
             for item in (Evidence.model_validate(raw) for raw in message.payload.get("evidence", []))
@@ -39,6 +34,8 @@ class WebResearcherAgent:
                 "count": len(external),
                 "source": "web",
                 "query": provider_query,
+                "asOfDate": current_date().isoformat(),
+                "timeZone": timezone_name(),
                 "items": [item.model_dump() for item in external],
             },
         )

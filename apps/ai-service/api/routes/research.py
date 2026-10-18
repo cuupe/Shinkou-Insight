@@ -61,17 +61,27 @@ async def get_run(run_id: str, http_request: Request) -> dict[str, Any]:
     history = http_request.app.state.events.history(run_id)
     visible_types = {"run.started", "run.queued", "run.completed", "run.failed", "run.cancelled",
                      "node.started", "node.completed", "node.failed", "plan.created", "plan.updated",
-                     "node.waiting",
+                     "node.waiting", "node.updated", "decision.updated", "tool.started", "tool.completed", "tool.failed", "tool.blocked", "tool.reused",
                      "plan.step.started", "plan.step.completed", "plan.step.failed", "agent.started",
-                     "agent.completed", "agent.failed", "agent.cancelled"}
+                     "agent.completed", "agent.failed", "agent.cancelled", "agent.task.updated"}
     events = [{"id": event.event_id, "type": event.event_type, "timestamp": event.timestamp,
                "node": event.payload.get("node"), "title": event.payload.get("title"),
                "detail": event.payload.get("detail") or event.payload.get("message"),
-               "task": event.payload.get("task")}
+               "task": event.payload.get("task"), "decision": event.payload.get("decision"),
+               "callId": event.payload.get("callId"), "tool": event.payload.get("tool"), "error": event.payload.get("error")}
               for event in history if event.event_type in visible_types][-100:]
     started = next((event for event in reversed(history) if event.event_type == "run.started"), None)
     finished = next((event for event in reversed(history)
                      if event.event_type in {"run.completed", "run.failed", "run.cancelled"}), None)
+    decisions = {}
+    tool_calls = {}
+    for event in history:
+        decision = event.payload.get("decision")
+        if event.event_type == "decision.updated" and isinstance(decision, dict) and decision.get("id"):
+            decisions[decision["id"]] = decision
+        if event.event_type.startswith("tool.") and event.payload.get("callId"):
+            call_id = event.payload["callId"]
+            tool_calls[call_id] = {**tool_calls.get(call_id, {}), **event.payload}
     return {
         "runId": run.run_id,
         "status": run.status,
@@ -82,7 +92,10 @@ async def get_run(run_id: str, http_request: Request) -> dict[str, Any]:
         "report": run.report,
         "evidence": [item.model_dump() for item in run.evidence],
         "promptSnapshot": run.prompt_snapshot,
-        "toolCalls": http_request.app.state.runtime.tools.history(run.run_id),
+        "toolCalls": list(tool_calls.values()) or http_request.app.state.runtime.tools.history(run.run_id),
+        "decisions": list(decisions.values()),
+        "decisionMetrics": finished.payload.get("decisionMetrics") if finished else None,
+        "executionError": finished.payload.get("error") if finished else None,
         "plan": run.plan,
         "planVersion": run.plan_version,
         "planHistory": run.plan_history,

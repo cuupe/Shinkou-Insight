@@ -169,6 +169,7 @@ export interface ProjectReviewPolicy {
   verifyNumbers: boolean;
   escalateConflicts: boolean;
   labelExternal: boolean;
+  canManage?: boolean;
   updatedAt?: string;
   [key: string]: unknown;
 }
@@ -188,7 +189,27 @@ export interface ProjectReviewRun {
   actionItemCount: number;
   detail: string;
   createdAt?: string;
+  reportId?: number | string | null;
+  reportTitle?: string;
+  reportVersion?: string;
+  reportSnapshot?: Partial<Report>;
+  checks?: ProjectReviewCheck[];
+  confirmations?: string[];
+  decisionComment?: string;
+  decidedBy?: number | string | null;
+  decidedByName?: string;
+  decidedAt?: string | null;
+  stale?: boolean;
   [key: string]: unknown;
+}
+
+export interface ProjectReviewCheck {
+  key: string;
+  title: string;
+  status: "PASSED" | "BLOCKED" | "REVIEW" | "SKIPPED";
+  detail: string;
+  route: string;
+  excerpts: string[];
 }
 
 export type AssetParseStatus =
@@ -227,6 +248,12 @@ export interface KnowledgeSearchPayload {
   topK?: number;
   retrievalMode?: "VECTOR" | "KEYWORD" | "HYBRID" | string;
   useReranker?: boolean;
+  fusionMethod?: "RRF" | "WEIGHTED_RRF" | "LINEAR";
+  candidateK?: number;
+  vectorWeight?: number;
+  keywordWeight?: number;
+  diversityLambda?: number;
+  rerankTopK?: number;
   filters?: {
     assetIds?: Array<number | string>;
     [key: string]: unknown;
@@ -251,6 +278,17 @@ export interface KnowledgeSearchResponse {
   query: string;
   rewrittenQueries: string[];
   items: KnowledgeSearchItem[];
+  searchTrace?: {
+    mode?: "VECTOR" | "KEYWORD" | "HYBRID";
+    effectiveMode?: "VECTOR" | "KEYWORD" | "HYBRID";
+    effectiveChannels?: string[];
+    embeddingModel?: string;
+    fallbackReason?: string | null;
+    candidateK?: number;
+    fusionMethod?: "RRF" | "WEIGHTED_RRF" | "LINEAR";
+    reranker?: boolean;
+    [key: string]: unknown;
+  };
 }
 
 export interface KnowledgeAnswerPayload {
@@ -284,7 +322,52 @@ export type AgentEventKind =
   | "reflection";
 
 export type AgentEventStatus =
-  "pending" | "running" | "completed" | "failed" | "cancelled";
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "blocked"
+  | "reused"
+  | "empty";
+
+export interface AgentExecutionError {
+  code: string;
+  stage: string;
+  message: string;
+  remedy: string;
+  retryable: boolean;
+}
+
+export interface AgentDecisionSummary {
+  id: string;
+  sequence: number;
+  resolvedGoal: string;
+  summary: string;
+  rationale: string;
+  action: "execute" | "answer" | "clarify";
+  needs: {
+    id: string;
+    description: string;
+    source: string;
+    temporal: string;
+    basis?: "general" | "material" | "world" | "derived" | "context";
+    timeScope?: "as_of" | "period";
+    dateFrom?: string | null;
+    dateTo?: string | null;
+    status: "missing" | "covered" | "unavailable";
+    evidenceIds: string[];
+  }[];
+  tools: { tool: string; purpose: string; needIds: string[] }[];
+  assessments?: {
+    evidenceId: string;
+    relevant: boolean;
+    reason: string;
+    supportsCurrent?: boolean;
+  }[];
+  remainingToolCalls: number;
+  stopReason?: string;
+}
 
 export interface AgentTask {
   id: string;
@@ -391,8 +474,25 @@ export interface AgentMessage {
   runStatus?: string;
   lastEventId?: string;
   events?: AgentEvent[];
+  decisions?: AgentDecisionSummary[];
+  executionError?: AgentExecutionError;
+  decisionMetrics?: Record<string, unknown>;
   agentTasks?: AgentTask[];
   multiAgent?: AgentRunMetrics["multiAgent"];
+}
+
+export interface AgentRunSnapshot {
+  runId: string;
+  messageId: string;
+  status: string;
+  events: AgentStreamEvent[];
+  content?: string;
+  message?: string;
+  error?: AgentExecutionError;
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
+  decisionMetrics?: Record<string, unknown>;
 }
 
 export interface AgentContextMessage {
@@ -459,6 +559,7 @@ export interface AgentRunConfig {
   modelName?: string;
   allowWebSearch?: boolean;
   reflectionEnabled?: boolean;
+  decisionReasoningEffort?: "none" | "low" | "medium" | "high";
   strategy?: "AUTO" | "REACT" | "PLAN_AND_SOLVE" | "REFLECTION";
   multiAgentMode?: "AUTO" | "ON" | "OFF";
   maxResearchRounds?: number;
@@ -506,6 +607,7 @@ export type AgentStreamEvent = { eventId?: string; timestamp?: string } & (
       data?: AgentRunMetrics;
     }
   | { type: "event.updated"; runId: string; event: AgentEvent }
+  | { type: "decision.updated"; runId: string; decision: AgentDecisionSummary }
   | {
       type: "agent.task.updated";
       runId: string;
@@ -560,11 +662,13 @@ export type AgentStreamEvent = { eventId?: string; timestamp?: string } & (
       contextCompression?: ContextCompression;
       multiAgent?: AgentRunMetrics["multiAgent"];
       status?: string;
+      decisionMetrics?: Record<string, unknown>;
     }
   | {
       type: "run.failed";
       runId: string;
       message: string;
+      error?: AgentExecutionError;
       startedAt?: string;
       finishedAt?: string;
       durationMs?: number;
@@ -696,6 +800,7 @@ export interface Report {
   recommendation?: string;
   recommendationDetail?: string;
   markdownContent?: string;
+  content?: string;
   citations?: number;
   createdAt?: string;
   updatedAt?: string;
@@ -710,14 +815,83 @@ export interface ActionItem {
   status: string;
   ownerId?: number | string;
   dueAt?: string;
+  owner?: string;
+  sourceReportId?: number | string;
+  sourceReportTitle?: string;
+  sourceReportVersion?: string;
+  sourceReviewRunId?: number | string;
+  sourceKey?: string;
+  sourceExcerpt?: string;
+  acceptanceCriteria?: string;
+  blocksRelease?: boolean;
+  completionEvidence?: string;
+  submittedAt?: string;
+  acceptedAt?: string;
+  acceptedByName?: string;
+  acceptanceComment?: string;
+  canManage?: boolean;
+  canEdit?: boolean;
+  canAccept?: boolean;
   [key: string]: unknown;
+}
+
+export interface ReportActionCandidate {
+  sourceKey: string;
+  title: string;
+  description: string;
+  acceptanceCriteria: string;
+  ownerLabel: string;
+  dueAt?: string;
+  priority: string;
+  sourceExcerpt: string;
+}
+export interface ReportActionDraft {
+  reportId: number | string;
+  reportTitle: string;
+  reportVersion?: string;
+  sourceHash: string;
+  canManage: boolean;
+  items: ReportActionCandidate[];
+  existing: ActionItem[];
 }
 
 export interface EvaluationRun {
   id: number | string;
   status: string;
+  projectId?: number | null;
+  query?: string;
+  expectedAnswer?: string;
+  expectedAsset?: string | null;
+  expectedChunkIds?: string[] | string;
+  requiredFacts?: string[] | string;
+  forbiddenFacts?: string[] | string;
+  evaluationResult?: EvaluationResult | string | null;
+  evaluatedAt?: string | null;
+  recall?: number | null;
+  citation?: number | null;
+  jsonScore?: number | null;
   metrics?: Record<string, unknown>;
   [key: string]: unknown;
+}
+
+export interface EvaluationResult {
+  metric?: string;
+  topK?: number;
+  retrievedCount?: number;
+  matchedCount?: number;
+  targetCount?: number;
+  recall?: number;
+  status?: string;
+  retrievedChunkIds?: string[];
+  retrievedAssets?: string[];
+  matchedChunkIds?: string[];
+  missingChunkIds?: string[];
+  expectedAssetFound?: boolean;
+  matchedRequiredFacts?: string[];
+  missingRequiredFacts?: string[];
+  matchedForbiddenFacts?: string[];
+  expectedChunkIds?: string[];
+  expectedAsset?: string | null;
 }
 
 export interface StatisticsSummary {

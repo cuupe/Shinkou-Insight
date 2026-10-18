@@ -18,7 +18,7 @@ def chat_tool_schemas(request: Any, *, graph_available: bool = False) -> list[di
         tool("search_knowledge", "查询当前项目知识库中的资料。", query, ["query"]),
     ]
     if request.config.allow_web_search:
-        tools.append(tool("search_web", "搜索互联网并读取可核验的来源。天气、最新信息、完整作品列表等必须先查询；返回空或错误不代表未配置此工具。", query, ["query"]))
+        tools.append(tool("search_web", "搜索互联网并读取可核验的来源。现任职务、天气、最新信息、完整作品列表等必须先查询；相对日期使用系统当前时间，不猜旧年份。返回空或错误不代表未配置此工具，也不能凭记忆断言当前事实。", query, ["query"]))
     if graph_available:
         tools.append(tool("search_graph", "查询当前项目中的实体关系。", query, ["query"]))
     return [item for item in tools if item["function"]["name"] not in request.config.disabled_tools]

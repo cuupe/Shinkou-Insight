@@ -4,8 +4,10 @@ import {
   elapsedMs,
   finishMessageProgress,
   mergeEvent,
+  recordMessageFailure,
 } from "@/utils/agentProgress";
 import { agentApi } from "@/api/agent";
+import { watchAgentStream } from "@/utils/agentStream";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { useAgentQueue } from "@/composables/useAgentQueue";
 import type {
@@ -164,21 +166,7 @@ function mergeTokenUsage(
 }
 
 function summarizeThreadTitle(value: string) {
-  let text = value.replace(/\s+/g, " ").trim();
-  text = text.replace(/^(请问|请帮我|帮我|我想|想了解|能否|可以)\s*/, "");
-  text = text.replace(/[。！？?!；;：:]+$/, "").trim();
-  if (!text) return "新的问题整理";
-  let summary = `整理：${text}`;
-  if (/^为什么\s*.+/.test(text)) summary = `排查${text.slice(3).trim()}问题`;
-  else if (/^(如何|怎么|怎样)\s*.+/.test(text))
-    summary = `梳理${text.replace(/^(如何|怎么|怎样)\s*/, "")}方案`;
-  else if (/^(什么是|是什么)\s*.+/.test(text))
-    summary = `了解${text.replace(/^(什么是|是什么)\s*/, "")}`;
-  else if (/^(总结|概括)\s*.+/.test(text))
-    summary = `总结${text.replace(/^(总结|概括)\s*/, "")}`;
-  else if (/^(比较|对比)\s*.+/.test(text))
-    summary = `比较${text.replace(/^(比较|对比)\s*/, "")}`;
-  return Array.from(summary).slice(0, 40).join("");
+  return Array.from(value.trim()).slice(0, 40).join("") || "新的对话";
 }
 
 function createHttpTransport(): AgentTransport {
@@ -227,48 +215,15 @@ function createHttpTransport(): AgentTransport {
         { withCredentials: true },
       );
 
-      await new Promise<void>((resolve, reject) => {
-        let settled = false;
-        const seenEventIds = new Set<string>();
-        let retryTimer: number | undefined;
-        const clearRetryTimer = () => {
-          if (retryTimer !== undefined) window.clearTimeout(retryTimer);
-          retryTimer = undefined;
-        };
-        eventSource.onmessage = (message) => {
-          const event = agentApi.parseEvent(message);
-          if (!event) return;
-          const eventId = String(event.eventId || message.lastEventId || "");
-          if (eventId) {
-            if (seenEventIds.has(eventId)) return;
-            seenEventIds.add(eventId);
-            // Bound memory for a long-lived/reconnecting stream.
-            if (seenEventIds.size > 4096) {
-              const oldest = seenEventIds.values().next().value;
-              if (oldest) seenEventIds.delete(oldest);
-            }
-          }
-          if (event.type === "run.completed" || event.type === "run.failed") {
-            if (settled) return;
-            settled = true;
-            clearRetryTimer();
-          } else if (settled) {
-            // Do not allow a late delta from a recovered/duplicate worker to
-            // mutate the already finalized assistant message.
-            return;
-          }
+      await watchAgentStream({
+        source: eventSource,
+        parse: agentApi.parseEvent,
+        afterId: context.resume?.afterEventId,
+        snapshot: afterId => agentApi.runSnapshot(context.workspaceId, context.projectId, accepted.runId, afterId),
+        onEvent: event => {
           callbacks.onProgress?.(event);
-          handleStreamEvent(event, callbacks, resolve, reject, eventSource);
-        };
-        eventSource.onopen = clearRetryTimer;
-        eventSource.onerror = () => {
-          if (settled || retryTimer !== undefined) return;
-          // EventSource 会自动重连；只有持续 15 秒无法恢复时才让当前运行失败。
-          retryTimer = window.setTimeout(() => {
-            eventSource.close();
-            reject(new Error("Agent 事件流连接失败"));
-          }, 15000);
-        };
+          handleStreamEvent(event, callbacks);
+        },
       });
       return accepted;
     },
@@ -278,9 +233,6 @@ function createHttpTransport(): AgentTransport {
 function handleStreamEvent(
   event: AgentStreamEvent,
   callbacks: AgentRunCallbacks,
-  resolve: () => void,
-  reject: (error: Error) => void,
-  eventSource: EventSource,
 ) {
   if (event.type === "run.started") {
     callbacks.onRunStarted?.({
@@ -318,13 +270,9 @@ function handleStreamEvent(
         event.contextCompression || event.data?.contextCompression,
       multiAgent: event.multiAgent || event.data?.multiAgent,
     });
-    eventSource.close();
-    resolve();
   }
   if (event.type === "run.failed") {
-    eventSource.close();
     callbacks.onError(event.message);
-    reject(new Error(event.message));
   }
 }
 
@@ -495,13 +443,10 @@ export function useAgentWorkspace() {
     } catch (error) {
       if (current()) {
         thread.status = "failed";
-        message.status = "failed";
-        finishMessageProgress(message, "failed");
+        recordMessageFailure(message, error);
         thread.events = message.events || [];
         thread.runFinishedAt = message.runFinishedAt;
         thread.runDurationMs = message.runDurationMs;
-        if (activeThreadId.value === thread.id)
-          composerError.value = String(error);
       }
     } finally {
       if (current()) runControls.delete(thread.id);
@@ -881,8 +826,6 @@ export function useAgentWorkspace() {
           },
           onError: (message) => {
             if (!isCurrentRun()) return;
-            if (activeThreadId.value === thread.id)
-              composerError.value = message;
             updateTask(queueTask.id, {
               status: "failed",
               currentStep: "运行失败，需要重试",
@@ -909,7 +852,7 @@ export function useAgentWorkspace() {
       abortDisplay();
       if (isCurrentRun()) {
         thread.status = "failed";
-        finishMessageProgress(assistantMessage, "failed");
+        recordMessageFailure(assistantMessage, error);
         thread.events = assistantMessage.events || [];
         thread.runFinishedAt = assistantMessage.runFinishedAt;
         thread.runDurationMs = assistantMessage.runDurationMs;
@@ -919,14 +862,6 @@ export function useAgentWorkspace() {
           errorMessage:
             error instanceof Error ? error.message : "Agent 运行失败",
         });
-        assistantMessage.status = "failed";
-        assistantMessage.content =
-          assistantMessage.content ||
-          "这次运行没有完成，请检查 Agent 接口或稍后重试。";
-        if (activeThreadId.value === thread.id) {
-          composerError.value =
-            error instanceof Error ? error.message : "Agent 运行失败";
-        }
       }
     }
     if (runControls.get(thread.id) === runControl && isCurrentRun()) {

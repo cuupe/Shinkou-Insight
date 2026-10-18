@@ -48,7 +48,7 @@ import {
 import PageHeader from "@/components/common/PageHeader.vue";
 import ProjectWorkflow from "@/components/project/ProjectWorkflow.vue";
 import AgentMessageProgress from "@/components/project/AgentMessageProgress.vue";
-import { elapsedMs } from "@/utils/agentProgress";
+import { conversationStatusLabel, elapsedMs, visibleAnswerContent } from "@/utils/agentProgress";
 import { agentApi } from "@/api/agent";
 import { getApiErrorMessage } from "@/api/core";
 import { assetsApi } from "@/api/assets";
@@ -158,16 +158,15 @@ const generationOpen = ref(false);
 const thinkingDialogOpen = ref(false);
 const configOpen = ref(false);
 const reflectionEnabled = ref(true);
-const webSearchExplicitChoice = ref(false);
 const generation = reactive<ChatGenerationForm>({
   strategy: "AUTO",
-  retrievalTopK: 1,
+  retrievalTopK: 8,
   maxTokens: 4096,
   temperature: 0.3,
   topP: 0.9,
   topK: null,
   frequencyPenalty: 0,
-  thinkingEnabled: true,
+  thinkingEnabled: false,
   reasoningEffort: "high",
 });
 const savingCitationIds = reactive(new Set<string>());
@@ -184,33 +183,20 @@ const visibleFileLibraryFiles = computed(() => {
     file.name.toLowerCase().includes(query),
   );
 });
-const selectedFileLibraryCount = computed(
-  () => selectedFileLibraryIds.size,
-);
-
-function needsFreshExternalSources(value: string) {
-  return /最新|最近|近期|目前|当前|近\s*\d+\s*年|过去\s*\d+\s*年|进展|现状|新闻|发布|更新|趋势|发展趋势|版本|today|latest|recent|current|release|update|trend|news/i.test(
-    value,
-  );
-}
+const selectedFileLibraryCount = computed(() => selectedFileLibraryIds.size);
 
 function handleWebSearchToggle(event: Event) {
-  webSearchExplicitChoice.value = true;
   allowWeb.value = (event.target as HTMLInputElement).checked;
 }
 
-const requestUsesWebSearch = computed(
-  () =>
-    webSearchReady.value &&
-    (allowWeb.value ||
-      (!webSearchExplicitChoice.value &&
-        needsFreshExternalSources(draft.value))),
-);
+// Capability permission only. Semantic decisions in the service choose actual calls.
+const requestUsesWebSearch = computed(() => webSearchReady.value && allowWeb.value);
 
 const agentConfig = computed(() => ({
   modelName: activeModel.value?.name || "项目默认模型",
   allowWebSearch: requestUsesWebSearch.value,
   reflectionEnabled: reflectionEnabled.value,
+  decisionReasoningEffort: generation.thinkingEnabled ? generation.reasoningEffort : ("none" as const),
   strategy: generation.strategy,
   multiAgentMode: multiAgentMode.value,
   maxResearchRounds: 3,
@@ -232,7 +218,7 @@ const completedEvents = computed(
   () => events.value.filter((event) => event.status === "completed").length,
 );
 const progress = computed(() =>
-  events.value.length
+  activeThread.value.status === "completed" ? 100 : events.value.length
     ? Math.round((completedEvents.value / events.value.length) * 100)
     : 0,
 );
@@ -274,8 +260,14 @@ function nextActivityLabel(event: AgentEvent | undefined) {
   return "继续执行 Agent 流程";
 }
 
-const activityElapsed = computed(() => elapsedMs(currentEvent.value?.startedAt,
-  currentEvent.value?.completedAt, activityNow.value) ?? 0);
+const activityElapsed = computed(
+  () =>
+    elapsedMs(
+      currentEvent.value?.startedAt,
+      currentEvent.value?.completedAt,
+      activityNow.value,
+    ) ?? 0,
+);
 
 const runElapsed = computed(() => {
   if (activeThread.value.runDurationMs != null)
@@ -305,7 +297,7 @@ const runElapsedLabel = computed(() =>
 );
 const runTimingSource = computed(() => {
   if (activeThread.value.status === "idle") return "尚未运行";
-    return activeThread.value.runStartedAt ? "本轮运行时间戳" : "等待服务确认";
+  return activeThread.value.runStartedAt ? "本轮运行时间戳" : "等待服务确认";
 });
 
 function formatRealToken(value: number | undefined) {
@@ -318,7 +310,6 @@ const tokenUsageStatus = computed(() => {
   if (tokenUsage.value) return "模型提供方 usage";
   return isRunning.value ? "等待模型返回 usage" : "暂无真实 usage";
 });
-
 
 watch(
   () => [activeThread.value.id, isRunning.value] as const,
@@ -409,7 +400,7 @@ function applyModelGenerationDefaults() {
     topP: Number(config.topP ?? 0.9),
     topK: config.topK == null ? null : Number(config.topK),
     frequencyPenalty: Number(config.frequencyPenalty ?? 0),
-    thinkingEnabled: reasoning !== "none",
+    thinkingEnabled: false,
     reasoningEffort: ["low", "medium", "high"].includes(reasoning)
       ? (reasoning as ChatGenerationForm["reasoningEffort"])
       : "low",
@@ -435,7 +426,6 @@ async function loadModelOptions() {
 }
 
 async function loadWebSearchConfig() {
-  webSearchExplicitChoice.value = false;
   if (projectId.value <= 0) {
     webSearchConfig.value = null;
     allowWeb.value = false;
@@ -446,9 +436,7 @@ async function loadWebSearchConfig() {
       workspaceId.value,
       projectId.value,
     );
-    // Keep web search enabled by default whenever the project has a ready
-    // connector. A user toggle still sets webSearchExplicitChoice and wins
-    // for the current run.
+    // A configured connector grants availability; the model decides when it is needed.
     allowWeb.value = webSearchReady.value;
   } catch {
     webSearchConfig.value = null;
@@ -530,13 +518,7 @@ const messageMarkdown = new MarkdownIt({
 });
 
 const defaultFenceRenderer = messageMarkdown.renderer.rules.fence;
-messageMarkdown.renderer.rules.fence = (
-  tokens,
-  index,
-  options,
-  env,
-  slf,
-) => {
+messageMarkdown.renderer.rules.fence = (tokens, index, options, env, slf) => {
   const token = tokens[index];
   const code = token?.content || "";
   const language = (token?.info || "").trim().split(/\s+/)[0] || "code";
@@ -809,7 +791,8 @@ function citationTitle(citation: MessageCitation) {
 }
 
 function renderMessageMarkdown(message: AgentMessage) {
-  if (!message.content) return "";
+  const content = visibleAnswerContent(message);
+  if (!content) return "";
   const citationKey = (message.citations || [])
     .map(
       (citation) =>
@@ -817,11 +800,11 @@ function renderMessageMarkdown(message: AgentMessage) {
     )
     .join("\u0001");
   const cached = renderedMessageCache.get(message.id);
-  if (cached?.content === message.content && cached.citations === citationKey) {
+  if (cached?.content === content && cached.citations === citationKey) {
     return cached.html;
   }
   const normalized = normalizeCitationLinks(
-    normalizeAgentMarkdown(message.content),
+    normalizeAgentMarkdown(content),
     message,
   );
   const rendered = messageMarkdown.render(normalized, { message });
@@ -829,7 +812,7 @@ function renderMessageMarkdown(message: AgentMessage) {
     ADD_ATTR: ["data-citation-id", "data-tooltip", "data-copy-code"],
   });
   renderedMessageCache.set(message.id, {
-    content: message.content,
+    content,
     citations: citationKey,
     html,
   });
@@ -882,7 +865,7 @@ function textContentForCopy(message: AgentMessage) {
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  return text || normalizeAgentMarkdown(message.content).trim();
+  return text || normalizeAgentMarkdown(visibleAnswerContent(message)).trim();
 }
 
 async function copyMessage(message: AgentMessage) {
@@ -948,7 +931,7 @@ function openMessageCitation(event: MouseEvent, message: AgentMessage) {
 function eventStatusLabel(event: AgentEvent) {
   if (event.status === "running") return "进行中";
   if (event.status === "failed") return "失败";
-    if (event.status === "cancelled") return "已停止";
+  if (event.status === "cancelled") return "已停止";
   if (event.status === "completed" && event.meta?.skipped) return "已跳过";
   if (event.status === "completed") return event.duration || "已完成";
   return "等待中";
@@ -1090,7 +1073,9 @@ function confirmFileLibrarySelection() {
   const availableSlots =
     MAX_ATTACHMENTS_PER_MESSAGE - pendingAttachments.value.length;
   const selectedFiles = fileLibraryFiles.value
-    .filter((file) => selectedFileLibraryIds.has(String(file.uploadId || file.id)))
+    .filter((file) =>
+      selectedFileLibraryIds.has(String(file.uploadId || file.id)),
+    )
     .slice(0, availableSlots);
   pendingAttachments.value.push(...selectedFiles);
   selectedFileLibraryIds.clear();
@@ -1513,229 +1498,225 @@ onUnmounted(() => {
 
       <Teleport defer to="#agent-inspector-config">
         <section
-        class="agent-config-card"
-        :class="{ 'is-open': configOpen }"
-        aria-label="Agent 当前配置"
+          class="agent-config-card"
+          :class="{ 'is-open': configOpen }"
+          aria-label="Agent 当前配置"
         >
-        <button
-          class="agent-config-toggle"
-          type="button"
-          aria-controls="agent-config-items"
-          :aria-expanded="configOpen"
-          @click="configOpen = !configOpen"
-        >
-          <span class="config-intro-icon"><Settings2 :size="16" /></span>
-          <span class="agent-config-toggle-copy">
-            <strong>本次对话配置</strong>
-            <small>配置只影响当前 Agent，不改变项目数据</small>
-          </span>
-          <span class="agent-config-toggle-summary">{{ configSummary }}</span>
-          <ChevronDown
-            class="agent-config-toggle-chevron"
-            :class="{ 'is-open': configOpen }"
-            :size="16"
-          />
-        </button>
-        <div
-          v-if="configOpen"
-          id="agent-config-items"
-          class="agent-config-items"
-        >
-          <div class="agent-config-item agent-config-model">
-            <span class="config-item-icon"><Cpu :size="15" /></span>
-            <label class="config-copy">
-              <small>本次模型</small>
-              <select v-model="selectedModelId" aria-label="选择本次对话模型">
-                <option value="">使用项目默认模型</option>
-                <option
-                  v-for="model in modelOptions"
-                  :key="model.id"
-                  :value="model.id"
-                >
-                  {{ model.name }}
-                </option>
-              </select>
-            </label>
+          <button
+            class="agent-config-toggle"
+            type="button"
+            aria-controls="agent-config-items"
+            :aria-expanded="configOpen"
+            @click="configOpen = !configOpen"
+          >
+            <span class="config-intro-icon"><Settings2 :size="16" /></span>
+            <span class="agent-config-toggle-copy">
+              <strong>本次对话配置</strong>
+              <small>配置只影响当前 Agent，不改变项目数据</small>
+            </span>
+            <span class="agent-config-toggle-summary">{{ configSummary }}</span>
+            <ChevronDown
+              class="agent-config-toggle-chevron"
+              :class="{ 'is-open': configOpen }"
+              :size="16"
+            />
+          </button>
+          <div
+            v-if="configOpen"
+            id="agent-config-items"
+            class="agent-config-items"
+          >
+            <div class="agent-config-item agent-config-model">
+              <span class="config-item-icon"><Cpu :size="15" /></span>
+              <label class="config-copy">
+                <small>本次模型</small>
+                <select v-model="selectedModelId" aria-label="选择本次对话模型">
+                  <option value="">使用项目默认模型</option>
+                  <option
+                    v-for="model in modelOptions"
+                    :key="model.id"
+                    :value="model.id"
+                  >
+                    {{ model.name }}
+                  </option>
+                </select>
+              </label>
+              <button
+                class="config-link-button"
+                type="button"
+                aria-label="管理模型配置"
+                @click="openSettings('settings-models')"
+              >
+                <ChevronRight :size="13" />
+              </button>
+            </div>
             <button
-              class="config-link-button"
+              class="agent-config-item"
               type="button"
-              aria-label="管理模型配置"
-              @click="openSettings('settings-models')"
+              @click="openSettings('project-assets')"
             >
-              <ChevronRight :size="13" />
+              <span class="config-item-icon"><Database :size="15" /></span>
+              <span class="config-copy"
+                ><small>知识范围</small><strong>当前项目资料</strong></span
+              >
+              <span class="config-action">查看<ChevronRight :size="13" /></span>
+            </button>
+            <div class="agent-config-item agent-config-tool">
+              <span class="config-item-icon"><Link2 :size="15" /></span>
+              <span class="config-copy"
+                ><small>联网搜索</small
+                ><strong>{{
+                  !webSearchReady
+                    ? "未配置独立搜索服务"
+                    : allowWeb
+                      ? "允许智能体按需联网"
+                      : "本次运行禁止联网"
+                }}</strong
+                ><small>只保存来源记录，不自动入库</small></span
+              >
+              <label
+                class="inline-switch"
+                :title="
+                  !webSearchReady
+                    ? '请先配置联网搜索'
+                    : allowWeb
+                      ? '关闭本次运行联网搜索'
+                      : '允许智能体按需联网搜索'
+                "
+                ><input
+                  :checked="requestUsesWebSearch"
+                  @change="handleWebSearchToggle"
+                  :disabled="!webSearchReady"
+                  type="checkbox"
+                  aria-label="允许本次运行联网搜索" /><span
+              /></label>
+              <button
+                class="config-link-button"
+                type="button"
+                aria-label="管理联网搜索配置"
+                @click="openSettings('settings-web-search')"
+              >
+                <ChevronRight :size="13" />
+              </button>
+            </div>
+            <button
+              class="agent-config-item"
+              type="button"
+              @click="generationOpen = !generationOpen"
+            >
+              <span class="config-item-icon"><Settings2 :size="15" /></span>
+              <span class="config-copy"
+                ><small>生成参数</small
+                ><strong
+                  >T {{ generation.temperature }} ·
+                  {{ generation.maxTokens }} tokens</strong
+                ></span
+              >
+              <span class="config-action"
+                >{{ generationOpen ? "收起" : "调整" }}<ChevronRight :size="13"
+              /></span>
             </button>
           </div>
-          <button
-            class="agent-config-item"
-            type="button"
-            @click="openSettings('project-assets')"
-          >
-            <span class="config-item-icon"><Database :size="15" /></span>
-            <span class="config-copy"
-              ><small>知识范围</small><strong>当前项目资料</strong></span
-            >
-            <span class="config-action">查看<ChevronRight :size="13" /></span>
-          </button>
-          <div class="agent-config-item agent-config-tool">
-            <span class="config-item-icon"><Link2 :size="15" /></span>
-            <span class="config-copy"
-              ><small>联网搜索</small
-              ><strong>{{
-                !webSearchReady
-                  ? "未配置独立搜索服务"
-                  : allowWeb
-                    ? "本次运行已开启"
-                    : requestUsesWebSearch
-                      ? "当前问题将自动联网"
-                      : "本次运行已关闭"
-              }}</strong
-              ><small>只保存来源记录，不自动入库</small></span
-            >
-            <label
-              class="inline-switch"
-              :title="
-                !webSearchReady
-                  ? '请先配置联网搜索'
-                  : allowWeb
-                    ? '关闭本次运行联网搜索'
-                    : needsFreshExternalSources(draft)
-                      ? '取消本次运行的自动联网搜索'
-                      : '允许本次运行联网搜索'
-              "
-              ><input
-                :checked="requestUsesWebSearch"
-                @change="handleWebSearchToggle"
-                :disabled="!webSearchReady"
-                type="checkbox"
-                aria-label="允许本次运行联网搜索" /><span
-            /></label>
-            <button
-              class="config-link-button"
-              type="button"
-              aria-label="管理联网搜索配置"
-              @click="openSettings('settings-web-search')"
-            >
-              <ChevronRight :size="13" />
-            </button>
-          </div>
-          <button
-            class="agent-config-item"
-            type="button"
-            @click="generationOpen = !generationOpen"
-          >
-            <span class="config-item-icon"><Settings2 :size="15" /></span>
-            <span class="config-copy"
-              ><small>生成参数</small
-              ><strong
-                >T {{ generation.temperature }} ·
-                {{ generation.maxTokens }} tokens</strong
-              ></span
-            >
-            <span class="config-action"
-              >{{ generationOpen ? "收起" : "调整" }}<ChevronRight :size="13"
-            /></span>
-          </button>
-        </div>
         </section>
 
         <section
-        v-if="configOpen && generationOpen"
-        class="agent-generation-panel"
-        aria-label="本次对话生成参数"
+          v-if="configOpen && generationOpen"
+          class="agent-generation-panel"
+          aria-label="本次对话生成参数"
         >
-        <div class="generation-heading">
-          <div>
-            <strong>本次对话生成参数</strong
-            ><small
-              >优先使用项目模型配置；这里只覆盖本次运行，不修改数据库中的模型默认值。</small
+          <div class="generation-heading">
+            <div>
+              <strong>本次对话生成参数</strong
+              ><small
+                >优先使用项目模型配置；这里只覆盖本次运行，不修改数据库中的模型默认值。</small
+              >
+            </div>
+            <span>{{ activeModel?.name || "未选择项目模型" }}</span>
+          </div>
+          <div class="generation-grid">
+            <label class="generation-field"
+              ><span>检索 Top-K <small>项目资料</small></span
+              ><input
+                v-model.number="generation.retrievalTopK"
+                type="number"
+                min="1"
+                max="20"
+                step="1"
+            /></label>
+            <label class="generation-field"
+              ><span>最大输出长度 <small>tokens</small></span
+              ><input
+                v-model.number="generation.maxTokens"
+                type="number"
+                min="1"
+                max="1000000"
+                step="256"
+            /></label>
+            <label class="generation-field"
+              ><span>回答随机性 <small>Temperature</small></span
+              ><input
+                v-model.number="generation.temperature"
+                type="number"
+                min="0"
+                max="2"
+                step="0.1"
+            /></label>
+            <label class="generation-field"
+              ><span>候选概率范围 <small>Top-P</small></span
+              ><input
+                v-model.number="generation.topP"
+                type="number"
+                min="0.01"
+                max="1"
+                step="0.05"
+            /></label>
+            <label class="generation-field"
+              ><span>候选数量 <small>模型参数 Top-K</small></span
+              ><input
+                v-model.number="generation.topK"
+                type="number"
+                min="1"
+                max="1000"
+                step="1"
+                placeholder="供应商默认"
+            /></label>
+            <label class="generation-field"
+              ><span>重复内容惩罚 <small>Frequency Penalty</small></span
+              ><input
+                v-model.number="generation.frequencyPenalty"
+                type="number"
+                min="-2"
+                max="2"
+                step="0.1"
+            /></label>
+            <label class="generation-field"
+              ><span>回答方式</span
+              ><select v-model="generation.strategy">
+                <option value="AUTO">自动选择（推荐）</option>
+                <option value="PLAN_AND_SOLVE">先整理步骤</option>
+                <option value="REACT">边查边确认</option>
+                <option value="REFLECTION">回答后检查</option>
+              </select></label
+            >
+            <label class="generation-field"
+              ><span>多智能体协作</span
+              ><select v-model="multiAgentMode">
+                <option value="AUTO">自动按需（推荐）</option>
+                <option value="ON">强制开启</option>
+                <option value="OFF">关闭</option>
+              </select></label
+            >
+            <label class="generation-field"
+              ><span>回答质量检查</span
+              ><select v-model="reflectionEnabled">
+                <option :value="true">按需检查</option>
+                <option :value="false">关闭</option>
+              </select></label
             >
           </div>
-          <span>{{ activeModel?.name || "未选择项目模型" }}</span>
-        </div>
-        <div class="generation-grid">
-          <label class="generation-field"
-            ><span>检索 Top-K <small>项目资料</small></span
-            ><input
-              v-model.number="generation.retrievalTopK"
-              type="number"
-              min="1"
-              max="20"
-              step="1"
-          /></label>
-          <label class="generation-field"
-            ><span>最大输出长度 <small>tokens</small></span
-            ><input
-              v-model.number="generation.maxTokens"
-              type="number"
-              min="1"
-              max="1000000"
-              step="256"
-          /></label>
-          <label class="generation-field"
-            ><span>回答随机性 <small>Temperature</small></span
-            ><input
-              v-model.number="generation.temperature"
-              type="number"
-              min="0"
-              max="2"
-              step="0.1"
-          /></label>
-          <label class="generation-field"
-            ><span>候选概率范围 <small>Top-P</small></span
-            ><input
-              v-model.number="generation.topP"
-              type="number"
-              min="0.01"
-              max="1"
-              step="0.05"
-          /></label>
-          <label class="generation-field"
-            ><span>候选数量 <small>模型参数 Top-K</small></span
-            ><input
-              v-model.number="generation.topK"
-              type="number"
-              min="1"
-              max="1000"
-              step="1"
-              placeholder="供应商默认"
-          /></label>
-          <label class="generation-field"
-            ><span>重复内容惩罚 <small>Frequency Penalty</small></span
-            ><input
-              v-model.number="generation.frequencyPenalty"
-              type="number"
-              min="-2"
-              max="2"
-              step="0.1"
-          /></label>
-          <label class="generation-field"
-            ><span>回答方式</span
-            ><select v-model="generation.strategy">
-              <option value="AUTO">自动选择（推荐）</option>
-              <option value="PLAN_AND_SOLVE">先整理步骤</option>
-              <option value="REACT">边查边确认</option>
-              <option value="REFLECTION">回答后检查</option>
-            </select></label
-          >
-          <label class="generation-field"
-            ><span>多智能体协作</span
-            ><select v-model="multiAgentMode">
-              <option value="AUTO">自动按需（推荐）</option>
-              <option value="ON">强制开启</option>
-              <option value="OFF">关闭</option>
-            </select></label
-          >
-          <label class="generation-field"
-            ><span>回答质量检查</span
-            ><select v-model="reflectionEnabled">
-              <option :value="true">按需检查</option>
-              <option :value="false">关闭</option>
-            </select></label
-          >
-        </div>
-        <p class="generation-note">
-          系统会根据问题范围自动选择处理方式：复杂任务或明确要求时由主智能体协调多个子智能体，普通问题保持单智能体快速回答；需要多步核对时先整理步骤，必要时再检查回答质量。
-        </p>
+          <p class="generation-note">
+            智能体会结合对话与证据缺口决定下一步，展示任务理解、资料覆盖和调用理由。独立资料任务可并行执行；协作模式会增加独立的答案复核。
+          </p>
         </section>
       </Teleport>
 
@@ -1798,7 +1779,7 @@ onUnmounted(() => {
                 <strong>{{ activeThread.title }}</strong>
                 <span
                   ><i :class="{ live: isRunning }" />{{
-                    isRunning ? "Agent 正在工作" : "对话已就绪"
+                    conversationStatusLabel(messages, isRunning)
                   }}</span
                 >
               </div>
@@ -1859,9 +1840,13 @@ onUnmounted(() => {
                     ><i />{{ message.content ? "生成中" : "处理中" }}</span
                   >
                 </div>
-                <AgentMessageProgress v-if="message.role === 'assistant'" :message="message" :now="activityNow" />
+                <AgentMessageProgress
+                  v-if="message.role === 'assistant'"
+                  :message="message"
+                  :now="activityNow"
+                />
                 <div
-                  v-if="message.content"
+                  v-if="visibleAnswerContent(message)"
                   class="message-bubble"
                   :class="{
                     'is-thinking':
@@ -1880,7 +1865,7 @@ onUnmounted(() => {
                   />
                 </div>
                 <div
-                  v-if="message.content && message.status !== 'streaming'"
+                  v-if="visibleAnswerContent(message) && message.status !== 'streaming'"
                   class="message-copy-actions"
                 >
                   <button
@@ -1889,10 +1874,7 @@ onUnmounted(() => {
                     title="复制文本"
                     @click.stop="copyMessage(message)"
                   >
-                    <Check
-                      v-if="copiedMessageId === message.id"
-                      :size="13"
-                    />
+                    <Check v-if="copiedMessageId === message.id" :size="13" />
                     <Copy v-else :size="13" />
                     <span>{{
                       copiedMessageId === message.id ? "已复制" : "复制文本"
@@ -1941,14 +1923,34 @@ onUnmounted(() => {
                     <component
                       v-for="attachment in visibleMessageAttachments(message)"
                       :key="attachment.id"
-                      :is="isImageAttachmentPreviewable(attachment) ? 'button' : 'a'"
+                      :is="
+                        isImageAttachmentPreviewable(attachment)
+                          ? 'button'
+                          : 'a'
+                      "
                       class="attachment-card"
                       :class="`attachment-${attachment.kind}`"
-                      :type="isImageAttachmentPreviewable(attachment) ? 'button' : undefined"
-                      :href="isImageAttachmentPreviewable(attachment) ? undefined : attachment.url || undefined"
-                      :target="isImageAttachmentPreviewable(attachment) ? undefined : '_blank'"
+                      :type="
+                        isImageAttachmentPreviewable(attachment)
+                          ? 'button'
+                          : undefined
+                      "
+                      :href="
+                        isImageAttachmentPreviewable(attachment)
+                          ? undefined
+                          : attachment.url || undefined
+                      "
+                      :target="
+                        isImageAttachmentPreviewable(attachment)
+                          ? undefined
+                          : '_blank'
+                      "
                       rel="noreferrer"
-                      :title="isImageAttachmentPreviewable(attachment) ? `预览图片：${attachment.name}` : `打开附件：${attachment.name}`"
+                      :title="
+                        isImageAttachmentPreviewable(attachment)
+                          ? `预览图片：${attachment.name}`
+                          : `打开附件：${attachment.name}`
+                      "
                       @click="handleAttachmentClick($event, attachment)"
                     >
                       <div
@@ -1980,7 +1982,9 @@ onUnmounted(() => {
                       </div>
                     </component>
                     <button
-                      v-if="message.attachments.length > ATTACHMENT_PREVIEW_LIMIT"
+                      v-if="
+                        message.attachments.length > ATTACHMENT_PREVIEW_LIMIT
+                      "
                       type="button"
                       class="attachment-more"
                       :aria-expanded="expandedAttachmentGroups.has(message.id)"
@@ -1989,7 +1993,11 @@ onUnmounted(() => {
                       <span v-if="expandedAttachmentGroups.has(message.id)">
                         收起
                       </span>
-                      <span v-else>+{{ message.attachments.length - ATTACHMENT_PREVIEW_LIMIT }}</span>
+                      <span v-else
+                        >+{{
+                          message.attachments.length - ATTACHMENT_PREVIEW_LIMIT
+                        }}</span
+                      >
                     </button>
                   </div>
                 </details>
@@ -2183,7 +2191,7 @@ onUnmounted(() => {
             <div class="progress-top">
               <span>本次运行</span
               ><small
-                >{{ completedEvents }}/{{ events.length }} 个阶段完成</small
+                >{{ completedEvents }}/{{ events.length }} 个阶段通过</small
               ><strong>{{
                 activeThread.status === "idle" ? "—" : `${progress}%`
               }}</strong>
@@ -2431,29 +2439,51 @@ onUnmounted(() => {
           type="button"
           class="file-library-picker-item"
           :class="{
-            selected: selectedFileLibraryIds.has(String(file.uploadId || file.id)),
+            selected: selectedFileLibraryIds.has(
+              String(file.uploadId || file.id),
+            ),
             disabled: isPendingFileLibraryAttachment(file),
           }"
           :disabled="isPendingFileLibraryAttachment(file)"
-          :aria-pressed="selectedFileLibraryIds.has(String(file.uploadId || file.id))"
+          :aria-pressed="
+            selectedFileLibraryIds.has(String(file.uploadId || file.id))
+          "
           @click="toggleFileLibrarySelection(file)"
         >
           <span class="file-library-picker-icon">
-            <img v-if="file.kind === 'image' && file.url" :src="file.url" :alt="file.name" />
+            <img
+              v-if="file.kind === 'image' && file.url"
+              :src="file.url"
+              :alt="file.name"
+            />
             <component v-else :is="attachmentIcon(file.kind)" :size="18" />
           </span>
           <span class="file-library-picker-copy">
             <strong :title="file.name">{{ file.name }}</strong>
-            <small>{{ attachmentLabel(file.kind) }} · {{ file.size || "未知大小" }}</small>
+            <small
+              >{{ attachmentLabel(file.kind) }} ·
+              {{ file.size || "未知大小" }}</small
+            >
           </span>
           <span class="file-library-picker-state">
-            <span v-if="isPendingFileLibraryAttachment(file)">已在本条消息</span>
-            <span v-else-if="selectedFileLibraryIds.has(String(file.uploadId || file.id))">已选择</span>
+            <span v-if="isPendingFileLibraryAttachment(file)"
+              >已在本条消息</span
+            >
+            <span
+              v-else-if="
+                selectedFileLibraryIds.has(String(file.uploadId || file.id))
+              "
+              >已选择</span
+            >
           </span>
         </button>
       </div>
       <DialogFooter>
-        <button class="button button-secondary" type="button" @click="closeFileLibrary">
+        <button
+          class="button button-secondary"
+          type="button"
+          @click="closeFileLibrary"
+        >
           取消
         </button>
         <button
@@ -2505,7 +2535,7 @@ onUnmounted(() => {
       </DialogHeader>
       <div class="thinking-settings-grid">
         <label class="thinking-settings-field">
-          <span>深度思考</span>
+          <span>额外模型推理</span>
           <select v-model="generation.thinkingEnabled" aria-label="深度思考">
             <option :value="true">开启</option>
             <option :value="false">关闭</option>
@@ -2524,6 +2554,7 @@ onUnmounted(() => {
           </select>
         </label>
       </div>
+      <p class="config-description">模型决策理由始终显示。开启额外推理会增加等待时间和 token 用量。</p>
       <DialogFooter>
         <button
           class="button button-primary"

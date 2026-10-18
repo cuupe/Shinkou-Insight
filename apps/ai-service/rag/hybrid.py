@@ -200,6 +200,7 @@ def diversify_candidates(
     *,
     top_k: int,
     content_fn: Callable[[Any], str] = lambda item: str(item),
+    group_fn: Callable[[Any], Any] | None = None,
     diversity_lambda: float = 0.9,
 ) -> list[FusedCandidate]:
     """Apply lightweight MMR to prevent adjacent chunks repeating one passage."""
@@ -217,6 +218,12 @@ def diversify_candidates(
         )
         for candidate in candidates
     }
+    groups = (
+        {candidate.key: group_fn(candidate.item) for candidate in candidates}
+        if group_fn is not None
+        else None
+    )
+    max_relevance = max((candidate.score for candidate in candidates), default=0.0)
     remaining = list(candidates)
     selected: list[FusedCandidate] = []
     while remaining and len(selected) < limit:
@@ -227,11 +234,27 @@ def diversify_candidates(
             def mmr(candidate: FusedCandidate) -> float:
                 current = token_sets[candidate.key]
                 redundancy = max(
-                    len(current & token_sets[item.key])
-                    / max(len(current | token_sets[item.key]), 1)
-                    for item in selected
+                    (
+                        len(current & token_sets[item.key])
+                        / max(len(current | token_sets[item.key]), 1)
+                        for item in selected
+                        if groups is None
+                        or groups[candidate.key] == groups[item.key]
+                    ),
+                    default=0.0,
                 )
-                return value * candidate.score - (1.0 - value) * redundancy
+                # RRF relevance is normally around 0.01, while token overlap
+                # is in [0, 1]. Comparing those raw scales lets the diversity
+                # penalty overwhelm relevance and can push the second-best
+                # matching document behind unrelated candidates. Normalize
+                # relevance for the MMR decision only; preserve the original
+                # fused score in the returned candidate.
+                relevance = (
+                    candidate.score / max_relevance
+                    if max_relevance > 0
+                    else 1.0
+                )
+                return value * relevance - (1.0 - value) * redundancy
 
             chosen = max(remaining, key=lambda item: (mmr(item), item.score, item.key))
         selected.append(chosen)

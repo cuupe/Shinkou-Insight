@@ -61,6 +61,12 @@ def _model_for_request(config: RuntimeModelConfig | None, http_request: Request)
 )
 async def search_knowledge(request: KnowledgeSearchRequest, http_request: Request) -> RetrievalResponse:
     embedding = _embedding_for_request(request, http_request)
+    embedding_model = str(getattr(embedding, "model_name", ""))
+    uses_keyword_fallback = (
+        request.retrieval_mode in {"HYBRID", "VECTOR"}
+        and embedding_model.casefold().startswith("hash-embedding")
+    )
+    effective_mode = "KEYWORD" if uses_keyword_fallback else request.retrieval_mode
     items = await http_request.app.state.runtime.retriever.retrieve(
         workspace_id=request.workspace_id,
         project_id=request.project_id,
@@ -86,6 +92,16 @@ async def search_knowledge(request: KnowledgeSearchRequest, http_request: Reques
         items=[RetrievalItem.model_validate(item.model_dump()) for item in items],
         search_trace={
             "mode": request.retrieval_mode,
+            "effectiveMode": effective_mode,
+            "effectiveChannels": {
+                "HYBRID": ["vector", "keyword"],
+                "VECTOR": ["vector"],
+                "KEYWORD": ["keyword"],
+            }[effective_mode],
+            "embeddingModel": embedding_model,
+            "fallbackReason": (
+                "semantic_embedding_unavailable" if uses_keyword_fallback else None
+            ),
             "fusionMethod": request.fusion_method,
             "candidateK": request.candidate_k,
             "rankConstant": request.rank_constant,

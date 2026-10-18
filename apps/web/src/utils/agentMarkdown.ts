@@ -154,10 +154,8 @@ export function normalizeAgentMarkdown(value: string) {
       .replace(/\\([#>*_`~\-\[\]+=])/g, "$1"),
   );
   const normalized = normalizeHeadings(source)
-    // Models sometimes glue a list item to the previous sentence or heading,
-    // for example "...一元一次方程的求解- 体现：...".
-    .replace(/([^\n])\s*-\s+(?=[\u4e00-\u9fff])/g, "$1\n- ")
-    .replace(/([^\n])\s*\*\s+(?=[\u4e00-\u9fff])/g, "$1\n* ")
+    // Preserve authored paragraph boundaries and emphasis. Guessing inline
+    // lists from Chinese prose corrupts closing ** followed by a paragraph.
     // Recover list markers and common Chinese report section headings.
     .replace(/(^|\n)([ \t]*)([-+])(?=\S)/g, "$1$2$3 ")
     .replace(/(^|\n)([ \t]*)\*(?=[^\s*])/g, "$1$2* ")

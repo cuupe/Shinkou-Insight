@@ -37,7 +37,7 @@ async def test_brave_search_maps_results_to_citable_evidence():
 
 
 @pytest.mark.asyncio
-async def test_brave_search_drops_results_without_query_topic():
+async def test_brave_preserves_candidates_for_semantic_relevance_assessment():
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -66,8 +66,8 @@ async def test_brave_search_drops_results_without_query_topic():
             "ZUN 最新作品是什么", top_k=5
         )
 
-    assert len(results) == 1
-    assert results[0].url == "https://example.com/zun"
+    assert len(results) == 2
+    assert results[1].url == "https://example.com/zun"
 
 
 @pytest.mark.asyncio
@@ -165,7 +165,7 @@ async def test_multi_source_search_fuses_general_and_technical_sources():
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
         search = MultiSourceWebSearch(client=client, general=General(), sources=["general", "github"])
-        results = await search.search("PostgreSQL technical implementation", top_k=3)
+        results = await search.search_semantic("PostgreSQL technical implementation", top_k=3, sources=["general", "github"])
 
     assert calls == ["api.github.com"]
     assert results[0].url == "https://github.com/psycopg/psycopg"

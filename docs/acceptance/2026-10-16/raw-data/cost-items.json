@@ -1,0 +1,29 @@
+{
+  "project": "星桥知识助手试点验收",
+  "currency": "CNY",
+  "tax_included": true,
+  "period": "2026-08-31/2026-10-11",
+  "budget_cap": 150000,
+  "items": [
+    {
+      "id": "C01",
+      "amount": 36000
+    },
+    {
+      "id": "C02",
+      "amount": 48000
+    },
+    {
+      "id": "C03",
+      "amount": 24000
+    },
+    {
+      "id": "C04",
+      "amount": 19000
+    },
+    {
+      "id": "C05",
+      "amount": 12000
+    }
+  ]
+}

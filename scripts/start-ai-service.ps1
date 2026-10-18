@@ -46,7 +46,7 @@ if (-not $Elevated -and -not (Test-IsAdministrator)) {
         '-ExecutionPolicy',
         'Bypass',
         '-File',
-        $PSCommandPath,
+        ('"{0}"' -f $PSCommandPath),
         '-Elevated',
         '-Port',
         [string]$Port,
@@ -57,8 +57,10 @@ if (-not $Elevated -and -not (Test-IsAdministrator)) {
     if ($NoReload) { $elevatedArguments += '-NoReload' }
 
     $powershell = (Get-Command powershell.exe).Source
-    $elevated = Start-Process -FilePath $powershell -ArgumentList $elevatedArguments -WorkingDirectory $projectRoot -Verb RunAs -Wait -PassThru
-    exit $elevated.ExitCode
+    $elevatedProcess = Start-Process -FilePath $powershell -ArgumentList $elevatedArguments -WorkingDirectory $projectRoot -Verb RunAs -WindowStyle Hidden -PassThru
+    # Wait for the launcher only; -Wait would also wait forever for the AI server.
+    $elevatedProcess.WaitForExit()
+    exit $elevatedProcess.ExitCode
 }
 
 if (-not (Test-ExternalHttps -Uri $NetworkProbeUrl)) {

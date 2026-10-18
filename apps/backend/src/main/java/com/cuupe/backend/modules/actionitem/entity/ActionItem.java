@@ -16,6 +16,24 @@ public class ActionItem {
     private LocalDate dueAt;
     private String priority;
     private String status;
+    private Long sourceReportId;
+    private String sourceReportTitle;
+    private String sourceReportVersion;
+    private Long sourceReviewRunId;
+    private String sourceKey;
+    private String sourceExcerpt;
+    private String acceptanceCriteria;
+    private Boolean blocksRelease;
+    private String completionEvidence;
+    private Long submittedBy;
+    private LocalDateTime submittedAt;
+    private Long acceptedBy;
+    private String acceptedByName;
+    private LocalDateTime acceptedAt;
+    private String acceptanceComment;
+    private boolean canManage;
+    private boolean canEdit;
+    private boolean canAccept;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

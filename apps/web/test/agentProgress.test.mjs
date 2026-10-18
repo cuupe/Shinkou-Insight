@@ -5,6 +5,9 @@ import {
   currentMessageActivity,
   finishMessageProgress,
   messageElapsed,
+  recordMessageFailure,
+  visibleAnswerContent,
+  conversationStatusLabel,
 } from "../src/utils/agentProgress.ts";
 
 const start = "2026-09-27T01:00:00Z";
@@ -25,6 +28,76 @@ const apply = (target, type, fields = {}, seconds = 0) =>
     timestamp: at(seconds),
     ...fields,
   });
+
+test("public decisions replay by ID and preserve semantic reasons without private thinking", () => {
+  const target = message("semantic");
+  const decision = { id: "decision-1", sequence: 1, resolvedGoal: "计算酒店总价", summary: "只取得附加费，缺少基础房费", rationale: "需要补查基础收费", action: "execute", needs: [{ id: "base", description: "基础房费", status: "missing", evidenceIds: [] }], tools: [], remainingToolCalls: 8 };
+  apply(target, "decision.updated", { decision });
+  apply(target, "decision.updated", { decision: { ...decision, remainingToolCalls: 7 } });
+  assert.equal(target.decisions.length, 1);
+  assert.equal(target.decisions[0].rationale, "需要补查基础收费");
+  assert.equal(JSON.parse(JSON.stringify(target)).decisions[0].summary, decision.summary);
+  assert.equal(target.thinking, undefined);
+});
+
+test("failed runs retain a structured reason and recovery action", () => {
+  const target = message("failed");
+  const error = { code: "DECISION_SCHEMA", stage: "decision", message: "模型未返回有效决策", remedy: "检查模型结构化输出能力", retryable: false };
+  apply(target, "run.failed", { message: error.message, error }, 20);
+  assert.deepEqual(target.executionError, error);
+  assert.equal(JSON.parse(JSON.stringify(target)).executionError.code, "DECISION_SCHEMA");
+});
+
+test("serialized runtime error is displayed only by the failure card", () => {
+  const target = message("failure-card");
+  const error = { code: "ANSWER_VALIDATION", stage: "answer_validation", message: "计费条件需要核实", remedy: "查看具体条件", retryable: true };
+  target.content = error.message;
+  apply(target, "run.failed", { message: error.message, error }, 20);
+  recordMessageFailure(target, new Error(error.message));
+  assert.equal(visibleAnswerContent(target), "");
+  assert.deepEqual(target.executionError, error);
+  assert.equal(target.status, "failed");
+  const restored = JSON.parse(JSON.stringify(target));
+  assert.equal(visibleAnswerContent(restored), "");
+});
+
+test("failure presentation preserves the exact earlier answer and removes only the known suffix", () => {
+  const target = message("partial");
+  target.content = "已有资料显示第一层收费1270元。\n\n运行失败：模型连接中断";
+  recordMessageFailure(target, new Error("模型连接中断"));
+  assert.equal(visibleAnswerContent(target), "已有资料显示第一层收费1270元。");
+  target.content = "这段正文讨论运行失败：其他原因。";
+  assert.equal(visibleAnswerContent(target), target.content);
+  target.role = "user";
+  target.content = "模型连接中断";
+  assert.equal(visibleAnswerContent(target), target.content);
+});
+
+test("legacy failures and pre-event connection failures still have one actionable message error", () => {
+  const legacy = message("legacy");
+  legacy.content = "旧服务返回运行失败";
+  apply(legacy, "run.failed", { message: legacy.content }, 4);
+  assert.equal(legacy.executionError.message, legacy.content);
+  assert.equal(visibleAnswerContent(legacy), "");
+  const connection = message("connection");
+  recordMessageFailure(connection, new Error("Agent 连接不可用"));
+  assert.equal(connection.executionError.message, "Agent 连接不可用");
+  assert.equal(connection.status, "failed");
+  assert.equal(visibleAnswerContent(connection), "");
+});
+
+test("conversation header distinguishes failed runs from normal clarification", () => {
+  const target = message("header");
+  assert.equal(conversationStatusLabel([], false), "对话已就绪");
+  assert.equal(conversationStatusLabel([target], true), "Agent 正在工作");
+  recordMessageFailure(target, new Error("failed"));
+  assert.equal(conversationStatusLabel([target], false), "上次运行未完成");
+  target.status = "completed";
+  target.decisions = [{ action: "clarify" }];
+  assert.equal(conversationStatusLabel([target], false), "待你确认条件");
+  target.decisions = [{ action: "answer" }];
+  assert.equal(conversationStatusLabel([target], false), "对话已就绪");
+});
 
 test("switching conversations cannot restart either answer's clock or mix its thinking", () => {
   const first = message("first");

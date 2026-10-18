@@ -297,6 +297,40 @@ public class AgentService {
         }
     }
 
+    public Map<String, Object> snapshot(Long workspaceId, Long projectId, Long userId, String runKey, Long afterId) {
+        if (!mapper.hasProjectAccess(workspaceId, projectId, userId)) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "PROJECT_NOT_FOUND", "项目不存在或无权访问");
+        }
+        AgentRun run = mapper.findRun(runKey, projectId, userId);
+        if (run == null) throw new ApiException(HttpStatus.NOT_FOUND, "AGENT_RUN_NOT_FOUND", "Agent 运行不存在或无权访问");
+        List<Map<String, Object>> pendingEvents = new java.util.ArrayList<>();
+        for (AgentRunEvent event : mapper.findEvents(runKey, afterId)) {
+            try {
+                Map<String, Object> payload = objectMapper.readValue(event.getPayload(), Map.class);
+                payload.putIfAbsent("eventId", String.valueOf(event.getId()));
+                pendingEvents.add(payload);
+            } catch (Exception ignored) { /* Older malformed events cannot block a terminal snapshot. */ }
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        if (isTerminal(run.getStatus())) {
+            Map<String, Object> progress = replayProgress(runKey);
+            result.putAll(progress);
+            if (progress.get("executionError") != null) result.put("error", progress.get("executionError"));
+            result.put("startedAt", progress.get("runStartedAt"));
+            result.put("finishedAt", progress.get("runFinishedAt"));
+            result.put("durationMs", progress.get("runDurationMs"));
+            mapper.findMessages(run.getThreadId(), projectId, userId).stream()
+                    .filter(message -> run.getAssistantMessageId().equals(message.getId())).findFirst()
+                    .ifPresent(message -> result.put("content", message.getContent()));
+        }
+        result.put("runId", runKey);
+        result.put("messageId", findMessageKey(run.getAssistantMessageId()));
+        result.put("status", run.getStatus());
+        result.put("events", pendingEvents);
+        result.put("message", run.getErrorMessage());
+        return result;
+    }
+
     private SseEmitter subscribeLocked(Long workspaceId, Long projectId, Long userId, String runKey, Long afterId) {
         AgentRun run = mapper.findRun(runKey, projectId, userId);
         if (run == null) throw new ApiException(HttpStatus.NOT_FOUND, "AGENT_RUN_NOT_FOUND", "Agent 运行不存在或无权访问");
@@ -412,6 +446,11 @@ public class AgentService {
         Map<String, Object> payload = body.get("payload") instanceof Map<?, ?> value
                 ? (Map<String, Object>) value : Map.of();
         try {
+            if ("decision.updated".equals(eventType)) {
+                publish(run, eventType, Map.of("type", eventType, "runId", runKey,
+                        "messageId", findMessageKey(run.getAssistantMessageId()), "decision", payload.get("decision")));
+                return;
+            }
             if (eventType.startsWith("agent.") && payload.get("task") instanceof Map<?, ?>) {
                 publish(run, "agent.task.updated", Map.of("type", "agent.task.updated", "runId", runKey,
                         "messageId", findMessageKey(run.getAssistantMessageId()), "task", payload.get("task")));
@@ -451,8 +490,8 @@ public class AgentService {
             }
             if (eventType.startsWith("node.")) {
                 String node = String.valueOf(payload.getOrDefault("node", "agent"));
-                String status = eventType.endsWith("failed") || Boolean.TRUE.equals(payload.get("failed")) ? "failed" : eventType.endsWith("started") ? "running" : "completed";
-                String kind = "ATTACHMENT_ANALYSIS".equalsIgnoreCase(node) ? "file" : node.toLowerCase(Locale.ROOT);
+                String status = eventType.endsWith("failed") || Boolean.TRUE.equals(payload.get("failed")) ? "failed" : eventType.endsWith("started") || eventType.endsWith("updated") ? "running" : "completed";
+                String kind = "ATTACHMENT_ANALYSIS".equalsIgnoreCase(node) ? "file" : "DECISION".equals(node) ? "plan" : node.toLowerCase(Locale.ROOT);
                 publishStep(run, kind, String.valueOf(payload.getOrDefault("title", node)), String.valueOf(payload.getOrDefault("detail", "")), status, payload);
                 return;
             }
@@ -466,7 +505,10 @@ public class AgentService {
                 } else {
                     detail = String.valueOf(payload.getOrDefault("query", ""));
                 }
-                publishStep(run, "tool", "调用 " + tool, detail, eventType.endsWith("failed") ? "failed" : eventType.endsWith("started") ? "running" : "completed", payload);
+                String status = eventType.endsWith("failed") ? "failed" : eventType.endsWith("started") ? "running"
+                        : eventType.endsWith("blocked") ? "blocked" : eventType.endsWith("reused") ? "reused"
+                        : "no_results".equals(payload.get("status")) ? "empty" : "completed";
+                publishStep(run, "tool", "调用 " + tool, detail, status, payload);
                 return;
             }
             if ("evidence.added".equals(eventType)) {
@@ -537,6 +579,7 @@ public class AgentService {
                 completion.put("runId", runKey);
                 if (payload.get("usage") != null) completion.put("usage", payload.get("usage"));
                 if (payload.get("contextCompression") != null) completion.put("contextCompression", payload.get("contextCompression"));
+                if (payload.get("decisionMetrics") != null) completion.put("decisionMetrics", payload.get("decisionMetrics"));
                 if (payload.get("startedAt") != null) completion.put("startedAt", payload.get("startedAt"));
                 if (payload.get("durationMs") != null) completion.put("durationMs", payload.get("durationMs"));
                 completion.put("finishedAt", payload.getOrDefault("finishedAt", java.time.Instant.now().toString()));
@@ -645,6 +688,7 @@ public class AgentService {
             Map<String, Object> config = new LinkedHashMap<>();
             putIfPresent(config, "allowWebSearch", request.getAllowWebSearch());
             putIfPresent(config, "reflectionEnabled", request.getReflectionEnabled());
+            putIfPresent(config, "decisionReasoningEffort", request.getDecisionReasoningEffort());
             putIfPresent(config, "strategy", request.getStrategy());
             putIfPresent(config, "multiAgentMode", request.getMultiAgentMode());
             putIfPresent(config, "maxResearchRounds", request.getMaxResearchRounds());
@@ -1030,7 +1074,7 @@ public class AgentService {
         if (sections instanceof List<?> list) for (Object section : list) {
             if (!(section instanceof Map<?, ?> value)) continue;
             appendLine(answer, value.get("heading"));
-            appendLine(answer, value.get("body"));
+            appendLine(answer, valueAny(value, "content", "body", null));
         }
         Object recommendations = report.get("recommendations");
         if (recommendations instanceof List<?> list && !list.isEmpty()) {

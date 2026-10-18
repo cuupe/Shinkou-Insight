@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
+import DOMPurify from "dompurify";
+import MarkdownIt from "markdown-it";
 import {
   Archive,
   CheckCircle2,
@@ -8,10 +10,13 @@ import {
   Download,
   Edit3,
   FileText,
+  RefreshCw,
   Search,
+  Send,
 } from "@lucide/vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import ProjectWorkflow from "@/components/project/ProjectWorkflow.vue";
+import ReportActionImportDialog from "@/components/project/ReportActionImportDialog.vue";
 import {
   Dialog,
   DialogContent,
@@ -29,11 +34,21 @@ import {
 } from "@/components/ui/select";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { reportsApi } from "@/api/reports";
+import { getApiErrorCode, getApiErrorMessage } from "@/api/core";
 import { useRoute } from "vue-router";
 import { formatDateTime } from "@/lib/utils";
+import type { Report } from "@/api/types";
+import { reportTextFields, reportUpdatePayload } from "@/utils/reportContent";
 
-const { reports, notify, workspaceId, projectId, router, routeTo } =
-  useWorkspace();
+const {
+  reports,
+  notify,
+  workspaceId,
+  projectId,
+  selectedProject,
+  router,
+  routeTo,
+} = useWorkspace();
 const route = useRoute();
 const reportItems = reactive(reports);
 const filters = ["全部", "已发布", "草稿"];
@@ -41,6 +56,76 @@ const searchQuery = ref("");
 const filterLabel = ref(filters[0] || "全部");
 const selectedReportId = ref(reportItems[0]?.id ?? "");
 const editorOpen = ref(false);
+const actionImportOpen = ref(false);
+const saving = ref(false);
+const reportsLoading = ref(false);
+const reportsError = ref("");
+let reportsLoadId = 0;
+
+function mapProjectReport(report: Report) {
+  const status = String(report.status || "DRAFT").toUpperCase();
+  return {
+    id: String(report.id),
+    projectId: projectId.value,
+    title: String(report.title || "未命名报告"),
+    project: String(selectedProject.value?.name || ""),
+    version: report.versionNo == null ? "暂无" : `v${String(report.versionNo)}`,
+    updated: formatDateTime(report.updatedAt || report.createdAt, "—"),
+    status: status === "PUBLISHED" ? "已发布" : "草稿",
+    citations: report.citations == null ? null : Number(report.citations),
+    ...reportTextFields(report),
+  };
+}
+
+async function loadReports() {
+  const requestId = ++reportsLoadId;
+  const currentWorkspaceId = workspaceId.value;
+  const currentProjectId = projectId.value;
+  if (!currentWorkspaceId || currentProjectId <= 0) {
+    reportItems.splice(0, reportItems.length);
+    reportsError.value = "请先选择项目，再查看项目报告。";
+    reportsLoading.value = false;
+    return;
+  }
+
+  reportItems.splice(0, reportItems.length);
+  reportsLoading.value = true;
+  reportsError.value = "";
+  try {
+    const remote = await reportsApi.list(currentWorkspaceId, currentProjectId);
+    if (
+      requestId !== reportsLoadId ||
+      workspaceId.value !== currentWorkspaceId ||
+      projectId.value !== currentProjectId
+    ) {
+      return;
+    }
+    reportItems.splice(0, reportItems.length, ...remote.map(mapProjectReport));
+    const requestedReportId =
+      typeof route.query.reportId === "string"
+        ? route.query.reportId
+        : selectedReportId.value;
+    selectedReportId.value = reportItems.some(
+      (report) => report.id === requestedReportId,
+    )
+      ? requestedReportId
+      : (reportItems[0]?.id ?? "");
+  } catch (error) {
+    if (
+      requestId === reportsLoadId &&
+      workspaceId.value === currentWorkspaceId &&
+      projectId.value === currentProjectId
+    ) {
+      reportItems.splice(0, reportItems.length);
+      reportsError.value =
+        error instanceof Error ? error.message : "报告加载失败，请重试。";
+    }
+  } finally {
+    if (requestId === reportsLoadId) reportsLoading.value = false;
+  }
+}
+
+watch([workspaceId, projectId], () => void loadReports(), { immediate: true });
 
 watch(
   () => route.query.reportId,
@@ -54,6 +139,7 @@ const editForm = reactive({
   title: "",
   lead: "",
   summary: "",
+  content: "",
   recommendation: "",
   recommendationDetail: "",
 });
@@ -81,6 +167,9 @@ const selectedReport = computed(
     filteredReports.value[0] ??
     reportItems[0],
 );
+const markdown = new MarkdownIt({ html: false, linkify: false });
+markdown.disable("image");
+const renderedContent = computed(() => DOMPurify.sanitize(markdown.render(selectedReport.value?.content || "")));
 
 const publishedCount = computed(
   () => reportItems.filter((report) => report.status === "已发布").length,
@@ -105,6 +194,7 @@ function openEditor() {
     title: selectedReport.value.title,
     lead: selectedReport.value.lead,
     summary: selectedReport.value.summary,
+    content: selectedReport.value.content,
     recommendation: selectedReport.value.recommendation,
     recommendationDetail: selectedReport.value.recommendationDetail,
   });
@@ -113,33 +203,21 @@ function openEditor() {
 
 async function saveReport() {
   const report = selectedReport.value;
-  if (!report || !editForm.title.trim()) return;
-  const content = [
-    editForm.lead.trim(),
-    editForm.summary.trim(),
-    editForm.recommendation.trim(),
-    editForm.recommendationDetail.trim(),
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  if (!report || !editForm.title.trim() || saving.value) return;
+  const payload = reportUpdatePayload(editForm);
+  saving.value = true;
   try {
     const updated = await reportsApi.update(
       workspaceId.value,
       projectId.value,
       report.id,
-      {
-        title: editForm.title.trim(),
-        content,
-        lead: editForm.lead.trim(),
-        summary: editForm.summary.trim(),
-        recommendation: editForm.recommendation.trim(),
-        recommendationDetail: editForm.recommendationDetail.trim(),
-      },
+      payload,
     );
     Object.assign(report, {
       title: updated.title || editForm.title.trim(),
       lead: String(updated.lead ?? editForm.lead.trim()),
-      summary: String(updated.summary ?? (editForm.summary.trim() || content)),
+      summary: String(updated.summary ?? payload.summary),
+      content: String(updated.content ?? updated.markdownContent ?? payload.content),
       recommendation: String(
         updated.recommendation ?? editForm.recommendation.trim(),
       ),
@@ -147,10 +225,16 @@ async function saveReport() {
         updated.recommendationDetail ?? editForm.recommendationDetail.trim(),
       ),
       updated: formatDateTime(updated.updatedAt || report.updated, "—"),
+      status:
+        String(updated.status || "DRAFT").toUpperCase() === "PUBLISHED"
+          ? "已发布"
+          : "草稿",
     });
   } catch (error) {
     notify(error instanceof Error ? error.message : "报告保存失败");
     return;
+  } finally {
+    saving.value = false;
   }
   editorOpen.value = false;
   notify("报告内容已保存");
@@ -171,7 +255,17 @@ async function toggleReportStatus() {
       String(updated.status || nextStatus) === "PUBLISHED" ? "已发布" : "草稿";
     notify(report.status === "已发布" ? "报告已发布" : "报告已移回草稿");
   } catch (error) {
-    notify(error instanceof Error ? error.message : "报告状态更新失败");
+    notify(getApiErrorMessage(error, "报告状态更新失败"));
+    if (
+      ["REPORT_REVIEW_REQUIRED", "REPORT_REVIEW_STALE"].includes(
+        getApiErrorCode(error) || "",
+      )
+    ) {
+      void router.push({
+        ...routeTo("project-review"),
+        query: { reportId: report.id },
+      });
+    }
   }
 }
 
@@ -208,19 +302,13 @@ async function copySummary() {
 }
 
 function createActionFromRecommendation() {
-  const report = selectedReport.value;
-  if (!report) return;
-  const title = report.recommendation.trim() || `跟进：${report.title}`;
-  const description = [
-    report.recommendationDetail.trim(),
-    `来源报告：${report.title} ${report.version}`.trim(),
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-  void router.push({
-    ...routeTo("project-action-items"),
-    query: { actionTitle: title, actionDescription: description },
-  });
+  if(selectedReport.value) actionImportOpen.value=true;
+}
+function goReportActions(reportId:number|string) {
+  void router.push({...routeTo("project-action-items"),query:{reportId:String(reportId)}});
+}
+function createLinkedAction(reportId:number|string,title:string) {
+  void router.push({...routeTo("project-action-items"),query:{sourceReportId:String(reportId),actionTitle:`跟进：${title}`}});
 }
 </script>
 
@@ -342,7 +430,16 @@ function createActionFromRecommendation() {
             ><i />{{ report.status }}</span
           >
         </button>
-        <p v-if="!filteredReports.length" class="empty-state">
+        <div v-if="reportsLoading" class="empty-state" role="status">
+          正在加载报告…
+        </div>
+        <div v-else-if="reportsError" class="reports-error" role="alert">
+          <p>报告加载失败：{{ reportsError }}</p>
+          <button class="text-button" type="button" @click="loadReports">
+            <RefreshCw :size="14" />重新加载
+          </button>
+        </div>
+        <p v-else-if="!filteredReports.length" class="empty-state">
           {{
             reportItems.length
               ? "没有匹配的报告，试试其他关键词或筛选条件。"
@@ -369,6 +466,8 @@ function createActionFromRecommendation() {
           >
         </div>
         <div class="heading-actions">
+          <button class="text-button" type="button" :disabled="!selectedReport" @click="actionImportOpen=true"><ClipboardList :size="14"/>建立行动项</button>
+          <button v-if="selectedReport" class="text-button" type="button" @click="goReportActions(selectedReport.id)">查看关联任务</button>
           <button class="text-button" type="button" @click="openEditor">
             <Edit3 :size="14" />编辑</button
           ><button
@@ -403,7 +502,7 @@ function createActionFromRecommendation() {
         </div>
         <hr />
         <h3>01 / 报告正文</h3>
-        <p v-if="selectedReport.summary">{{ selectedReport.summary }}</p>
+        <div v-if="selectedReport.content" class="report-content" v-html="renderedContent"></div>
         <div v-else class="empty-state">该报告暂无正文内容。</div>
         <div
           v-if="
@@ -432,22 +531,32 @@ function createActionFromRecommendation() {
           >
         </div>
       </article>
-      <div v-else class="empty-reader">选择一份报告开始阅读</div>
+      <div v-else class="empty-reader">
+        {{
+          reportsLoading
+            ? "正在加载报告…"
+            : reportsError
+              ? "报告加载失败，请在左侧重新加载。"
+              : "选择一份报告开始阅读"
+        }}
+      </div>
     </section>
   </div>
 
+  <ReportActionImportDialog v-model:open="actionImportOpen" :workspace-id="workspaceId" :project-id="projectId" :report-id="selectedReport?.id" @imported="goReportActions" @manual="createLinkedAction"/>
   <Dialog v-model:open="editorOpen">
     <DialogContent class="report-editor-dialog">
       <DialogHeader
         ><DialogTitle>编辑报告</DialogTitle
         ><DialogDescription
-          >更新报告内容后保存，版本和引用数量保持不变。</DialogDescription
+          >摘要用于概览，完整内容请在报告正文中编辑。</DialogDescription
         ></DialogHeader
       >
       <div class="editor-form">
         <label>报告标题<input v-model="editForm.title" type="text" /></label
         ><label>导语<textarea v-model="editForm.lead" rows="3" /></label
         ><label>执行摘要<textarea v-model="editForm.summary" rows="4" /></label>
+        <label>报告正文<textarea v-model="editForm.content" rows="14" /></label>
         <div class="form-grid">
           <label
             >推荐方案<input
@@ -471,8 +580,9 @@ function createActionFromRecommendation() {
           class="button button-primary"
           type="button"
           @click="saveReport"
+          :disabled="saving || !editForm.title.trim()"
         >
-          保存更改
+          {{ saving ? "保存中…" : "保存更改" }}
         </button></DialogFooter
       >
     </DialogContent>
@@ -679,6 +789,19 @@ function createActionFromRecommendation() {
 .empty-state {
   padding: 1.5rem 0.75rem;
 }
+.reports-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1.5rem 0.75rem;
+  color: var(--workspace-muted);
+  font-size: 0.8125rem;
+  text-align: center;
+}
+.reports-error p {
+  margin: 0;
+}
 .report-reader {
   min-height: 38.75rem;
   overflow: hidden;
@@ -818,7 +941,22 @@ function createActionFromRecommendation() {
 }
 .report-editor-dialog {
   max-width: 42rem !important;
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
 }
+.report-content { min-width: 0; overflow-x: auto; overflow-wrap: anywhere; font-size: .875rem; line-height: 1.9; }
+.report-content :deep(p),.report-content :deep(ul),.report-content :deep(ol) { margin: .8rem 0; }
+.report-content :deep(h1),.report-content :deep(h2),.report-content :deep(h3),.report-content :deep(h4) { margin: 1.5rem 0 .75rem; color: var(--workspace-text); font-weight: 650; line-height: 1.5; }
+.report-content :deep(h1) { font-size: 1.35rem; }
+.report-content :deep(h2) { font-size: 1.1rem; }
+.report-content :deep(h3),.report-content :deep(h4) { font-size: .95rem; }
+.report-content :deep(table) { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .8125rem; }
+.report-content :deep(th),.report-content :deep(td) { padding: .65rem; border: 1px solid var(--workspace-divider); min-width: 5rem; text-align: left; vertical-align: top; }
+.report-content :deep(th) { background: var(--surface-soft); font-weight: 600; }
+.report-content :deep(blockquote) { margin: 1rem 0; padding: .1rem 1rem; border-left: 3px solid var(--teal); color: var(--workspace-muted); background: var(--surface-soft); }
+.report-content :deep(pre) { padding: .8rem; background: var(--surface-soft); overflow-x: auto; }
+.report-content :deep(code) { font-size: .9em; }
+.report-content :deep(li) { margin: .4rem 0; }
 .editor-form {
   display: grid;
   gap: 0.875rem;

@@ -1,21 +1,31 @@
 <script setup lang="ts">
+import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import {
   ArrowRight,
-  ArrowUpRight,
-  BarChart3,
   CheckCircle2,
   CircleAlert,
   ClipboardCheck,
+  Database,
+  LoaderCircle,
   MessageCircle,
+  Play,
   Plus,
   RefreshCw,
-  Target,
-  Zap,
+  Search,
 } from "@lucide/vue";
-import { computed, reactive, ref, watch } from "vue";
-import { useRoute } from "vue-router";
 import PageHeader from "@/components/common/PageHeader.vue";
-import ProjectWorkflow from "@/components/project/ProjectWorkflow.vue";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -24,39 +34,397 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { useWorkspace } from "@/composables/useWorkspace";
 import { evaluationApi } from "@/api/evaluation";
-import { statisticsApi } from "@/api/statistics";
+import { getApiErrorMessage } from "@/api/core";
+import type { EvaluationResult, EvaluationRun } from "@/api/types";
 import { formatDateTime } from "@/lib/utils";
 
-const {
-  evaluationCases: evaluationSeed,
-  notify,
-  workspaceId,
-  projectId,
-  statistics,
-  router,
-  routeTo,
-} = useWorkspace();
+const { assets, notify, workspaceId, projectId, router, routeTo } =
+  useWorkspace();
 const route = useRoute();
-const evaluationCases = reactive(evaluationSeed);
-const selectedCaseId = ref(evaluationCases[0]?.id ?? "");
-const statusFilter = ref("all");
-const isRunning = ref(false);
-const isUpdatingCase = ref(false);
-const lastRunLabel = ref("尚未同步评估数据");
-const caseDialogOpen = ref(false);
-const caseForm = reactive({ query: "", expectedAnswer: "" });
+const evaluationCases = ref<ReturnType<typeof mapEvaluationCase>[]>([]);
+const selectedCaseId = ref("");
+const filter = ref("all");
+const search = ref("");
+const loading = ref(false);
+const loadError = ref("");
+const saving = ref(false);
+const saveError = ref("");
+const reviewing = ref(false);
+const dialogOpen = ref(false);
+const editingId = ref<string | null>(null);
+const running = ref(false);
+const runningCaseId = ref("");
+const stopRequested = ref(false);
+const runErrors = reactive<Record<string, string>>({});
+const batch = ref<{
+  total: number;
+  completed: number;
+  passed: number;
+  failed: number;
+  errors: number;
+  stopped: boolean;
+} | null>(null);
+let scopeVersion = 0;
+let loadVersion = 0;
+const form = reactive({
+  query: "",
+  expectedAnswer: "",
+  expectedAsset: "",
+  expectedChunkIds: "",
+  requiredFacts: "",
+  forbiddenFacts: "",
+});
+const indexedAssets = computed(() =>
+  assets.filter((asset) => asset.status === "indexed"),
+);
+const selectedCase = computed(() =>
+  evaluationCases.value.find((item) => item.id === selectedCaseId.value),
+);
+const runnableCases = computed(() => evaluationCases.value.filter(canRun));
+const evaluatedCases = computed(() =>
+  evaluationCases.value.filter((item) => item.evaluationResult),
+);
+const failedCases = computed(() =>
+  evaluatedCases.value.filter(
+    (item) => item.evaluationResult?.status === "FAILED",
+  ),
+);
+const averageRecall = computed(() => {
+  const values = evaluatedCases.value
+    .map((item) => item.evaluationResult?.recall)
+    .filter(
+      (value): value is number =>
+        typeof value === "number" && Number.isFinite(value),
+    );
+  return values.length
+    ? `${(values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1)}%`
+    : "尚未运行";
+});
+const filters = [
+  { value: "all", label: "全部" },
+  { value: "ready", label: "待运行" },
+  { value: "failed", label: "未通过" },
+  { value: "unannotated", label: "待标注" },
+];
+const filteredCases = computed(() =>
+  evaluationCases.value.filter((item) => {
+    const matchesFilter =
+      filter.value === "all" ||
+      (filter.value === "ready" && canRun(item) && !item.evaluationResult) ||
+      (filter.value === "failed" &&
+        item.evaluationResult?.status === "FAILED") ||
+      (filter.value === "unannotated" && !canRun(item));
+    return (
+      matchesFilter &&
+      `${item.query} ${item.expectedAsset}`
+        .toLowerCase()
+        .includes(search.value.trim().toLowerCase())
+    );
+  }),
+);
+const remainingUnannotated = computed(
+  () => evaluationCases.value.length - runnableCases.value.length,
+);
 
-watch(
-  () => evaluationCases.map((item) => item.id),
-  (ids) => {
-    const requestedCaseId = route.query.caseId;
-    if (typeof requestedCaseId === "string" && ids.includes(requestedCaseId)) {
-      selectedCaseId.value = requestedCaseId;
-    } else if (!selectedCaseId.value || !ids.includes(selectedCaseId.value)) {
-      selectedCaseId.value = ids[0] || "";
+function parseList(value: unknown): string[] {
+  if (typeof value === "string") {
+    try {
+      return parseList(JSON.parse(value));
+    } catch {
+      return [];
     }
+  }
+  return Array.isArray(value)
+    ? value.filter(
+        (entry): entry is string => typeof entry === "string" && !!entry.trim(),
+      )
+    : [];
+}
+function parseResult(
+  value: EvaluationRun["evaluationResult"],
+): EvaluationResult | null {
+  if (typeof value === "string") {
+    try {
+      return parseResult(JSON.parse(value));
+    } catch {
+      return null;
+    }
+  }
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value
+    : null;
+}
+function mapEvaluationCase(item: EvaluationRun) {
+  return {
+    id: String(item.id),
+    projectId: item.projectId,
+    query: String(item.query || ""),
+    expectedAnswer: String(item.expectedAnswer || ""),
+    expectedAsset: String(item.expectedAsset || ""),
+    expectedChunkIds: parseList(item.expectedChunkIds),
+    requiredFacts: parseList(item.requiredFacts),
+    forbiddenFacts: parseList(item.forbiddenFacts),
+    evaluationResult: parseResult(item.evaluationResult),
+    evaluatedAt: item.evaluatedAt,
+    status: String(item.status || "REVIEW").toLowerCase(),
+  };
+}
+function canRun(item: ReturnType<typeof mapEvaluationCase> | undefined) {
+  return (
+    !!item &&
+    !!(
+      item.expectedAsset.trim() ||
+      item.expectedChunkIds.length ||
+      item.requiredFacts.length
+    )
+  );
+}
+function caseLabel(item: ReturnType<typeof mapEvaluationCase>) {
+  if (!canRun(item)) return "待标注";
+  if (runErrors[item.id]) return "运行出错";
+  if (!item.evaluationResult) return "待运行";
+  return item.evaluationResult.status === "PASSED" ? "检索通过" : "检索未通过";
+}
+function splitLines(value: string) {
+  return [
+    ...new Set(
+      value
+        .split(/\r?\n/)
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+function openCreate(assetName = "") {
+  editingId.value = null;
+  saveError.value = "";
+  Object.assign(form, {
+    query: assetName ? `《${assetName}》主要说明了什么？` : "",
+    expectedAnswer: "",
+    expectedAsset: assetName,
+    expectedChunkIds: "",
+    requiredFacts: "",
+    forbiddenFacts: "",
+  });
+  dialogOpen.value = true;
+}
+function openEdit() {
+  const item = selectedCase.value;
+  if (!item) return;
+  editingId.value = item.id;
+  saveError.value = "";
+  Object.assign(form, {
+    ...item,
+    expectedChunkIds: item.expectedChunkIds.join("\n"),
+    requiredFacts: item.requiredFacts.join("\n"),
+    forbiddenFacts: item.forbiddenFacts.join("\n"),
+  });
+  dialogOpen.value = true;
+}
+async function saveCase() {
+  if (!form.query.trim() || saving.value || running.value) return;
+  const version = scopeVersion;
+  const id = editingId.value;
+  const payload = {
+    projectId: projectId.value,
+    query: form.query.trim(),
+    expectedAnswer: form.expectedAnswer.trim(),
+    expectedAsset: form.expectedAsset.trim(),
+    expectedChunkIds: splitLines(form.expectedChunkIds),
+    requiredFacts: splitLines(form.requiredFacts),
+    forbiddenFacts: splitLines(form.forbiddenFacts),
+  };
+  saving.value = true;
+  saveError.value = "";
+  try {
+    const response = id
+      ? await evaluationApi.update(workspaceId.value, id, payload)
+      : await evaluationApi.create(workspaceId.value, payload);
+    if (version !== scopeVersion) return;
+    const saved = mapEvaluationCase(response);
+    const index = evaluationCases.value.findIndex(
+      (item) => item.id === saved.id,
+    );
+    if (index >= 0) evaluationCases.value.splice(index, 1, saved);
+    else evaluationCases.value.unshift(saved);
+    delete runErrors[saved.id];
+    selectedCaseId.value = saved.id;
+    filter.value = "all";
+    search.value = "";
+    dialogOpen.value = false;
+    notify(
+      id ? "用例标注已更新，请重新运行评估" : "用例已保存，可开始检索评估",
+    );
+  } catch (error) {
+    if (version === scopeVersion)
+      saveError.value = getApiErrorMessage(error, "保存用例失败，请重试");
+  } finally {
+    if (version === scopeVersion) saving.value = false;
+  }
+}
+async function loadCases() {
+  const version = ++loadVersion;
+  const scope = scopeVersion;
+  const currentProject = projectId.value;
+  loading.value = true;
+  loadError.value = "";
+  try {
+    const remote = await evaluationApi.list(workspaceId.value);
+    if (version !== loadVersion || scope !== scopeVersion) return;
+    evaluationCases.value = remote
+      .filter((item) => Number(item.projectId) === currentProject)
+      .map(mapEvaluationCase);
+    if (!evaluationCases.value.some((item) => item.id === selectedCaseId.value))
+      selectedCaseId.value = evaluationCases.value[0]?.id || "";
+  } catch (error) {
+    if (version === loadVersion && scope === scopeVersion)
+      loadError.value = getApiErrorMessage(error, "读取用例失败，请重试");
+  } finally {
+    if (version === loadVersion && scope === scopeVersion)
+      loading.value = false;
+  }
+}
+async function runCases(items: ReturnType<typeof mapEvaluationCase>[]) {
+  const targets = items.filter(canRun);
+  if (
+    running.value ||
+    saving.value ||
+    reviewing.value ||
+    loading.value ||
+    !targets.length
+  )
+    return;
+  const version = scopeVersion;
+  const currentWorkspace = workspaceId.value;
+  running.value = true;
+  stopRequested.value = false;
+  batch.value = {
+    total: targets.length,
+    completed: 0,
+    passed: 0,
+    failed: 0,
+    errors: 0,
+    stopped: false,
+  };
+  try {
+    for (const item of targets) {
+      if (version !== scopeVersion || stopRequested.value) break;
+      runningCaseId.value = item.id;
+      delete runErrors[item.id];
+      try {
+        const response = await evaluationApi.run(currentWorkspace, item.id);
+        if (version !== scopeVersion) return;
+        Object.assign(item, mapEvaluationCase(response));
+        if (item.evaluationResult?.status === "PASSED") batch.value!.passed++;
+        else batch.value!.failed++;
+      } catch (error) {
+        if (version !== scopeVersion) return;
+        runErrors[item.id] = getApiErrorMessage(
+          error,
+          "检索评估请求失败，请重试",
+        );
+        batch.value!.errors++;
+      }
+      batch.value!.completed++;
+    }
+    if (version !== scopeVersion) return;
+    batch.value!.stopped =
+      stopRequested.value && batch.value!.completed < targets.length;
+    notify(
+      batch.value!.stopped
+        ? "已停止后续评估，当前结果已保留"
+        : "检索评估结束，结果已保存",
+    );
+  } finally {
+    if (version === scopeVersion) {
+      running.value = false;
+      runningCaseId.value = "";
+    }
+  }
+}
+function openTool(name: string) {
+  const item = selectedCase.value;
+  if (!item) return;
+  void router.push({
+    ...routeTo(name),
+    query: {
+      [name === "project-agent-chat" ? "prompt" : "query"]: item.query,
+      evaluationCaseId: item.id,
+    },
+  });
+}
+async function markReviewed(status: "PASSED" | "FAILED" | "REVIEW") {
+  const item = selectedCase.value;
+  if (!item || reviewing.value || running.value) return;
+  const version = scopeVersion;
+  reviewing.value = true;
+  try {
+    const response = await evaluationApi.update(workspaceId.value, item.id, {
+      status,
+    });
+    if (version === scopeVersion) {
+      item.status = String(response.status).toLowerCase();
+      notify("人工核验状态已保存");
+    }
+  } catch (error) {
+    if (version === scopeVersion)
+      notify(getApiErrorMessage(error, "更新核验状态失败"));
+  } finally {
+    if (version === scopeVersion) reviewing.value = false;
+  }
+}
+function createAction() {
+  const item = selectedCase.value;
+  if (!item) return;
+  const result = item.evaluationResult;
+  const details = [
+    `评估问题：${item.query}`,
+    item.expectedAnswer && `验收标准：${item.expectedAnswer}`,
+    item.expectedAsset && `目标资料：${item.expectedAsset}`,
+    result?.missingChunkIds?.length &&
+      `未命中片段：${result.missingChunkIds.join("、")}`,
+    result?.expectedAssetFound === false && `未命中资料：${item.expectedAsset}`,
+    result?.missingRequiredFacts?.length &&
+      `缺失事实：${result.missingRequiredFacts.join("、")}`,
+    result?.matchedForbiddenFacts?.length &&
+      `命中禁止事实：${result.matchedForbiddenFacts.join("、")}`,
+    `检索评估：Recall@5 ${result?.recall ?? "—"}%`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  void router.push({
+    ...routeTo("project-action-items"),
+    query: {
+      actionTitle: `修复检索评估：${item.query.slice(0, 72)}`,
+      actionDescription: details,
+    },
+  });
+}
+watch(
+  [workspaceId, projectId],
+  () => {
+    scopeVersion++;
+    evaluationCases.value = [];
+    selectedCaseId.value =
+      typeof route.query.caseId === "string" ? route.query.caseId : "";
+    for (const key of Object.keys(runErrors)) delete runErrors[key];
+    running.value = false;
+    saving.value = false;
+    reviewing.value = false;
+    dialogOpen.value = false;
+    batch.value = null;
+    filter.value = "all";
+    search.value = "";
+    void loadCases();
   },
   { immediate: true },
 );
@@ -66,1327 +434,942 @@ watch(
     if (typeof id === "string") selectedCaseId.value = id;
   },
 );
-
-const statusLabels: Record<string, string> = {
-  passed: "已通过",
-  review: "待复核",
-  failed: "未通过",
-};
-
-const statusFilters = [
-  { label: "全部用例", value: "all" },
-  { label: "已通过", value: "passed" },
-  { label: "待复核", value: "review" },
-  { label: "未通过", value: "failed" },
-];
-
-const selectedCase = computed(() =>
-  evaluationCases.find((item) => item.id === selectedCaseId.value),
-);
-
-const filteredCases = computed(() => {
-  if (statusFilter.value === "all") return evaluationCases;
-  return evaluationCases.filter((item) => item.status === statusFilter.value);
+onBeforeUnmount(() => {
+  scopeVersion++;
 });
-
-const parsePercent = (value: unknown) => {
-  const parsed = Number.parseFloat(String(value));
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-function averageMetric(field: "recall" | "citation" | "json") {
-  const values = evaluationCases
-    .map((item) => parsePercent(item[field]))
-    .filter((value): value is number => value !== null);
-  if (!values.length) return null;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function formatMetric(value: number | null) {
-  return value === null ? "—" : `${value.toFixed(1)}%`;
-}
-
-const qualityRows = computed(() => [
-  { label: "召回率", value: averageMetric("recall"), tone: "teal" },
-  { label: "引用准确率", value: averageMetric("citation"), tone: "violet" },
-  { label: "结构化输出", value: averageMetric("json"), tone: "amber" },
-]);
-
-const overallScore = computed(() => {
-  const values = qualityRows.value
-    .map((item) => item.value)
-    .filter((value): value is number => value !== null);
-  if (!values.length) return "—";
-  return `${(values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1)}%`;
-});
-
-const metricCards = computed(() => [
-  {
-    label: "综合质量分",
-    value: overallScore.value,
-    change: "基于全部用例均值",
-    icon: Target,
-    tone: "teal",
-  },
-  {
-    label: "平均召回率",
-    value: formatMetric(averageMetric("recall")),
-    change: "覆盖检索结果",
-    icon: BarChart3,
-    tone: "blue",
-  },
-  {
-    label: "引用准确率",
-    value: formatMetric(averageMetric("citation")),
-    change: "基于证据匹配",
-    icon: ClipboardCheck,
-    tone: "violet",
-  },
-  {
-    label: "通过用例",
-    value: `${evaluationCases.filter((item) => item.status === "passed").length}/${evaluationCases.length}`,
-    change: "人工核验状态",
-    icon: Zap,
-    tone: "amber",
-  },
-]);
-
-const qualityTrendPoints = computed(() => {
-  const points = (statistics.value?.dailyTrend || []).filter(
-    (point) =>
-      point.recall != null || point.citation != null || point.jsonScore != null,
-  );
-  return points.map((point, index) => ({
-    ...point,
-    x: points.length <= 1 ? 50 : (index / (points.length - 1)) * 100,
-    recallY: 100 - Number(point.recall ?? 0),
-    citationY: 100 - Number(point.citation ?? 0),
-    jsonY: 100 - Number(point.jsonScore ?? 0),
-  }));
-});
-const qualityTrendHasData = computed(() => qualityTrendPoints.value.length > 0);
-const qualityRecallLine = computed(() =>
-  qualityTrendPoints.value
-    .filter((point) => point.recall != null)
-    .map((point) => `${point.x},${point.recallY}`)
-    .join(" "),
-);
-const qualityCitationLine = computed(() =>
-  qualityTrendPoints.value
-    .filter((point) => point.citation != null)
-    .map((point) => `${point.x},${point.citationY}`)
-    .join(" "),
-);
-const qualityJsonLine = computed(() =>
-  qualityTrendPoints.value
-    .filter((point) => point.jsonScore != null)
-    .map((point) => `${point.x},${point.jsonY}`)
-    .join(" "),
-);
-const qualityTrendLabels = computed(() => {
-  const points = qualityTrendPoints.value;
-  if (points.length <= 5) return points;
-  return [
-    points[0],
-    points[Math.floor((points.length - 1) / 2)],
-    points[points.length - 1],
-  ].filter((point): point is (typeof points)[number] => Boolean(point));
-});
-
-function displayQuery(item: { id: string; query: string }) {
-  return item.query || item.id;
-}
-
-function evaluationStatusLabel(status: string) {
-  return statusLabels[status] || status;
-}
-
-function createEvaluation() {
-  caseForm.query = "";
-  caseForm.expectedAnswer = "";
-  caseDialogOpen.value = true;
-}
-
-async function saveEvaluationCase() {
-  const query = caseForm.query.trim();
-  if (!query) return;
-  try {
-    const created = await evaluationApi.create(workspaceId.value, {
-      projectId: projectId.value > 0 ? projectId.value : undefined,
-      query,
-      expectedAnswer: caseForm.expectedAnswer.trim() || undefined,
-    });
-    const id = String(created.id ?? "—");
-    evaluationCases.unshift({
-      id,
-      projectId: projectId.value > 0 ? projectId.value : undefined,
-      query: String(created.query || query),
-      expectedAnswer: String(created.expectedAnswer || caseForm.expectedAnswer.trim()),
-      recall: created.recall == null ? "—" : `${String(created.recall)}%`,
-      citation: created.citation == null ? "—" : `${String(created.citation)}%`,
-      json: created.jsonScore == null ? "—" : `${String(created.jsonScore)}%`,
-      status: String(created.status || "review").toLowerCase(),
-    });
-    selectedCaseId.value = id;
-    statusFilter.value = "all";
-    caseDialogOpen.value = false;
-    notify("评估用例已创建");
-  } catch (error) {
-    notify(error instanceof Error ? error.message : "评估用例创建失败");
-  }
-}
-
-async function syncEvaluationData() {
-  if (isRunning.value) return;
-  isRunning.value = true;
-  try {
-    const remote = await evaluationApi.list(workspaceId.value);
-    evaluationCases.splice(
-      0,
-      evaluationCases.length,
-      ...remote
-        .filter(
-          (item) =>
-            projectId.value <= 0 ||
-            item.projectId == null ||
-            Number(item.projectId) === projectId.value,
-        )
-        .map((item) => ({
-          id: String(item.id),
-          projectId:
-            item.projectId == null ? undefined : Number(item.projectId),
-          query: String(item.query || ""),
-          expectedAnswer: String(item.expectedAnswer || ""),
-          recall: item.recall == null ? "—" : `${String(item.recall)}%`,
-          citation: item.citation == null ? "—" : `${String(item.citation)}%`,
-          json: item.jsonScore == null ? "—" : `${String(item.jsonScore)}%`,
-          status: String(item.status || "review").toLowerCase(),
-        })),
-    );
-    const latest = remote
-      .map((item) => String(item.updatedAt || ""))
-      .filter(Boolean)
-      .sort()
-      .at(-1);
-    statistics.value = await (projectId.value > 0
-      ? statisticsApi.project(workspaceId.value, projectId.value)
-      : statisticsApi.workspace(workspaceId.value));
-    lastRunLabel.value = latest
-      ? `最近同步：${formatDateTime(latest, "—")}`
-      : "评估数据已同步";
-    notify("已有评估结果已同步");
-  } catch (error) {
-    notify(error instanceof Error ? error.message : "评估结果同步失败");
-  } finally {
-    isRunning.value = false;
-  }
-}
-
-function openSelectedCaseInPlayground() {
-  if (!selectedCase.value) return;
-  void router.push({
-    ...routeTo("project-playground"),
-    query: {
-      query: selectedCase.value.query,
-      evaluationCaseId: selectedCase.value.id,
-    },
-  });
-}
-
-function openSelectedCaseInAgent() {
-  if (!selectedCase.value) return;
-  void router.push({
-    ...routeTo("project-agent-chat"),
-    query: {
-      prompt: selectedCase.value.query,
-      evaluationCaseId: selectedCase.value.id,
-    },
-  });
-}
-
-async function updateSelectedCaseStatus(
-  status: "passed" | "review" | "failed",
-) {
-  const item = selectedCase.value;
-  if (!item || isUpdatingCase.value || item.status === status) return;
-  isUpdatingCase.value = true;
-  try {
-    const updated = await evaluationApi.update(workspaceId.value, item.id, {
-      status: status.toUpperCase(),
-    });
-    item.status = String(updated.status || status).toLowerCase();
-    notify(
-      status === "passed"
-        ? "用例已标记通过"
-        : status === "failed"
-          ? "用例已标记未通过"
-          : "用例已设为待复核",
-    );
-  } catch (error) {
-    notify(error instanceof Error ? error.message : "用例状态更新失败");
-  } finally {
-    isUpdatingCase.value = false;
-  }
-}
 </script>
 
 <template>
   <PageHeader
-    eyebrow="PROJECT / QUALITY"
-    title="评估"
-    subtitle="维护回归问题集，可分别检查知识库召回或 Agent（含联网搜索）回答"
+    eyebrow="质量工具"
+    title="检索评估"
+    subtitle="把常问的问题保存为用例，检查知识库能否稳定找到正确资料。"
   >
-    <template #action>
-      <button
-        class="button button-primary"
+    <template #action
+      ><Button
         type="button"
-        @click="createEvaluation"
-      >
-        <Plus :size="17" />新建评估
-      </button>
-    </template>
+        :disabled="loading || running || saving"
+        @click="openCreate()"
+        ><Plus data-icon="inline-start" />新建用例</Button
+      ></template
+    >
   </PageHeader>
 
-  <ProjectWorkflow />
-
-  <div class="evaluation-overview">
-    <div class="evaluation-overview-copy">
-      <div class="overview-status">
-        <i />{{ evaluationCases.length ? "评估集已同步" : "暂无评估用例" }}
-      </div>
-      <strong>{{
-        evaluationCases.length ? "当前评估数据已加载" : "等待后端评估数据"
-      }}</strong>
-      <p>
-        {{
-          evaluationCases.length
-            ? "选择用例可单测知识库召回，也可进入 Agent 检查联网搜索与无依据时的回答边界。"
-            : "添加真实问题建立回归集，记录它应命中知识库、联网查找，还是明确答复缺少依据。"
-        }}
-      </p>
-    </div>
-    <div class="overview-run">
-      <span>{{ lastRunLabel }}</span>
-      <button class="text-button" type="button" :disabled="isRunning" @click="syncEvaluationData">
-        <RefreshCw :size="14" :class="{ 'is-spinning': isRunning }" />{{
-          isRunning ? "同步中…" : "同步已有结果"
-        }}
-      </button>
-    </div>
-  </div>
-
-  <div class="evaluation-metrics">
-    <div v-for="metric in metricCards" :key="metric.label" class="metric-card">
-      <div class="metric-card-top">
-        <span>{{ metric.label }}</span
-        ><span class="metric-icon" :class="`metric-icon-${metric.tone}`"
-          ><component :is="metric.icon" :size="15"
-        /></span>
-      </div>
-      <strong>{{ metric.value }}</strong>
-      <small><ArrowUpRight :size="12" />{{ metric.change }}</small>
-    </div>
-  </div>
-
-  <div class="evaluation-dashboard-grid">
-    <section class="panel trend-panel">
-      <div class="panel-heading">
-        <div>
-          <div class="section-kicker">QUALITY TREND</div>
-          <h2>质量趋势</h2>
-          <p>按评估用例创建日期展示历史指标变化</p>
-        </div>
-      </div>
-      <div v-if="qualityTrendHasData" class="quality-trend-content">
-        <div class="chart-legend">
-          <span><i style="background: #14a28f" />召回率</span
-          ><span><i style="background: #8175e8" />引用准确率</span
-          ><span><i style="background: #e5a13a" />结构化输出</span>
-        </div>
-        <div class="quality-trend-chart">
-          <div class="quality-axis">
-            <span>100</span><span>50</span><span>0</span>
-          </div>
-          <div class="quality-chart-area">
-            <div class="chart-grid"><i /><i /><i /></div>
-            <svg
-              viewBox="0 0 100 100"
-              preserveAspectRatio="none"
-              aria-label="质量趋势图"
-            >
-              <polyline
-                v-if="qualityRecallLine"
-                :points="qualityRecallLine"
-                fill="none"
-                stroke="#14a28f"
-                stroke-width="1.5"
-                vector-effect="non-scaling-stroke"
-              />
-              <polyline
-                v-if="qualityCitationLine"
-                :points="qualityCitationLine"
-                fill="none"
-                stroke="#8175e8"
-                stroke-width="1.5"
-                vector-effect="non-scaling-stroke"
-              />
-              <polyline
-                v-if="qualityJsonLine"
-                :points="qualityJsonLine"
-                fill="none"
-                stroke="#e5a13a"
-                stroke-width="1.5"
-                vector-effect="non-scaling-stroke"
-              />
-            </svg>
-            <div class="quality-x">
-              <span v-for="point in qualityTrendLabels" :key="point.date">{{
-                point.date
-              }}</span>
-            </div>
-          </div>
-        </div>
-        <div class="chart-footer">
-          <div>
-            <strong>{{ formatMetric(averageMetric("recall")) }}</strong
-            ><span>当前召回均值</span>
-          </div>
-          <div>
-            <strong>{{ formatMetric(averageMetric("citation")) }}</strong
-            ><span>当前引用均值</span>
-          </div>
-          <div>
-            <strong>{{ evaluationCases.length }}</strong
-            ><span>评估用例</span>
-          </div>
-        </div>
-      </div>
-      <div v-else class="empty-cases trend-empty">
-        <BarChart3 :size="20" /><strong>暂无质量趋势数据</strong
-        ><span>创建带有评估指标的用例后，这里会展示真实的历史趋势。</span>
-      </div>
-    </section>
-
-    <section class="panel quality-panel">
-      <div class="panel-heading">
-        <div>
-          <div class="section-kicker">CURRENT BASELINE</div>
-          <h2>质量拆解</h2>
-          <p>按维度查看当前基线</p>
-        </div>
-        <span class="baseline-score">{{ overallScore }}</span>
-      </div>
-      <div class="quality-list">
-        <div v-for="item in qualityRows" :key="item.label" class="quality-item">
-          <div>
-            <span>{{ item.label }}</span
-            ><strong>{{ formatMetric(item.value) }}</strong>
-          </div>
-          <div class="quality-track">
-            <i
-              :class="`quality-fill-${item.tone}`"
-              :style="{ width: `${item.value ?? 0}%` }"
-            />
-          </div>
-        </div>
-      </div>
-      <div class="quality-note">
-        <CheckCircle2 :size="15" /><span>{{
-          evaluationCases.length
-            ? "指标由当前评估用例实时计算"
-            : "暂无数据可用于计算质量指标"
-        }}</span>
-      </div>
-    </section>
-  </div>
-
-  <section class="panel table-panel">
-    <div class="panel-heading table-heading">
+  <section class="evaluation-workbench" aria-label="知识库检索评估">
+    <section class="evaluation-intro">
       <div>
-        <div class="section-kicker">EVALUATION SET</div>
-        <h2>评估用例</h2>
-        <p>{{ evaluationCases.length }} 个用例 · {{ lastRunLabel }}</p>
+        <Badge variant="secondary">按需使用 · 质量工具</Badge>
+        <h2>先找到对的资料，再验证回答</h2>
+        <p>
+          自动检查前 5
+          条检索结果中的资料和事实命中情况。更新知识库后重新运行，即可发现检索退化。
+        </p>
       </div>
-      <button
-        class="button button-secondary button-sm"
-        type="button"
-        :disabled="isRunning"
-        @click="syncEvaluationData"
-      >
-        <RefreshCw :size="15" />{{ isRunning ? "同步中…" : "同步已有结果" }}
-      </button>
+      <ol class="evaluation-steps">
+        <li><span>1</span>选择资料、定义问题</li>
+        <li><span>2</span>运行检索评估</li>
+        <li><span>3</span>定位缺失、跟进修复</li>
+      </ol>
+    </section>
+
+    <Alert v-if="loadError" variant="destructive"
+      ><CircleAlert /><AlertTitle>用例读取失败</AlertTitle
+      ><AlertDescription
+        >{{ loadError }}
+        <Button type="button" variant="outline" size="sm" @click="loadCases"
+          >重新加载</Button
+        ></AlertDescription
+      ></Alert
+    >
+    <div v-if="loading" class="evaluation-loading" role="status">
+      <LoaderCircle class="is-spinning" :size="18" />正在加载项目用例…
     </div>
-    <div class="table-toolbar">
-      <div class="filter-tabs" role="tablist" aria-label="评估状态筛选">
-        <button
-          v-for="filter in statusFilters"
-          :key="filter.value"
-          class="filter-tab"
-          :class="{ active: statusFilter === filter.value }"
-          type="button"
-          role="tab"
-          :aria-selected="statusFilter === filter.value"
-          @click="statusFilter = filter.value"
+
+    <template v-else-if="!loadError">
+      <dl class="evaluation-summary" aria-label="当前评估集概况">
+        <div>
+          <dt>可运行用例</dt>
+          <dd>
+            {{ runnableCases.length
+            }}<small>/ {{ evaluationCases.length }}</small>
+          </dd>
+        </div>
+        <div>
+          <dt>已运行用例</dt>
+          <dd>{{ evaluatedCases.length }}</dd>
+        </div>
+        <div>
+          <dt>平均 Recall@5</dt>
+          <dd>{{ averageRecall }}</dd>
+        </div>
+        <div>
+          <dt>检索未通过</dt>
+          <dd>{{ failedCases.length }}</dd>
+        </div>
+      </dl>
+
+      <Card v-if="!evaluationCases.length" class="evaluation-start">
+        <CardHeader
+          ><CardTitle role="heading" aria-level="2"
+            >建立第一条有效用例</CardTitle
+          ><CardDescription
+            >选一份已索引资料，用真实业务问题和预期命中内容建立可重复运行的检查。</CardDescription
+          ></CardHeader
         >
-          {{ filter.label }}
-        </button>
-      </div>
-      <span class="result-count"
-        >显示 {{ filteredCases.length }} / {{ evaluationCases.length }}</span
-      >
-    </div>
-    <div class="data-table evaluation-table">
-      <div class="table-row table-header">
-        <span>问题</span><span>召回率</span><span>引用准确率</span
-        ><span>结构化输出</span><span>状态</span><span />
-      </div>
-      <button
-        v-for="item in filteredCases"
-        :key="item.id"
-        class="table-row table-row-button"
-        :class="{ 'table-row-selected': item.id === selectedCaseId }"
-        type="button"
-        @click="selectedCaseId = item.id"
-      >
-        <span class="case-question"
-          ><strong>{{ displayQuery(item) }}</strong
-          ><small>{{ item.id }}</small></span
-        ><span class="score-cell">{{ item.recall }}</span
-        ><span class="score-cell">{{ item.citation }}</span
-        ><span class="score-cell">{{ item.json }}</span
-        ><span class="status-badge" :class="`status-${item.status}`"
-          ><i />{{ evaluationStatusLabel(item.status) }}</span
-        ><span class="row-arrow"><ArrowRight :size="15" /></span>
-      </button>
-      <div v-if="!filteredCases.length" class="empty-cases">
-        <CircleAlert :size="18" />暂无符合条件的评估用例
-      </div>
-    </div>
+        <CardContent>
+          <template v-if="indexedAssets.length"
+            ><p>
+              当前有
+              {{ indexedAssets.length }} 份已索引资料，可从下面的资料开始：
+            </p>
+            <div class="asset-starters">
+              <Button
+                v-for="asset in indexedAssets.slice(0, 4)"
+                :key="asset.id"
+                type="button"
+                variant="outline"
+                @click="openCreate(asset.name)"
+                ><Database data-icon="inline-start" /><span>{{
+                  asset.name
+                }}</span
+                ><Plus data-icon="inline-end"
+              /></Button>
+            </div>
+            <p class="evaluation-note">
+              资料定位问题仅用于建立基础检查；请改成团队实际会问的问题，并补充应命中的原文事实。
+            </p></template
+          >
+          <template v-else
+            ><p>
+              当前项目还没有已索引资料。先到知识库添加并完成索引，再建立自动检索用例。
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              @click="router.push(routeTo('project-assets'))"
+              ><Database data-icon="inline-start" />前往知识库</Button
+            ></template
+          >
+        </CardContent>
+        <CardFooter
+          ><Button type="button" variant="outline" @click="openCreate()"
+            ><Plus data-icon="inline-start" />手动建立用例</Button
+          ></CardFooter
+        >
+      </Card>
+
+      <section v-else class="evaluation-cases" aria-label="评估用例与结果">
+        <div class="evaluation-toolbar">
+          <div>
+            <h2>评估用例</h2>
+            <p>自动评估仅检查检索，完整回答可带入 Agent 人工核验。</p>
+          </div>
+          <div class="evaluation-buttons">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              :disabled="running || saving || reviewing"
+              @click="loadCases"
+              ><RefreshCw data-icon="inline-start" />刷新</Button
+            ><Button
+              type="button"
+              :disabled="
+                running || saving || reviewing || !runnableCases.length
+              "
+              @click="runCases(runnableCases)"
+              ><Play data-icon="inline-start" />运行全部
+              {{ runnableCases.length }} 条</Button
+            >
+          </div>
+        </div>
+        <p v-if="remainingUnannotated" class="evaluation-note">
+          {{ remainingUnannotated }}
+          条用例尚未指定资料、片段或必需事实，批量运行时会跳过。选择用例后补充标注即可。
+        </p>
+        <Alert
+          v-if="batch"
+          :variant="batch.errors ? 'destructive' : 'default'"
+          aria-live="polite"
+          ><LoaderCircle v-if="running" class="is-spinning" /><CheckCircle2
+            v-else
+          /><AlertTitle
+            >{{
+              running
+                ? "检索评估进行中"
+                : batch.stopped
+                  ? "已停止后续评估"
+                  : "本次评估完成"
+            }}
+            · {{ batch.completed }}/{{ batch.total }}</AlertTitle
+          ><AlertDescription
+            >通过 {{ batch.passed }} · 未通过 {{ batch.failed }} · 请求出错
+            {{ batch.errors
+            }}<Button
+              v-if="running && batch.total > 1"
+              type="button"
+              variant="outline"
+              size="sm"
+              :disabled="stopRequested"
+              @click="stopRequested = true"
+              >{{ stopRequested ? "本条完成后停止" : "停止后续用例" }}</Button
+            ></AlertDescription
+          ></Alert
+        >
+
+        <div class="evaluation-columns">
+          <div class="evaluation-case-list">
+            <Input
+              v-model="search"
+              aria-label="搜索评估用例"
+              placeholder="搜索问题或目标资料"
+            />
+            <div class="evaluation-filters" aria-label="用例筛选">
+              <Button
+                v-for="option in filters"
+                :key="option.value"
+                type="button"
+                size="sm"
+                :variant="filter === option.value ? 'secondary' : 'ghost'"
+                :aria-pressed="filter === option.value"
+                @click="filter = option.value"
+                >{{ option.label }}</Button
+              >
+            </div>
+            <button
+              v-for="item in filteredCases"
+              :key="item.id"
+              type="button"
+              class="evaluation-case-row"
+              :class="{ selected: item.id === selectedCaseId }"
+              :aria-pressed="item.id === selectedCaseId"
+              @click="selectedCaseId = item.id"
+            >
+              <strong>{{ item.query }}</strong
+              ><small>{{
+                item.expectedAsset ||
+                (item.requiredFacts.length
+                  ? `${item.requiredFacts.length} 项必需事实`
+                  : "尚未指定检索目标")
+              }}</small
+              ><span
+                ><Badge
+                  :variant="
+                    runErrors[item.id] ||
+                    item.evaluationResult?.status === 'FAILED'
+                      ? 'destructive'
+                      : 'secondary'
+                  "
+                  >{{
+                    runningCaseId === item.id ? "运行中" : caseLabel(item)
+                  }}</Badge
+                ><span v-if="item.evaluationResult"
+                  >{{ item.evaluationResult.recall ?? "—" }}%</span
+                ></span
+              >
+            </button>
+            <p v-if="!filteredCases.length" class="evaluation-note">
+              没有符合筛选条件的用例。<Button
+                type="button"
+                variant="link"
+                size="sm"
+                @click="
+                  filter = 'all';
+                  search = '';
+                "
+                >清除筛选</Button
+              >
+            </p>
+          </div>
+
+          <Card v-if="selectedCase" class="evaluation-detail">
+            <CardHeader
+              ><CardDescription>用例 #{{ selectedCase.id }}</CardDescription
+              ><CardTitle role="heading" aria-level="2">{{
+                selectedCase.query
+              }}</CardTitle>
+              <div class="evaluation-buttons">
+                <Button
+                  type="button"
+                  :disabled="
+                    running || saving || reviewing || !canRun(selectedCase)
+                  "
+                  @click="runCases([selectedCase])"
+                  ><LoaderCircle
+                    v-if="runningCaseId === selectedCase.id"
+                    data-icon="inline-start"
+                    class="is-spinning"
+                  /><Play v-else data-icon="inline-start" />{{
+                    runningCaseId === selectedCase.id ? "评估中…" : "运行此用例"
+                  }}</Button
+                ><Button
+                  type="button"
+                  variant="outline"
+                  :disabled="running || saving || reviewing"
+                  @click="openEdit"
+                  >编辑标注</Button
+                >
+              </div></CardHeader
+            >
+            <CardContent class="evaluation-detail-content">
+              <Alert v-if="runErrors[selectedCase.id]" variant="destructive"
+                ><CircleAlert /><AlertTitle>本次请求未完成</AlertTitle
+                ><AlertDescription
+                  >{{ runErrors[selectedCase.id] }}
+                  <p>
+                    已有结果不会被本次请求错误替换，可以重新运行。
+                  </p></AlertDescription
+                ></Alert
+              >
+              <Alert v-if="!canRun(selectedCase)"
+                ><ClipboardCheck /><AlertTitle>先补充检索目标</AlertTitle
+                ><AlertDescription
+                  >点击“编辑标注”，选择目标资料，或填写目标片段、必需事实中的任意一项。只有问题和验收标准时，无法自动计算检索命中。</AlertDescription
+                ></Alert
+              >
+              <dl class="evaluation-targets">
+                <div>
+                  <dt>目标资料</dt>
+                  <dd>{{ selectedCase.expectedAsset || "未指定" }}</dd>
+                </div>
+                <div v-if="selectedCase.expectedChunkIds.length">
+                  <dt>目标片段</dt>
+                  <dd>{{ selectedCase.expectedChunkIds.join("、") }}</dd>
+                </div>
+                <div v-if="selectedCase.requiredFacts.length">
+                  <dt>必需事实</dt>
+                  <dd>
+                    <ul>
+                      <li
+                        v-for="fact in selectedCase.requiredFacts"
+                        :key="fact"
+                      >
+                        {{ fact }}
+                      </li>
+                    </ul>
+                  </dd>
+                </div>
+                <div v-if="selectedCase.forbiddenFacts.length">
+                  <dt>禁止事实</dt>
+                  <dd>
+                    <ul>
+                      <li
+                        v-for="fact in selectedCase.forbiddenFacts"
+                        :key="fact"
+                      >
+                        {{ fact }}
+                      </li>
+                    </ul>
+                  </dd>
+                </div>
+              </dl>
+              <section
+                v-if="selectedCase.evaluationResult"
+                class="evaluation-result"
+                aria-label="最近一次检索评估结果"
+              >
+                <div class="evaluation-result-heading">
+                  <h3>最近一次检索结果</h3>
+                  <Badge
+                    :variant="
+                      selectedCase.evaluationResult.status === 'PASSED'
+                        ? 'secondary'
+                        : 'destructive'
+                    "
+                    >{{
+                      selectedCase.evaluationResult.status === "PASSED"
+                        ? "通过"
+                        : "未通过"
+                    }}</Badge
+                  >
+                </div>
+                <p class="evaluation-result-score">
+                  {{ selectedCase.evaluationResult.recall ?? "—" }}%<span
+                    >Recall@{{ selectedCase.evaluationResult.topK || 5 }} · 命中
+                    {{ selectedCase.evaluationResult.matchedCount ?? 0 }}/{{
+                      selectedCase.evaluationResult.targetCount ?? 0
+                    }}
+                    项目标</span
+                  >
+                </p>
+                <p class="evaluation-note">
+                  {{ formatDateTime(selectedCase.evaluatedAt, "时间未记录") }} ·
+                  返回
+                  {{ selectedCase.evaluationResult.retrievedCount ?? 0 }}
+                  条检索结果
+                </p>
+                <ul class="evaluation-result-issues">
+                  <li
+                    v-if="
+                      selectedCase.evaluationResult.expectedAssetFound ===
+                        false && selectedCase.expectedAsset
+                    "
+                  >
+                    未命中目标资料：{{ selectedCase.expectedAsset }}
+                  </li>
+                  <li
+                    v-for="id in selectedCase.evaluationResult
+                      .missingChunkIds || []"
+                    :key="id"
+                  >
+                    未命中片段：{{ id }}
+                  </li>
+                  <li
+                    v-for="fact in selectedCase.evaluationResult
+                      .missingRequiredFacts || []"
+                    :key="fact"
+                  >
+                    缺失事实：{{ fact }}
+                  </li>
+                  <li
+                    v-for="fact in selectedCase.evaluationResult
+                      .matchedForbiddenFacts || []"
+                    :key="fact"
+                  >
+                    命中禁止事实：{{ fact }}
+                  </li>
+                </ul>
+                <details
+                  v-if="
+                    selectedCase.evaluationResult.retrievedAssets?.length ||
+                    selectedCase.evaluationResult.retrievedChunkIds?.length
+                  "
+                >
+                  <summary>实际检索到了什么</summary>
+                  <p
+                    v-if="selectedCase.evaluationResult.retrievedAssets?.length"
+                  >
+                    资料：{{
+                      selectedCase.evaluationResult.retrievedAssets.join("、")
+                    }}
+                  </p>
+                  <p
+                    v-if="
+                      selectedCase.evaluationResult.retrievedChunkIds?.length
+                    "
+                  >
+                    片段：{{
+                      selectedCase.evaluationResult.retrievedChunkIds.join("、")
+                    }}
+                  </p>
+                </details>
+              </section>
+              <p v-else-if="canRun(selectedCase)" class="evaluation-note">
+                此用例尚未运行。点击“运行此用例”查看真实命中情况。
+              </p>
+              <div class="evaluation-buttons">
+                <Button
+                  type="button"
+                  variant="outline"
+                  @click="openTool('project-playground')"
+                  ><Search data-icon="inline-start" />打开检索调试</Button
+                ><Button
+                  v-if="selectedCase.evaluationResult?.status === 'FAILED'"
+                  type="button"
+                  variant="outline"
+                  @click="createAction"
+                  ><ArrowRight data-icon="inline-start" />转为修复行动项</Button
+                >
+              </div>
+              <details class="evaluation-manual">
+                <summary>人工核验完整回答（可选）</summary>
+                <p>
+                  {{
+                    selectedCase.expectedAnswer ||
+                    "尚未填写验收标准。可在编辑标注中补充应包含的结论和引用要求。"
+                  }}
+                </p>
+                <p class="evaluation-note">
+                  自动检索通过不等于回答正确。带入 Agent
+                  查看回答后，在这里记录人工结论。用例状态由自动评估或人工确认更新，人工确认不会重新计算
+                  Recall@5。
+                </p>
+                <p>
+                  用例记录状态：{{
+                    { passed: "通过", failed: "未通过", review: "待复核" }[
+                      selectedCase.status as "passed" | "failed" | "review"
+                    ] || selectedCase.status
+                  }}
+                </p>
+                <div class="evaluation-buttons">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    @click="openTool('project-agent-chat')"
+                    ><MessageCircle data-icon="inline-start" />带入 Agent
+                    验证</Button
+                  ><Button
+                    type="button"
+                    variant="outline"
+                    :disabled="running || reviewing"
+                    @click="markReviewed('PASSED')"
+                    >标记通过</Button
+                  ><Button
+                    type="button"
+                    variant="outline"
+                    :disabled="running || reviewing"
+                    @click="markReviewed('FAILED')"
+                    >标记未通过</Button
+                  ><Button
+                    type="button"
+                    variant="ghost"
+                    :disabled="running || reviewing"
+                    @click="markReviewed('REVIEW')"
+                    >待复核</Button
+                  >
+                </div>
+              </details>
+            </CardContent>
+            <CardFooter
+              ><p class="evaluation-note">
+                评估范围：前 5
+                条混合检索结果，关闭重排序。引用准确率、答案质量和结构化输出需另行核验。
+              </p></CardFooter
+            >
+          </Card>
+        </div>
+      </section>
+    </template>
   </section>
 
-  <div v-if="selectedCase" class="selected-case">
-    <span class="selected-case-icon"><ClipboardCheck :size="17" /></span>
-    <div>
-      <small>当前选中用例 · {{ selectedCase.id }}</small
-      ><strong>{{ displayQuery(selectedCase) }}</strong>
-      <p v-if="selectedCase.expectedAnswer" class="selected-case-expected">
-        验收标准：{{ selectedCase.expectedAnswer }}
-      </p>
-    </div>
-    <span
-      class="selected-case-status"
-      :class="`status-${selectedCase.status}`"
-      >{{ evaluationStatusLabel(selectedCase.status) }}</span
-    >
-    <button
-      class="button button-secondary button-sm"
-      type="button"
-      @click="openSelectedCaseInPlayground"
-    >
-      <ArrowRight :size="14" />载入 Playground 检索
-    </button>
-    <button
-      class="button button-primary button-sm"
-      type="button"
-      @click="openSelectedCaseInAgent"
-    >
-      <MessageCircle :size="14" />带入 Agent 验证
-    </button>
-    <button
-      class="button button-primary button-sm"
-      type="button"
-      :disabled="isUpdatingCase || selectedCase.status === 'passed'"
-      @click="updateSelectedCaseStatus('passed')"
-    >
-      <CheckCircle2 :size="14" />标记通过
-    </button>
-    <button
-      class="button button-secondary button-sm"
-      type="button"
-      :disabled="isUpdatingCase || selectedCase.status === 'failed'"
-      @click="updateSelectedCaseStatus('failed')"
-    >
-      <CircleAlert :size="14" />标记未通过
-    </button>
-    <button
-      v-if="selectedCase.status !== 'review'"
-      class="text-button"
-      type="button"
-      :disabled="isUpdatingCase"
-      @click="updateSelectedCaseStatus('review')"
-    >
-      重新复核
-    </button>
-  </div>
-
-  <Dialog v-model:open="caseDialogOpen">
+  <Dialog v-model:open="dialogOpen">
     <DialogContent class="evaluation-case-dialog">
-      <DialogHeader>
-        <DialogTitle>新建评估用例</DialogTitle>
-        <DialogDescription>
-          记录真实问题和验收边界，之后可分别载入知识库检索或 Agent 完整流程验证。
-        </DialogDescription>
-      </DialogHeader>
-      <div class="evaluation-case-form">
-        <label>
-          测试问题
-          <textarea
-            v-model="caseForm.query"
-            rows="3"
-            placeholder="例如：整理公司差旅报销的住宿标准"
-          />
-        </label>
-        <label>
-          期望答案或验收标准（可选）
-          <textarea
-            v-model="caseForm.expectedAnswer"
-            rows="4"
-            placeholder="如：应命中项目资料；应联网查找最新来源；没有可信来源时应明确说无法确认。"
-          />
-        </label>
-      </div>
-      <DialogFooter>
-        <button
-          class="button button-secondary"
-          type="button"
-          @click="caseDialogOpen = false"
+      <DialogHeader
+        ><DialogTitle>{{
+          editingId ? "编辑评估用例" : "新建评估用例"
+        }}</DialogTitle
+        ><DialogDescription
+          >填写真实业务问题，并选择预期应命中的资料。保存后运行，查看实际结果。</DialogDescription
+        ></DialogHeader
+      >
+      <form
+        id="evaluation-case-form"
+        class="evaluation-case-form"
+        @submit.prevent="saveCase"
+      >
+        <FieldGroup>
+          <Field
+            ><FieldLabel for="evaluation-query">测试问题</FieldLabel
+            ><textarea
+              id="evaluation-query"
+              v-model="form.query"
+              rows="2"
+              required
+              placeholder="例如：国内出差的住宿报销上限是多少？"
+            />
+          </Field>
+          <Field
+            ><FieldLabel for="evaluation-asset">目标资料</FieldLabel
+            ><Input
+              id="evaluation-asset"
+              v-model="form.expectedAsset"
+              list="evaluation-assets"
+              placeholder="选择项目资料，或输入与知识库一致的资料名"
+            /><datalist id="evaluation-assets">
+              <option
+                v-for="asset in indexedAssets"
+                :key="asset.id"
+                :value="asset.name"
+              /></datalist
+            ><FieldDescription
+              >只填写目标资料即可运行基础命中检查；补充必需事实后检查会更具体。</FieldDescription
+            ></Field
+          >
+          <Field
+            ><FieldLabel for="evaluation-required"
+              >必需事实（可选，每行一项）</FieldLabel
+            ><textarea
+              id="evaluation-required"
+              v-model="form.requiredFacts"
+              rows="2"
+              placeholder="从资料中复制应检出的原文，例如：每晚不超过 800 元"
+            /><FieldDescription
+              >逐项匹配检索片段中的文字，建议使用原文短句。</FieldDescription
+            ></Field
+          >
+          <details class="evaluation-advanced">
+            <summary>更多标注与人工验收标准</summary>
+            <FieldGroup
+              ><Field
+                ><FieldLabel for="evaluation-chunks"
+                  >目标片段 ID（每行一项）</FieldLabel
+                ><textarea
+                  id="evaluation-chunks"
+                  v-model="form.expectedChunkIds"
+                  rows="2"
+                  placeholder="可从检索调试或知识库片段详情中获取"
+                /></Field
+              ><Field
+                ><FieldLabel for="evaluation-forbidden"
+                  >禁止事实（每行一项）</FieldLabel
+                ><textarea
+                  id="evaluation-forbidden"
+                  v-model="form.forbiddenFacts"
+                  rows="2"
+                  placeholder="检索结果不应包含的过期或错误原文"
+                /></Field
+              ><Field
+                ><FieldLabel for="evaluation-expected"
+                  >完整回答的人工验收标准</FieldLabel
+                ><textarea
+                  id="evaluation-expected"
+                  v-model="form.expectedAnswer"
+                  rows="2"
+                  placeholder="例如：给出住宿上限，说明适用条件并引用制度原文。"
+                /></Field
+            ></FieldGroup>
+          </details>
+        </FieldGroup>
+        <Alert v-if="saveError" variant="destructive"
+          ><CircleAlert /><AlertTitle>保存失败</AlertTitle
+          ><AlertDescription>{{ saveError }}</AlertDescription></Alert
         >
-          取消
-        </button>
-        <button
-          class="button button-primary"
+      </form>
+      <DialogFooter
+        ><Button
           type="button"
-          :disabled="!caseForm.query.trim()"
-          @click="saveEvaluationCase"
-        >
-          <Plus :size="15" />保存用例
-        </button>
-      </DialogFooter>
+          variant="outline"
+          :disabled="saving"
+          @click="dialogOpen = false"
+          >取消</Button
+        ><Button
+          type="submit"
+          form="evaluation-case-form"
+          :disabled="!form.query.trim() || saving || running"
+          ><LoaderCircle
+            v-if="saving"
+            data-icon="inline-start"
+            class="is-spinning"
+          />{{ saving ? "保存中…" : "保存用例" }}</Button
+        ></DialogFooter
+      >
     </DialogContent>
   </Dialog>
 </template>
 
 <style scoped>
-.evaluation-overview {
+.evaluation-workbench {
+  --card: var(--surface);
+  --card-foreground: var(--workspace-text);
+  --muted-foreground: var(--workspace-muted);
+  display: grid;
+  grid-auto-rows: max-content;
+  flex: 1 1 auto;
+  align-content: start;
+  gap: 1.25rem;
+  padding-bottom: 1rem;
+}
+.evaluation-intro {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 1.5rem;
-  margin: 0.125rem 0 1rem;
-  padding: 1rem 1.25rem;
-  border: 0.0625rem solid #dcecea;
-  border-radius: 0.75rem;
-  background: linear-gradient(105deg, #effbf8 0%, #f8fbfb 72%);
+  gap: 1.25rem;
+  padding: 0.25rem 0;
 }
-.evaluation-overview-copy {
+.evaluation-intro h2 {
+  margin: 0.625rem 0 0.375rem;
+  color: var(--workspace-text);
+  font-size: 1.25rem;
+  font-weight: 650;
+}
+.evaluation-intro p,
+.evaluation-toolbar p,
+.evaluation-note {
+  margin: 0.375rem 0;
+  color: var(--workspace-muted);
+  font-size: 0.8125rem;
+  line-height: 1.7;
+}
+.evaluation-steps {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--workspace-muted);
+  font-size: 0.8125rem;
+}
+.evaluation-steps li {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+.evaluation-steps li > span {
+  display: grid;
+  width: 1.375rem;
+  height: 1.375rem;
+  place-items: center;
+  border: 1px solid var(--workspace-border);
+  border-radius: 50%;
+  color: var(--teal-dark);
+  font-size: 0.75rem;
+}
+.evaluation-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  border: 1px solid var(--workspace-border);
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: var(--workspace-border);
+}
+.evaluation-summary > div {
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+}
+.evaluation-summary dt {
+  color: var(--workspace-muted);
+  font-size: 0.8125rem;
+}
+.evaluation-summary dd {
+  margin: 0.5rem 0 0;
+  color: var(--workspace-text);
+  font-size: 1.375rem;
+  font-weight: 650;
+}
+.evaluation-summary small {
+  margin-left: 0.375rem;
+  color: var(--workspace-muted);
+  font-size: 0.8125rem;
+  font-weight: 400;
+}
+.asset-starters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.625rem;
+  margin: 1rem 0;
+}
+.asset-starters button {
+  max-width: 100%;
+}
+.asset-starters button > span {
+  max-width: 24rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.evaluation-toolbar,
+.evaluation-result-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.evaluation-toolbar h2 {
+  margin: 0;
+  color: var(--workspace-text);
+  font-size: 1rem;
+  font-weight: 650;
+}
+.evaluation-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.evaluation-cases {
+  display: grid;
+  gap: 0.875rem;
+}
+.evaluation-columns {
+  display: grid;
+  grid-template-columns: minmax(15rem, 0.8fr) minmax(0, 1.6fr);
+  gap: 1rem;
+  align-items: start;
+}
+.evaluation-case-list {
+  display: grid;
+  gap: 0.5rem;
   min-width: 0;
 }
-.overview-status {
+.evaluation-filters {
   display: flex;
-  align-items: center;
-  gap: 0.4375rem;
-  color: #168a7d;
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
+  flex-wrap: wrap;
+  gap: 0.125rem;
 }
-.overview-status i {
-  width: 0.4375rem;
-  height: 0.4375rem;
-  border-radius: 50%;
-  background: #18b49f;
-  box-shadow: 0 0 0 0.25rem rgb(20 184 166 / 12%);
+.evaluation-case-row {
+  display: grid;
+  gap: 0.5rem;
+  padding: 1rem;
+  border: 1px solid var(--workspace-border);
+  border-radius: 0.625rem;
+  background: var(--surface);
+  color: var(--workspace-text);
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
 }
-.evaluation-overview-copy > strong {
-  display: block;
-  margin-top: 0.4375rem;
-  color: #18302f;
+.evaluation-case-row:hover,
+.evaluation-case-row.selected {
+  border-color: var(--teal-dark);
+  background: color-mix(in oklab, var(--teal) 6%, var(--surface));
+}
+.evaluation-case-row strong {
   font-size: 0.875rem;
+  line-height: 1.6;
+  font-weight: 550;
+  overflow-wrap: anywhere;
 }
-.evaluation-overview-copy > p {
-  margin: 0.3125rem 0 0;
-  color: #64757b;
+.evaluation-case-row small {
+  color: var(--workspace-muted);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.evaluation-case-row > span {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   font-size: 0.8125rem;
 }
-.overview-run {
-  display: flex;
-  align-items: center;
-  gap: 0.875rem;
-  flex: 0 0 auto;
-  color: #64757b;
+.evaluation-detail {
+  min-width: 0;
+}
+.evaluation-detail-content {
+  display: grid;
+  gap: 1rem;
+}
+.evaluation-targets {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+}
+.evaluation-targets > div {
+  display: grid;
+  gap: 0.25rem;
+}
+.evaluation-targets dt {
+  color: var(--workspace-muted);
   font-size: 0.75rem;
 }
-.overview-run .text-button {
+.evaluation-targets dd {
+  margin: 0;
+  color: var(--workspace-text);
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+.evaluation-targets ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+.evaluation-result {
+  padding: 1rem;
+  border: 1px solid var(--workspace-border);
+  border-radius: 0.625rem;
+  background: var(--surface);
+}
+.evaluation-result h3 {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.evaluation-result-score {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin: 0.75rem 0 0.25rem;
+  color: var(--workspace-text);
+  font-size: 1.625rem;
+  font-weight: 650;
+}
+.evaluation-result-score > span {
+  color: var(--workspace-muted);
   font-size: 0.8125rem;
+  font-weight: 400;
+}
+.evaluation-result-issues {
+  margin: 0.75rem 0;
+  padding-left: 1.25rem;
+  color: var(--red);
+  line-height: 1.8;
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+.evaluation-result-issues:empty {
+  display: none;
+}
+.evaluation-result details {
+  margin-top: 0.75rem;
+}
+.evaluation-result details p {
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+.evaluation-manual,
+.evaluation-advanced {
+  border-top: 1px solid var(--workspace-border);
+  padding-top: 0.875rem;
+}
+summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--workspace-text);
+}
+.evaluation-manual p {
+  line-height: 1.7;
+  font-size: 0.8125rem;
+}
+.evaluation-advanced[open] > div {
+  margin-top: 1rem;
+}
+.evaluation-loading {
+  display: flex;
+  gap: 0.625rem;
+  align-items: center;
+  padding: 2rem 0;
+  color: var(--workspace-muted);
+}
+.evaluation-case-dialog {
+  max-height: 90dvh;
+  overflow-y: auto;
+}
+.evaluation-case-form {
+  display: grid;
+  gap: 1rem;
+}
+.evaluation-case-form textarea {
+  box-sizing: border-box;
+  width: 100%;
+  resize: vertical;
+  min-height: 4rem;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--workspace-border);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  color: var(--workspace-text);
+  font: inherit;
+  line-height: 1.6;
 }
 .is-spinning {
-  animation: spin 0.9s linear infinite;
+  animation: spin 1s linear infinite;
 }
 @keyframes spin {
   to {
     transform: rotate(360deg);
   }
 }
-.evaluation-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.8125rem;
-  margin-bottom: 1.125rem;
-}
-.metric-card {
-  min-width: 0;
-  padding: 1rem 1.125rem 0.9375rem;
-  border: 0.0625rem solid var(--workspace-border);
-  border-radius: 0.75rem;
-  background: var(--surface);
-  box-shadow: 0 0.4375rem 1.4375rem rgb(21 53 52 / 3.5%);
-}
-.metric-card-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-.metric-card-top > span:first-child {
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-}
-.metric-icon {
-  display: inline-grid;
-  width: 1.75rem;
-  height: 1.75rem;
-  place-items: center;
-  border-radius: 0.5625rem;
-}
-.metric-icon-teal {
-  color: #078477;
-  background: #e2f8f4;
-}
-.metric-icon-blue {
-  color: #4677bd;
-  background: #eaf2ff;
-}
-.metric-icon-violet {
-  color: #7668d4;
-  background: #efedff;
-}
-.metric-icon-amber {
-  color: #b97818;
-  background: #fff4df;
-}
-.metric-card strong {
-  display: block;
-  margin-top: 0.75rem;
-  color: var(--workspace-text);
-  font-size: 1.5rem;
-  font-weight: 680;
-  letter-spacing: -0.055em;
-  line-height: 1;
-}
-.metric-card small {
-  display: flex;
-  align-items: center;
-  gap: 0.1875rem;
-  margin-top: 0.625rem;
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-}
-.metric-card small svg {
-  color: #14a28f;
-}
-.evaluation-dashboard-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(17rem, 0.85fr);
-  gap: 1.125rem;
-  margin-bottom: 1.125rem;
-}
-.trend-panel,
-.quality-panel {
-  min-width: 0;
-  overflow: hidden;
-}
-.panel-heading {
-  min-height: 5.25rem;
-  padding: 1.125rem 1.25rem 0.875rem;
-}
-.panel-heading h2 {
-  margin: 0.25rem 0 0;
-  color: var(--workspace-text);
-  font-size: 0.875rem;
-  letter-spacing: -0.025em;
-}
-.panel-heading p {
-  margin: 0.3125rem 0 0;
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-}
-.section-kicker {
-  color: var(--teal-dark);
-  font-size: 0.75rem;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-}
-.chart-legend {
-  display: flex;
-  align-items: center;
-  gap: 0.875rem;
-  padding-top: 0.25rem;
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-}
-.chart-legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3125rem;
-  white-space: nowrap;
-}
-.chart-legend i {
-  width: 0.4375rem;
-  height: 0.4375rem;
-  border-radius: 50%;
-}
-.trend-panel :deep(.trend-chart) {
-  height: 13rem;
-  padding: 0 0.75rem;
-}
-.chart-footer {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  margin: 0 1.25rem 1.125rem;
-  border-top: 0.0625rem solid var(--workspace-divider);
-}
-.chart-footer div {
-  display: grid;
-  gap: 0.25rem;
-  padding: 0.75rem 0.75rem 0 0;
-  border-right: 0.0625rem solid var(--workspace-divider);
-}
-.chart-footer div + div {
-  padding-left: 0.875rem;
-}
-.chart-footer div:last-child {
-  border-right: 0;
-}
-.chart-footer strong {
-  color: var(--workspace-text);
-  font-size: 0.875rem;
-  letter-spacing: -0.04em;
-}
-.chart-footer span {
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-}
-.trend-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 13rem;
-  flex-direction: column;
-  gap: 0.5rem;
-  border: 1px dashed var(--workspace-border);
-  border-radius: 0.625rem;
-  margin: 0 1.25rem 1.125rem;
-  text-align: center;
-}
-.trend-empty svg {
-  color: var(--workspace-muted);
-}
-.trend-empty strong {
-  color: var(--workspace-text);
-}
-.trend-empty span {
-  max-width: 24rem;
-  font-size: 0.75rem;
-  line-height: 1.6;
-}
-.quality-panel .panel-heading {
-  display: flex;
-  justify-content: space-between;
-}
-.baseline-score {
-  color: var(--teal-dark);
-  font-size: 1.125rem;
-  font-weight: 700;
-  letter-spacing: -0.04em;
-}
-.quality-list {
-  display: grid;
-  gap: 1.1875rem;
-  padding: 0.875rem 1.25rem 1.25rem;
-}
-.quality-item > div:first-child {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.5rem;
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-}
-.quality-item strong {
-  color: var(--workspace-text);
-  font-size: 0.8125rem;
-}
-.quality-track {
-  height: 0.4375rem;
-  margin-top: 0.5rem;
-  overflow: hidden;
-  border-radius: 99rem;
-  background: var(--surface-soft);
-}
-.quality-track i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  transition: width 350ms ease;
-}
-.quality-fill-teal {
-  background: #14b8a6;
-}
-.quality-fill-violet {
-  background: #8175e8;
-}
-.quality-fill-amber {
-  background: #e5a13a;
-}
-.quality-note {
-  display: flex;
-  align-items: center;
-  gap: 0.4375rem;
-  margin: 0 1.25rem 1.25rem;
-  padding: 0.625rem 0.6875rem;
-  border-radius: 0.5rem;
-  background: #f0faf8;
-  color: #188a7e;
-  font-size: 0.75rem;
-}
-.table-panel {
-  overflow: hidden;
-}
-.table-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-}
-.table-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0 1.25rem 0.75rem;
-  border-bottom: 0.0625rem solid var(--workspace-divider);
-}
-.filter-tabs {
-  display: flex;
-  align-items: center;
-  gap: 0.1875rem;
-  overflow-x: auto;
-}
-.filter-tab {
-  padding: 0.375rem 0.5625rem;
-  border: 0;
-  border-radius: 0.375rem;
-  background: transparent;
-  color: var(--workspace-muted);
-  font: inherit;
-  font-size: 0.75rem;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.filter-tab:hover {
-  background: var(--surface-soft);
-  color: var(--workspace-text);
-}
-.filter-tab.active {
-  background: #e5f7f4;
-  color: var(--teal-dark);
-  font-weight: 700;
-}
-.result-count {
-  flex: 0 0 auto;
-  color: var(--workspace-subtle);
-  font-size: 0.75rem;
-}
-.evaluation-table .table-row {
-  grid-template-columns: minmax(0, 2.1fr) 0.8fr 0.95fr 0.95fr 0.85fr 1.25rem;
-}
-.table-row-button {
-  width: 100%;
-  border: 0;
-  border-bottom: 0.0625rem solid var(--workspace-divider);
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.table-row-button:last-child {
-  border-bottom: 0;
-}
-.table-row-button:hover {
-  background: #f7fbfb;
-}
-.case-question {
-  min-width: 0;
-}
-.case-question strong,
-.case-question small {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.case-question strong {
-  color: var(--workspace-text);
-  font-size: 0.8125rem;
-  font-weight: 600;
-}
-.case-question small {
-  margin-top: 0.3125rem;
-  color: var(--workspace-subtle);
-  font:
-    700 0.75rem ui-monospace,
-    monospace;
-  letter-spacing: 0.04em;
-}
-.score-cell {
-  color: var(--workspace-text);
-  font-size: 0.8125rem;
-  font-weight: 600;
-}
-.status-badge,
-.selected-case-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3125rem;
-  width: fit-content;
-  padding: 0.25rem 0.4375rem;
-  border-radius: 0.3125rem;
-  font-size: 0.75rem;
-  font-weight: 650;
-  white-space: nowrap;
-}
-.status-badge i {
-  width: 0.3125rem;
-  height: 0.3125rem;
-  border-radius: 50%;
-}
-.status-passed {
-  color: #158376;
-  background: #e5f8f4;
-}
-.status-passed i {
-  background: #18ab98;
-}
-.status-review {
-  color: #a4701d;
-  background: #fff5df;
-}
-.status-review i {
-  background: #d7962a;
-}
-.status-failed {
-  color: #b75a5a;
-  background: #fff0ef;
-}
-.status-failed i {
-  background: #dc7171;
-}
-.row-arrow {
-  display: inline-grid;
-  width: 1.75rem;
-  height: 1.75rem;
-  place-items: center;
-  border-radius: 0.5rem;
-  color: var(--workspace-muted);
-}
-.table-row-button:hover .row-arrow {
-  background: #e9f7f5;
-  color: var(--teal-dark);
-}
-.empty-cases {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  min-height: 5rem;
-  color: var(--workspace-muted);
-  font-size: 0.8125rem;
-}
-.selected-case {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.6875rem;
-  margin-top: 0.875rem;
-  padding: 0.75rem 0.875rem;
-  border: 0.0625rem solid var(--workspace-border);
-  border-radius: 0.625rem;
-  background: var(--surface);
-}
-.selected-case-icon {
-  display: grid;
-  width: 1.875rem;
-  height: 1.875rem;
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: 0.5625rem;
-  background: #e5f8f4;
-  color: var(--teal-dark);
-}
-.selected-case div {
-  min-width: 0;
-  flex: 1;
-}
-.selected-case small,
-.selected-case strong {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.selected-case small {
-  color: var(--workspace-subtle);
-  font-size: 0.75rem;
-}
-.selected-case strong {
-  margin-top: 0.1875rem;
-  color: var(--workspace-text);
-  font-size: 0.8125rem;
-}
-.selected-case-expected {
-  margin: 0.25rem 0 0;
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-  line-height: 1.45;
-  white-space: pre-line;
-}
-.selected-case-status {
-  margin-left: auto;
-}
-@media (max-width: 62rem) {
-  .evaluation-dashboard-grid {
-    grid-template-columns: 1fr;
-  }
-  .quality-panel {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-  }
-  .quality-panel .panel-heading {
-    grid-column: 1/-1;
-  }
-  .quality-list {
-    padding-top: 0;
-  }
-  .quality-note {
-    align-self: end;
-    margin-top: 0;
+@media (max-width: 68rem) {
+  .evaluation-columns {
+    grid-template-columns: minmax(13rem, 0.8fr) minmax(0, 1.2fr);
   }
 }
-@media (max-width: 47.5rem) {
-  .evaluation-overview {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 0.75rem;
+@media (max-width: 55rem) {
+  .evaluation-columns {
+    grid-template-columns: minmax(0, 1fr);
   }
-  .overview-run {
-    width: 100%;
-    justify-content: space-between;
-  }
-  .evaluation-metrics {
+  .evaluation-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .metric-card {
-    padding-inline: 0.875rem;
-  }
-  .panel-heading {
-    padding-inline: 1rem;
-  }
-  .chart-legend {
-    gap: 0.5rem;
-  }
-  .table-toolbar {
-    align-items: flex-start;
-    flex-direction: column;
-    padding-inline: 1rem;
-  }
-  .result-count {
-    align-self: flex-end;
-  }
-  .evaluation-table {
-    overflow-x: auto;
-  }
-  .evaluation-table .table-row {
-    min-width: 47rem;
-  }
-  .quality-panel {
-    display: block;
-  }
-  .quality-panel .panel-heading {
-    display: flex;
-  }
-  .quality-list {
-    padding: 0.25rem 1rem 1.125rem;
-  }
-  .quality-note {
-    margin: 0 1rem 1rem;
-  }
-  .selected-case {
-    align-items: flex-start;
-  }
-  .selected-case-status {
-    margin-top: 0.1rem;
   }
 }
 @media (max-width: 30rem) {
-  .evaluation-metrics {
-    grid-template-columns: 1fr 1fr;
-    gap: 0.5rem;
+  .evaluation-summary > div {
+    padding: 0.875rem;
   }
-  .metric-card strong {
-    font-size: 1.25rem;
+  .evaluation-toolbar {
+    align-items: flex-start;
   }
-  .metric-card-top > span:first-child {
-    font-size: 0.75rem;
-  }
-  .chart-footer {
-    margin-inline: 1rem;
-  }
-  .chart-footer div + div {
-    padding-left: 0.5rem;
-  }
-}
-.evaluation-dashboard-grid {
-  align-items: stretch;
-}
-.trend-panel {
-  display: flex;
-  flex-direction: column;
-}
-.trend-panel .trend-empty {
-  flex: 1;
-  min-height: 9.5rem;
-}
-.evaluation-overview {
-  border-color: color-mix(in oklab, var(--teal) 22%, var(--workspace-border));
-  background: linear-gradient(
-    105deg,
-    color-mix(in oklab, var(--teal) 11%, var(--surface)),
-    var(--surface)
-  );
-}
-.evaluation-overview-copy > strong {
-  color: var(--workspace-text);
-}
-.evaluation-overview-copy > p,
-.overview-run {
-  color: var(--workspace-muted);
-}
-.quality-note {
-  background: color-mix(in oklab, var(--teal) 10%, var(--surface));
-  color: var(--teal-dark);
-}
-.filter-tab.active,
-.selected-case-icon {
-  background: color-mix(in oklab, var(--teal) 13%, var(--surface));
-  color: var(--teal-dark);
-}
-.table-row-button:hover {
-  background: color-mix(in oklab, var(--teal) 5%, var(--surface));
-}
-.status-passed {
-  color: var(--teal-dark);
-  background: color-mix(in oklab, var(--teal) 14%, var(--surface));
-}
-.status-review {
-  color: #b98229;
-  background: color-mix(in oklab, #d7962a 15%, var(--surface));
-}
-.status-failed {
-  color: #d27878;
-  background: color-mix(in oklab, #dc7171 14%, var(--surface));
-}
-.trend-panel,
-.quality-panel {
-  min-height: 24rem;
-}
-.evaluation-case-dialog {
-  max-width: 40rem !important;
-}
-.evaluation-case-form {
-  display: grid;
-  gap: 0.875rem;
-}
-.evaluation-case-form label {
-  display: grid;
-  gap: 0.375rem;
-  color: var(--workspace-muted);
-  font-size: 0.75rem;
-}
-.evaluation-case-form textarea {
-  width: 100%;
-  box-sizing: border-box;
-  resize: vertical;
-  border: 0.0625rem solid var(--workspace-border);
-  border-radius: 0.5rem;
-  outline: 0;
-  padding: 0.625rem 0.75rem;
-  background: var(--surface-soft);
-  color: var(--workspace-text);
-  font: inherit;
-  font-size: 0.8125rem;
-}
-.evaluation-case-form textarea:focus {
-  border-color: var(--teal);
-  box-shadow: 0 0 0 0.1875rem color-mix(in oklab, var(--teal) 16%, transparent);
-}
-.quality-trend-content {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-}
-.quality-trend-content > .chart-legend {
-  padding: 0.125rem 1.25rem 0.5rem;
-}
-.quality-trend-chart {
-  display: flex;
-  height: 13rem;
-  padding: 0 1.25rem;
-}
-.quality-axis {
-  display: flex;
-  width: 1.75rem;
-  flex-direction: column;
-  justify-content: space-between;
-  padding-bottom: 1.5rem;
-  color: var(--workspace-chart-axis);
-  font-size: 0.75rem;
-}
-.quality-chart-area {
-  position: relative;
-  min-width: 0;
-  flex: 1;
-}
-.quality-chart-area .chart-grid {
-  inset: 0 0 1.5rem;
-}
-.quality-chart-area svg {
-  position: absolute;
-  inset: 0 0 1.5rem;
-  width: 100%;
-  height: calc(100% - 1.5rem);
-  overflow: visible;
-}
-.quality-x {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  display: flex;
-  width: 100%;
-  justify-content: space-between;
-  color: var(--workspace-chart-axis);
-  font-size: 0.75rem;
-}
-.quality-trend-content .chart-footer {
-  margin-top: auto;
 }
 </style>

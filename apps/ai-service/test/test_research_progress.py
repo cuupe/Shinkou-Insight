@@ -36,6 +36,29 @@ async def test_detail_exposes_observable_tasks_and_stable_timing_without_reasoni
 
 
 @pytest.mark.asyncio
+async def test_detail_replays_latest_decision_and_all_tools_by_call_id():
+    events = EventBus()
+    repository = InMemoryRunRepository(events)
+    await repository.create(RunRecord("1", 1, 1, 1, "费用", {}))
+    await events.publish("1", "decision.updated", {"decision": {"id": "d1", "summary": "待计算"}})
+    await events.publish("1", "decision.updated", {"decision": {"id": "d1", "summary": "已计算"}})
+    await events.publish("1", "tool.started", {"callId": "c1", "tool": "calculator", "status": "running", "purpose": "合计费用"})
+    await events.publish("1", "tool.completed", {"callId": "c1", "tool": "calculator", "status": "ok", "result": {"result": "11360"}})
+    await events.publish("1", "tool.reused", {"callId": "c2", "tool": "calculator", "status": "reused", "reusedCallId": "c1"})
+    await events.publish("1", "agent.task.updated", {"task": {"id": "audit1", "status": "completed"}})
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        repository=repository, events=events,
+        runtime=SimpleNamespace(tools=SimpleNamespace(history=lambda _: [])))))
+    detail = await get_run("1", request)
+    assert detail["decisions"] == [{"id": "d1", "summary": "已计算"}]
+    assert len(detail["toolCalls"]) == 2
+    assert detail["toolCalls"][0]["status"] == "ok"
+    assert detail["toolCalls"][0]["purpose"] == "合计费用"
+    assert detail["toolCalls"][1]["status"] == "reused"
+    assert detail["events"][-1]["task"]["id"] == "audit1"
+
+
+@pytest.mark.asyncio
 async def test_failed_model_result_records_the_failed_step():
     events = EventBus()
     repository = InMemoryRunRepository(events)

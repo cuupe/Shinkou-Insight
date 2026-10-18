@@ -17,7 +17,6 @@ from typing import Any, Awaitable, Callable
 import httpx
 
 from models.schemas import Evidence
-from prompts.search_prompts import PAPER_SEARCH_HINTS, TECH_SEARCH_HINTS
 from rag.hybrid import fuse_ranked_candidates
 from tools.search_quality import canonical_url, rank_web_evidence
 from tools.web import WebSearchError
@@ -84,32 +83,10 @@ class MultiSourceWebSearch:
         self.sources = requested or set(self.DEFAULT_SOURCES)
         self.timeout_seconds = max(1.0, min(float(timeout_seconds), 30.0))
 
-    def _selected_sources(self, query: str) -> list[str]:
-        normalized = _plain(query).casefold()
-        paper = any(term in normalized for term in PAPER_SEARCH_HINTS)
-        technical = any(term in normalized for term in TECH_SEARCH_HINTS)
-        selected = ["general"] if "general" in self.sources else []
-        if paper:
-            selected.extend(
-                item
-                for item in ("arxiv", "openalex", "crossref")
-                if item in self.sources
-            )
-        if technical:
-            selected.extend(
-                item for item in ("github", "stackoverflow") if item in self.sources
-            )
-        # Explicit source names in configuration can opt into all sources for
-        # broad research. Generic chat remains one general request by default.
-        if "all" in self.sources:
-            selected = [
-                item
-                for item in self.DEFAULT_SOURCES
-                if item != "general" or "general" in self.sources
-            ]
-        return list(dict.fromkeys(selected))
-
     async def search(self, query: str, top_k: int = 5) -> list[Evidence]:
+        return await self.search_semantic(query, top_k)
+
+    async def search_semantic(self, query: str, top_k: int = 5, *, sources: list[str] | None = None) -> list[Evidence]:
         limit = max(1, min(int(top_k), 20))
         handlers: dict[str, SourceSearch] = {
             "general": self.general.search,
@@ -120,7 +97,7 @@ class MultiSourceWebSearch:
             "stackoverflow": self._search_stackoverflow,
         }
         selected = [
-            source for source in self._selected_sources(query) if source in handlers
+            source for source in dict.fromkeys(sources or ["general"]) if source in handlers and (source in self.sources or "all" in self.sources)
         ]
         results = await asyncio.gather(
             *(
@@ -137,7 +114,7 @@ class MultiSourceWebSearch:
                 continue
             channels[source] = [
                 (canonical_url(item.url or ""), item, float(item.score or 0.0))
-                for item in rank_web_evidence(query, items, limit)
+                for item in items[:limit]
             ]
         fused = fuse_ranked_candidates(
             channels,
@@ -161,7 +138,7 @@ class MultiSourceWebSearch:
             output.append(item)
             if len(output) >= limit:
                 break
-        return rank_web_evidence(query, output, limit)
+        return output[:limit]
 
     async def _safe_search(
         self, source: str, handler: SourceSearch, query: str, limit: int

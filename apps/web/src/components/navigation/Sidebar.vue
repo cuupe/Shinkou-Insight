@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ChevronDown, ChevronRight, Sparkles, X } from "@lucide/vue";
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import { useWorkspace } from "@/composables/useWorkspace";
 
@@ -17,6 +17,34 @@ const {
   switchWorkspace,
 } = useWorkspace();
 const workspaceMenuOpen = ref(false);
+const qualityOpen = ref(false);
+const projectGroups = [
+  { id: "work", label: "项目工作" },
+  { id: "data", label: "资料与知识" },
+  { id: "delivery", label: "交付与跟进" },
+  { id: "quality", label: "质量工具" },
+].map((group) => ({
+  ...group,
+  items: projectNav.filter((item) => item.group === group.id),
+}));
+
+watch(
+  currentName,
+  (name) => {
+    if (
+      projectNav.some(
+        (item) => item.group === "quality" && item.routes.includes(name),
+      )
+    ) {
+      qualityOpen.value = true;
+    }
+  },
+  { immediate: true },
+);
+
+function followNavigation() {
+  if (window.matchMedia("(max-width: 47.5rem)").matches) closeMenu();
+}
 
 function selectWorkspace(id: number | string) {
   workspaceMenuOpen.value = false;
@@ -29,6 +57,13 @@ function closeMenu() {
 </script>
 
 <template>
+  <button
+    v-if="mobileOpen"
+    class="sidebar-scrim"
+    type="button"
+    aria-label="收起项目导航"
+    @click="closeMenu"
+  />
   <!-- 侧边栏 -->
   <aside class="app-sidebar" :class="{ 'is-open': mobileOpen }">
     <!-- 品牌 -->
@@ -123,6 +158,7 @@ function closeMenu() {
           :key="item.name"
           :to="routeTo(item.name)"
           :class="{ active: currentName === item.name }"
+          @click="followNavigation"
         >
           <component :is="item.icon" :size="17" />
 
@@ -142,18 +178,43 @@ function closeMenu() {
         <ChevronRight :size="14" />
       </div>
 
-      <nav v-if="selectedProject?.id" class="side-nav">
-        <RouterLink
-          v-for="item in projectNav"
-          :key="item.name"
-          :to="routeTo(item.name)"
-          :class="{ active: currentName === item.name }"
+      <div v-if="selectedProject?.id" class="project-nav-groups">
+        <section
+          v-for="group in projectGroups"
+          :key="group.id"
+          class="project-nav-group"
         >
-          <component :is="item.icon" :size="17" />
-
-          <span>{{ item.label }}</span>
-        </RouterLink>
-      </nav>
+          <button
+            v-if="group.id === 'quality'"
+            class="nav-group-toggle"
+            type="button"
+            :aria-expanded="qualityOpen"
+            aria-controls="project-quality-nav"
+            @click="qualityOpen = !qualityOpen"
+          >
+            <span>{{ group.label }}</span>
+            <ChevronDown :size="13" :class="{ 'is-collapsed': !qualityOpen }" />
+          </button>
+          <p v-else class="nav-group-label">{{ group.label }}</p>
+          <nav
+            v-show="group.id !== 'quality' || qualityOpen"
+            :id="group.id === 'quality' ? 'project-quality-nav' : undefined"
+            class="side-nav"
+            :aria-label="group.label"
+          >
+            <RouterLink
+              v-for="item in group.items"
+              :key="item.name"
+              :to="routeTo(item.name)"
+              :class="{ active: item.routes.includes(currentName) }"
+              @click="followNavigation"
+            >
+              <component :is="item.icon" :size="17" />
+              <span>{{ item.label }}</span>
+            </RouterLink>
+          </nav>
+        </section>
+      </div>
     </div>
 
     <!-- 底部 -->
@@ -471,6 +532,42 @@ function closeMenu() {
   gap: 0.1875rem;
 }
 
+.project-nav-groups {
+  display: grid;
+  gap: 0.875rem;
+  padding-bottom: 1rem;
+}
+.nav-group-label,
+.nav-group-toggle {
+  margin: 0 0 0.25rem;
+  padding: 0.25rem 0.6875rem;
+  color: var(--sidebar-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.nav-group-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.nav-group-toggle:hover {
+  background: rgb(255 255 255 / 6%);
+  color: var(--sidebar-text);
+}
+.nav-group-toggle svg {
+  transition: transform 150ms ease;
+}
+.nav-group-toggle .is-collapsed {
+  transform: rotate(-90deg);
+}
+
 .side-nav a {
   display: flex;
 
@@ -551,11 +648,11 @@ function closeMenu() {
 /* 移动端 */
 @media screen and (max-width: 47.5rem) {
   .app-sidebar {
-    /* position: fixed; */
+    position: fixed;
     top: 0;
     left: 0;
     bottom: 0;
-    display: fixed;
+    display: flex;
     width: 15.5rem;
     min-width: 15.5rem;
 
@@ -582,10 +679,15 @@ function closeMenu() {
 
     position: fixed;
     inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
 
     z-index: 999;
 
     background: rgb(9 25 31 / 30%);
+    cursor: pointer;
   }
 }
 </style>

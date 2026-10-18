@@ -11,6 +11,7 @@ import {
   Gauge,
   LayoutDashboard,
   ListChecks,
+  MessageCircle,
   Network,
   Search,
   Settings2,
@@ -19,6 +20,7 @@ import {
   Users,
 } from "@lucide/vue";
 import type { AssetStatus } from "@/data/options";
+import type { EvaluationResult } from "@/api/types";
 import { projectApi } from "@/api/projects";
 import { assetsApi } from "@/api/assets";
 import { actionItemsApi } from "@/api/action-items";
@@ -30,6 +32,8 @@ import { workspaceApi } from "@/api/workspace";
 import { statisticsApi } from "@/api/statistics";
 import { getLastProjectId, rememberLastProject } from "@/utils/lastProject";
 import { formatDateTime } from "@/lib/utils";
+import { reportTextFields } from "@/utils/reportContent";
+import {actionRow, type ActionRow} from "@/utils/actionWorkflow";
 import type {
   AuthUser,
   KnowledgeAsset,
@@ -60,16 +64,7 @@ type AssetRow = {
   status: AssetStatus;
   reason: string;
 };
-type ActionItemRow = {
-  id: string;
-  title: string;
-  description: string;
-  ownerId?: number;
-  owner: string;
-  due: string;
-  priority: string;
-  status: string;
-};
+type ActionItemRow = ActionRow;
 type RecentRunRow = {
   id: string;
   projectId?: number;
@@ -92,6 +87,7 @@ type ReportRow = {
   citations: number | null;
   lead: string;
   summary: string;
+  content: string;
   recommendation: string;
   recommendationDetail: string;
 };
@@ -100,6 +96,12 @@ type EvaluationCaseRow = {
   projectId?: number;
   query: string;
   expectedAnswer: string;
+  expectedAsset?: string;
+  expectedChunkIds?: string[];
+  requiredFacts?: string[];
+  forbiddenFacts?: string[];
+  evaluationResult?: EvaluationResult | null;
+  evaluatedAt?: string;
   recall: string;
   citation: string;
   json: string;
@@ -134,6 +136,7 @@ const rerank = ref(true);
 const allowWeb = ref(false);
 const outputLanguage = ref("zh-CN");
 let toastTimer: number | undefined;
+let workspaceLoadSequence = 0;
 
 const workspaceNav = [
   { label: "概览", icon: LayoutDashboard, name: "workspace-dashboard" },
@@ -141,15 +144,83 @@ const workspaceNav = [
   { label: "成员与权限", icon: Users, name: "workspace-members" },
 ];
 const projectNav = [
-  { label: "项目概览", icon: Gauge, name: "project-overview" },
-  { label: "项目流程", icon: ListChecks, name: "project-planning" },
-  { label: "文件库", icon: FolderOpen, name: "project-files" },
-  { label: "知识库", icon: Database, name: "project-assets" },
-  { label: "检索 Playground", icon: Search, name: "project-playground" },
-  { label: "智能分析", icon: Activity, name: "project-runs" },
-  { label: "评估", icon: BarChart3, name: "project-evaluation" },
-  { label: "报告", icon: FileText, name: "project-reports" },
-  { label: "行动项", icon: ListChecks, name: "project-action-items" },
+  {
+    label: "项目概览",
+    icon: Gauge,
+    name: "project-overview",
+    group: "work",
+    routes: ["project-overview"],
+  },
+  {
+    label: "项目规划",
+    icon: ListChecks,
+    name: "project-planning",
+    group: "work",
+    routes: ["project-planning"],
+  },
+  {
+    label: "智能分析",
+    icon: Activity,
+    name: "project-runs",
+    group: "work",
+    routes: ["project-runs", "project-run-detail"],
+  },
+  {
+    label: "Agent 问答",
+    icon: MessageCircle,
+    name: "project-agent-chat",
+    group: "work",
+    routes: ["project-agent-chat"],
+  },
+  {
+    label: "文件库",
+    icon: FolderOpen,
+    name: "project-files",
+    group: "data",
+    routes: ["project-files"],
+  },
+  {
+    label: "知识库",
+    icon: Database,
+    name: "project-assets",
+    group: "data",
+    routes: ["project-assets", "project-asset-detail"],
+  },
+  {
+    label: "报告",
+    icon: FileText,
+    name: "project-reports",
+    group: "delivery",
+    routes: ["project-reports"],
+  },
+  {
+    label: "行动项",
+    icon: ListChecks,
+    name: "project-action-items",
+    group: "delivery",
+    routes: ["project-action-items"],
+  },
+  {
+    label: "审查定稿",
+    icon: ShieldCheck,
+    name: "project-review",
+    group: "delivery",
+    routes: ["project-review"],
+  },
+  {
+    label: "检索调试",
+    icon: Search,
+    name: "project-playground",
+    group: "quality",
+    routes: ["project-playground"],
+  },
+  {
+    label: "检索评估",
+    icon: BarChart3,
+    name: "project-evaluation",
+    group: "quality",
+    routes: ["project-evaluation"],
+  },
 ];
 const settingsNav = [
   { label: "个人设置", icon: UserRound, name: "user-settings" },
@@ -213,12 +284,7 @@ function runDisplayFields(run: ResearchRun) {
 function reportDisplayFields(report: Record<string, unknown>) {
   return {
     version: report.versionNo != null ? `v${String(report.versionNo)}` : "暂无",
-    lead: String(report.lead || ""),
-    summary: String(
-      report.summary ?? report.markdownContent ?? report.content ?? "",
-    ),
-    recommendation: String(report.recommendation || ""),
-    recommendationDetail: String(report.recommendationDetail || ""),
+    ...reportTextFields(report),
   };
 }
 
@@ -243,26 +309,7 @@ function mapRemoteRun(
 }
 
 function mapRemoteActionItem(item: Record<string, unknown>): ActionItemRow {
-  const rawStatus = String(item.status || "TODO").toUpperCase();
-  const rawPriority = String(item.priority || "MEDIUM").toUpperCase();
-  return {
-    id: String(item.id ?? "—"),
-    title: String(item.title || "未命名行动项"),
-    description: String(item.description || ""),
-    ownerId: item.ownerId == null ? undefined : Number(item.ownerId),
-    owner: String(item.owner || "未分配"),
-    due: String(item.dueAt || "待安排"),
-    priority:
-      rawPriority === "HIGH" ? "高" : rawPriority === "LOW" ? "低" : "中",
-    status:
-      rawStatus === "DONE"
-        ? "done"
-        : rawStatus === "IN_PROGRESS"
-          ? "in-progress"
-          : rawStatus === "REJECTED"
-            ? "rejected"
-            : "todo",
-  };
+  return actionRow(item as unknown as import("@/api/types").ActionItem);
 }
 
 function mapRemoteReport(
@@ -283,6 +330,32 @@ function mapRemoteReport(
   };
 }
 
+function parseJsonStringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonRecord(value: unknown): EvaluationResult | null {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as EvaluationResult;
+  }
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as EvaluationResult)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function mapRemoteEvaluationCase(
   item: Record<string, unknown>,
 ): EvaluationCaseRow {
@@ -291,6 +364,13 @@ function mapRemoteEvaluationCase(
     projectId: item.projectId == null ? undefined : Number(item.projectId),
     query: String(item.query || ""),
     expectedAnswer: String(item.expectedAnswer || ""),
+    expectedAsset: String(item.expectedAsset || ""),
+    expectedChunkIds: parseJsonStringList(item.expectedChunkIds),
+    requiredFacts: parseJsonStringList(item.requiredFacts),
+    forbiddenFacts: parseJsonStringList(item.forbiddenFacts),
+    evaluationResult: parseJsonRecord(item.evaluationResult),
+    evaluatedAt:
+      item.evaluatedAt == null ? undefined : String(item.evaluatedAt),
     recall: item.recall == null ? "—" : `${String(item.recall)}%`,
     citation: item.citation == null ? "—" : `${String(item.citation)}%`,
     json: item.jsonScore == null ? "—" : `${String(item.jsonScore)}%`,
@@ -359,30 +439,37 @@ export function useWorkspace() {
           "settings-web-search": "联网搜索",
           "settings-security": "安全审计",
           "project-overview": "项目概览",
-          "project-planning": "规划与审查 · 规划",
-          "project-agent-chat": "项目流程 · 细节确认",
+          "project-planning": "项目规划",
+          "project-agent-chat": "Agent 问答",
           "project-files": "文件库",
           "project-assets": "知识库",
           "project-asset-detail": "知识库详情",
-          "project-playground": "检索 Playground",
-          "project-runs": "项目流程 · 智能分析",
-          "project-run-detail": "项目流程 · 智能分析",
-          "project-reports": "项目流程 · 导出成果",
+          "project-playground": "检索调试",
+          "project-runs": "智能分析",
+          "project-run-detail": "智能分析详情",
+          "project-reports": "报告",
           "project-action-items": "行动项",
-          "project-evaluation": "评估",
-          "project-review": "规划与审查 · 审查",
+          "project-evaluation": "检索评估",
+          "project-review": "审查定稿",
         }) as Record<string, string>
       )[currentName.value] || "工作台",
   );
 
   async function loadWorkspaceData() {
-    if (!workspaceId.value) return;
+    const requestId = ++workspaceLoadSequence;
+    const currentWorkspaceId = workspaceId.value;
+    const currentProjectId = projectId.value;
+    const isCurrentLoad = () =>
+      requestId === workspaceLoadSequence &&
+      workspaceId.value === currentWorkspaceId &&
+      projectId.value === currentProjectId;
+    if (!currentWorkspaceId) return;
 
     try {
       const statisticsRequest =
-        projectId.value > 0
-          ? statisticsApi.project(workspaceId.value, projectId.value)
-          : statisticsApi.workspace(workspaceId.value);
+        currentProjectId > 0
+          ? statisticsApi.project(currentWorkspaceId, currentProjectId)
+          : statisticsApi.workspace(currentWorkspaceId);
       const [
         me,
         remoteWorkspace,
@@ -392,12 +479,13 @@ export function useWorkspace() {
         remoteStatistics,
       ] = await Promise.all([
         authApi.me(),
-        workspaceApi.detail(workspaceId.value),
+        workspaceApi.detail(currentWorkspaceId),
         workspaceApi.list(),
-        projectApi.list(workspaceId.value),
-        evaluationApi.list(workspaceId.value),
+        projectApi.list(currentWorkspaceId),
+        evaluationApi.list(currentWorkspaceId),
         statisticsRequest,
       ]);
+      if (!isCurrentLoad()) return;
 
       currentUser.value = me;
       statistics.value = remoteStatistics;
@@ -421,10 +509,10 @@ export function useWorkspace() {
         remoteProjects.map(async (project: Project) => {
           const [assetsResult, runsResult, reportsResult, actionsResult] =
             await Promise.allSettled([
-              assetsApi.list(workspaceId.value, project.id),
-              runsApi.list(workspaceId.value, project.id),
-              reportsApi.list(workspaceId.value, project.id),
-              actionItemsApi.list(workspaceId.value, project.id),
+              assetsApi.list(currentWorkspaceId, project.id),
+              runsApi.list(currentWorkspaceId, project.id),
+              reportsApi.list(currentWorkspaceId, project.id),
+              actionItemsApi.list(currentWorkspaceId, project.id),
             ]);
           return {
             project,
@@ -438,6 +526,7 @@ export function useWorkspace() {
           };
         }),
       );
+      if (!isCurrentLoad()) return;
 
       projectList.splice(
         0,
@@ -463,15 +552,15 @@ export function useWorkspace() {
       // starts from a workspace-level page, prefer the remembered project and
       // only fall back to the first available project. This also prevents the
       // sentinel -1 from reaching project-scoped requests.
-      const lastProjectId = getLastProjectId(workspaceId.value);
+      const lastProjectId = getLastProjectId(currentWorkspaceId);
       const projectToOpen =
         projectData.find(({ project }) => project.id === lastProjectId)
           ?.project || projectData[0]?.project;
-      if (isProject.value && projectId.value <= 0 && projectToOpen) {
+      if (isProject.value && currentProjectId <= 0 && projectToOpen) {
         await router.replace({
           name: currentName.value,
           params: {
-            workspaceId: workspaceId.value,
+            workspaceId: currentWorkspaceId,
             projectId: projectToOpen.id,
           },
         });
@@ -479,14 +568,14 @@ export function useWorkspace() {
       }
 
       if (
-        projectId.value > 0 &&
-        projectList.some((project) => project.id === projectId.value)
+        currentProjectId > 0 &&
+        projectList.some((project) => project.id === currentProjectId)
       ) {
-        rememberLastProject(workspaceId.value, projectId.value);
+        rememberLastProject(currentWorkspaceId, currentProjectId);
       }
 
       const currentProjectData = projectData.find(
-        ({ project }) => project.id === projectId.value,
+        ({ project }) => project.id === currentProjectId,
       );
       const dashboardRuns = projectData.flatMap(({ project, runs }) =>
         runs.map((run) => mapRemoteRun(run, project.name, project.id)),
@@ -511,12 +600,12 @@ export function useWorkspace() {
       recentRuns.splice(
         0,
         recentRuns.length,
-        ...(projectId.value > 0
+        ...(currentProjectId > 0
           ? selectedRuns.map((run) =>
               mapRemoteRun(
                 run,
                 currentProjectData?.project.name,
-                projectId.value,
+                currentProjectId,
               ),
             )
           : dashboardRuns),
@@ -524,12 +613,12 @@ export function useWorkspace() {
       reports.splice(
         0,
         reports.length,
-        ...(projectId.value > 0
+        ...(currentProjectId > 0
           ? selectedReports.map((report) =>
               mapRemoteReport(
                 report,
                 currentProjectData?.project.name,
-                projectId.value,
+                currentProjectId,
               ),
             )
           : dashboardReports),
@@ -540,9 +629,9 @@ export function useWorkspace() {
         ...remoteEvaluations
           .filter(
             (item) =>
-              projectId.value <= 0 ||
+              currentProjectId <= 0 ||
               item.projectId == null ||
-              Number(item.projectId) === projectId.value,
+              Number(item.projectId) === currentProjectId,
           )
           .map(mapRemoteEvaluationCase),
       );

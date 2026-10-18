@@ -514,6 +514,9 @@ function focusIcon(icon: string) {
   padding: 1.125rem 1.25rem 0.75rem;
 }
 .chart-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 1rem;
   color: var(--workspace-muted);
   font-size: 0.75rem;
@@ -543,6 +546,7 @@ function focusIcon(icon: string) {
   padding: 0.75rem 1.25rem 0;
 }
 .trend-chart {
+  display: flex;
   width: 100%;
   height: 13.75rem;
   padding: 0 0.625rem;
@@ -701,10 +705,9 @@ function focusIcon(icon: string) {
 }
 .workspace-token-row {
   display: grid;
-  grid-template-columns: minmax(8rem, 1.25fr) minmax(7rem, 1fr) minmax(
-      6rem,
-      0.8fr
-    ) auto;
+  grid-template-columns:
+    minmax(8rem, 1.25fr) minmax(7rem, 1fr) minmax(6rem, 0.8fr)
+    auto;
   align-items: center;
   gap: 0.5rem;
   min-width: 0;

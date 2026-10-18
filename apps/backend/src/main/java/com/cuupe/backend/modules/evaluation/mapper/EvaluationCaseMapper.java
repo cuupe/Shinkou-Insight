@@ -26,5 +26,16 @@ public interface EvaluationCaseMapper {
             @Param("status") String status
     );
 
+    int updateDefinition(EvaluationCase item);
+
+    int saveEvaluationResult(
+            @Param("workspaceId") Long workspaceId,
+            @Param("id") Long id,
+            @Param("userId") Long userId,
+            @Param("recall") Double recall,
+            @Param("status") String status,
+            @Param("result") String result
+    );
+
     int insert(EvaluationCase item);
 }

@@ -5,12 +5,14 @@ import com.cuupe.backend.common.exception.ApiException;
 import com.cuupe.backend.modules.audit.service.AuditLogService;
 import com.cuupe.backend.modules.report.entity.Report;
 import com.cuupe.backend.modules.report.mapper.ReportMapper;
+import com.cuupe.backend.modules.project.service.ProjectReviewService;
 import com.cuupe.backend.modules.notification.service.NotificationService;
 import com.cuupe.backend.modules.user.security.UserLoginByPassword;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.*;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -23,6 +25,7 @@ public class ReportController {
     private final ReportMapper mapper;
     private final NotificationService notificationService;
     private final AuditLogService auditLogService;
+    private final ProjectReviewService reviewService;
 
     @GetMapping
     public Result<List<Report>> list(@PathVariable Long projectId, Authentication auth) {
@@ -35,6 +38,7 @@ public class ReportController {
     }
 
     @PatchMapping("/{reportId}")
+    @Transactional
     public Result<Report> update(
             @PathVariable Long workspaceId,
             @PathVariable Long projectId,
@@ -43,7 +47,9 @@ public class ReportController {
             Authentication auth
     ) {
         Long userId = userId(auth);
-        Report report = required(reportId, projectId, userId);
+        Report report = reviewService.lockAndLoadReport(workspaceId, projectId, reportId, userId);
+        var previousFields = ProjectReviewService.reportFields(report);
+        String previousStatus = report.getStatus();
         if (body.containsKey("title")) report.setTitle(stringValue(body.get("title")));
         if (body.containsKey("status")) report.setStatus(stringValue(body.get("status")));
         if (body.containsKey("versionNo")) report.setVersionNo(stringValue(body.get("versionNo")));
@@ -53,6 +59,14 @@ public class ReportController {
         if (body.containsKey("recommendationDetail")) report.setRecommendationDetail(stringValue(body.get("recommendationDetail")));
         if (body.containsKey("citations")) report.setCitations(integerValue(body.get("citations")));
         if (body.containsKey("content")) report.setContent(stringValue(body.get("content")));
+        boolean changed = !previousFields.equals(ProjectReviewService.reportFields(report));
+        if (changed && "PUBLISHED".equalsIgnoreCase(previousStatus) && !body.containsKey("status")) {
+            report.setStatus("DRAFT");
+        }
+        if ("PUBLISHED".equalsIgnoreCase(report.getStatus())) {
+            reviewService.assertPublishable(workspaceId, projectId, report, userId);
+            report.setStatus("PUBLISHED");
+        }
         mapper.update(report);
         auditLogService.record(workspaceId, projectId, userId, "REPORT_UPDATED", "REPORT", reportId);
         notificationService.create(workspaceId, userId, projectId, "report", "报告已更新", "“" + report.getTitle() + "”的内容已发生更新。", "project-reports");
