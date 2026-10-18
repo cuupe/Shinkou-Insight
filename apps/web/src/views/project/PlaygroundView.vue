@@ -77,7 +77,8 @@ const retrievalModes = [
   {
     label: "向量",
     value: "VECTOR" as const,
-    description: "适合表达不同但含义相近的问题；需要项目配置真实的 Embedding 模型。",
+    description:
+      "适合表达不同但含义相近的问题；需要项目配置真实的 Embedding 模型。",
   },
   {
     label: "关键词",
@@ -109,17 +110,21 @@ const parameterVectorWeight = ref(vectorWeight.value);
 const parameterRerank = ref(rerank.value);
 const evidenceOpen = ref(false);
 const selectedResult = ref<RetrievalResult | null>(null);
-const indexedAssets = computed(() => assets.filter((asset) => asset.status === "indexed"));
+const indexedAssets = computed(() =>
+  assets.filter((asset) => asset.status === "indexed"),
+);
 const selectedMode = computed(
-  () => retrievalModes.find((mode) => mode.value === retrievalMode.value) || retrievalModes[0]!,
+  () =>
+    retrievalModes.find((mode) => mode.value === retrievalMode.value) ||
+    retrievalModes[0]!,
 );
 const selectedAssetName = computed(
-  () => indexedAssets.value.find((asset) => asset.id === selectedAssetId.value)?.name || "全部已索引资料",
+  () =>
+    indexedAssets.value.find((asset) => asset.id === selectedAssetId.value)
+      ?.name || "全部已索引资料",
 );
 const matchingEvaluationCase = computed(() =>
-  evaluationCases.find(
-    (item) => item.query === playgroundQuery.value.trim(),
-  ),
+  evaluationCases.find((item) => item.query === playgroundQuery.value.trim()),
 );
 const evaluationCaseId = computed(() => {
   const id = route.query.evaluationCaseId;
@@ -153,11 +158,17 @@ watch([workspaceId, projectId], () => {
 function formatScore(value: unknown) {
   const score = Number(value);
   if (!Number.isFinite(score)) return "—";
-  return score < 0.01 ? score.toFixed(4) : score < 1 ? score.toFixed(3) : score.toFixed(2);
+  return score < 0.01
+    ? score.toFixed(4)
+    : score < 1
+      ? score.toFixed(3)
+      : score.toFixed(2);
 }
 
 function modeLabel(value?: string) {
-  return retrievalModes.find((mode) => mode.value === value)?.label || value || "—";
+  return (
+    retrievalModes.find((mode) => mode.value === value)?.label || value || "—"
+  );
 }
 
 function mapResult(item: KnowledgeSearchItem, index: number): RetrievalResult {
@@ -203,7 +214,10 @@ async function runSearch() {
         topK: topK.value,
         retrievalMode: retrievalMode.value,
         useReranker: rerank.value,
-        filters: selectedAssetId.value === "all" ? {} : { assetIds: [selectedAssetId.value] },
+        filters:
+          selectedAssetId.value === "all"
+            ? {}
+            : { assetIds: [selectedAssetId.value] },
         candidateK: candidateK.value,
         fusionMethod: fusionMethod.value,
         vectorWeight: vectorWeight.value,
@@ -221,7 +235,10 @@ async function runSearch() {
     );
   } catch (error) {
     retrievalResults.value = [];
-    searchError.value = getApiErrorMessage(error, "检索失败，请检查知识库服务连接后重试");
+    searchError.value = getApiErrorMessage(
+      error,
+      "检索失败，请检查知识库服务连接后重试",
+    );
     notify(searchError.value);
   } finally {
     isSearching.value = false;
@@ -275,10 +292,15 @@ function applyParameters() {
     Math.max(topK.value, Math.round(Number(parameterCandidateK.value) || 40)),
   );
   fusionMethod.value = parameterFusionMethod.value;
-  vectorWeight.value = Math.min(1, Math.max(0, Number(parameterVectorWeight.value)));
+  vectorWeight.value = Math.min(
+    1,
+    Math.max(0, Number(parameterVectorWeight.value)),
+  );
   rerank.value = parameterRerank.value;
   parameterOpen.value = false;
-  notify(`检索参数已更新：${retrievalMode.value} · Top K ${topK.value} · 候选 ${candidateK.value}`);
+  notify(
+    `检索参数已更新：${retrievalMode.value} · Top K ${topK.value} · 候选 ${candidateK.value}`,
+  );
 }
 
 function openEvidence(result: RetrievalResult) {
@@ -327,8 +349,14 @@ function openEvidence(result: RetrievalResult) {
       <label class="playground-source-filter" for="playground-source">
         <span>资料范围</span>
         <select id="playground-source" v-model="selectedAssetId">
-          <option value="all">全部已索引资料（{{ indexedAssets.length }}）</option>
-          <option v-for="asset in indexedAssets" :key="asset.id" :value="asset.id">
+          <option value="all">
+            全部已索引资料（{{ indexedAssets.length }}）
+          </option>
+          <option
+            v-for="asset in indexedAssets"
+            :key="asset.id"
+            :value="asset.id"
+          >
             {{ asset.name }} · {{ asset.chunks }} 段
           </option>
         </select>
@@ -341,13 +369,21 @@ function openEvidence(result: RetrievalResult) {
       <div class="playground-config-summary">
         <div>
           <span>当前检索参数</span>
-          <strong>{{ retrievalMode }} · Top K {{ topK }} · 候选 {{ candidateK }} · 重排 {{ rerank ? "开" : "关" }}</strong>
+          <strong
+            >{{ retrievalMode }} · Top K {{ topK }} · 候选 {{ candidateK }} ·
+            重排 {{ rerank ? "开" : "关" }}</strong
+          >
         </div>
         <button class="text-button" type="button" @click="openParameters">
           更多参数 <SlidersHorizontal :size="14" />
         </button>
       </div>
-      <button class="button button-primary" type="button" :disabled="isSearching || !playgroundQuery.trim()" @click="runSearch">
+      <button
+        class="button button-primary"
+        type="button"
+        :disabled="isSearching || !playgroundQuery.trim()"
+        @click="runSearch"
+      >
         <Search :size="16" />{{ isSearching ? "检索中..." : "运行检索" }}
       </button>
       <div class="playground-evaluation-actions">
@@ -380,15 +416,22 @@ function openEvidence(result: RetrievalResult) {
       </div>
       <div v-if="retrievalTrace" class="playground-search-trace">
         <div class="trace-heading">
-          <strong>实际检索：{{ modeLabel(retrievalTrace.effectiveMode) }}</strong>
-          <span>{{ (retrievalTrace.effectiveChannels || []).join(" + ") || modeLabel(retrievalTrace.effectiveMode) }}</span>
+          <strong
+            >实际检索：{{ modeLabel(retrievalTrace.effectiveMode) }}</strong
+          >
+          <span>{{
+            (retrievalTrace.effectiveChannels || []).join(" + ") ||
+            modeLabel(retrievalTrace.effectiveMode)
+          }}</span>
         </div>
         <p v-if="retrievalTrace.fallbackReason" class="trace-warning">
           当前没有可用的语义向量模型，本次已回退到关键词检索，避免随机向量带入无关内容。
         </p>
         <div v-if="rewrittenQueries.length" class="rewritten-queries">
           <span>检索扩展</span>
-          <code v-for="query in rewrittenQueries" :key="query">{{ query }}</code>
+          <code v-for="query in rewrittenQueries" :key="query">{{
+            query
+          }}</code>
         </div>
       </div>
       <article
@@ -424,13 +467,31 @@ function openEvidence(result: RetrievalResult) {
       >
         <AlertTriangle v-if="searchError" :size="20" />
         <Search v-else :size="20" />
-        <strong>{{ isSearching ? "正在检索知识库" : searchError ? "检索失败" : hasSearched ? "未找到匹配片段" : "等待检索" }}</strong>
+        <strong>{{
+          isSearching
+            ? "正在检索知识库"
+            : searchError
+              ? "检索失败"
+              : hasSearched
+                ? "未找到匹配片段"
+                : "等待检索"
+        }}</strong>
         <span>{{
           isSearching
             ? "正在查询索引并整理证据，请稍候。"
-            : searchError || (hasSearched ? "请调整关键词，并确认资料已成功建立索引。" : "输入问题并运行检索，结果将在这里显示。")
+            : searchError ||
+              (hasSearched
+                ? "请调整关键词，并确认资料已成功建立索引。"
+                : "输入问题并运行检索，结果将在这里显示。")
         }}</span>
-        <button v-if="searchError" class="button button-secondary" type="button" @click="runSearch">重新检索</button>
+        <button
+          v-if="searchError"
+          class="button button-secondary"
+          type="button"
+          @click="runSearch"
+        >
+          重新检索
+        </button>
       </div>
     </section>
   </div>
@@ -511,12 +572,17 @@ function openEvidence(result: RetrievalResult) {
               min="1"
               max="200"
             />
-            <small>先从索引召回候选，再选出 Top K；候选数不能小于 Top K。</small>
+            <small
+              >先从索引召回候选，再选出 Top K；候选数不能小于 Top K。</small
+            >
           </div>
           <div class="parameter-field">
             <label for="playground-fusion">混合排序方式</label>
             <Select v-model="parameterFusionMethod">
-              <SelectTrigger id="playground-fusion" aria-label="选择混合排序方式">
+              <SelectTrigger
+                id="playground-fusion"
+                aria-label="选择混合排序方式"
+              >
                 <SelectValue placeholder="选择排序方式" />
               </SelectTrigger>
               <SelectContent>
@@ -529,20 +595,41 @@ function openEvidence(result: RetrievalResult) {
                 </SelectItem>
               </SelectContent>
             </Select>
-            <small>仅混合检索会使用融合排序；关键词/向量模式按各自分数排序。</small>
+            <small
+              >仅混合检索会使用融合排序；关键词/向量模式按各自分数排序。</small
+            >
           </div>
-          <label v-if="parameterFusionMethod === 'WEIGHTED_RRF' && retrievalMode === 'HYBRID'" class="parameter-weight">
+          <label
+            v-if="
+              parameterFusionMethod === 'WEIGHTED_RRF' &&
+              retrievalMode === 'HYBRID'
+            "
+            class="parameter-weight"
+          >
             <span>
-              <strong>语义权重 {{ Math.round(parameterVectorWeight * 100) }}%</strong>
-              <small>关键词权重 {{ Math.round((1 - parameterVectorWeight) * 100) }}%</small>
+              <strong
+                >语义权重 {{ Math.round(parameterVectorWeight * 100) }}%</strong
+              >
+              <small
+                >关键词权重
+                {{ Math.round((1 - parameterVectorWeight) * 100) }}%</small
+              >
             </span>
-            <input v-model.number="parameterVectorWeight" type="range" min="0" max="1" step="0.05" />
+            <input
+              v-model.number="parameterVectorWeight"
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+            />
             <b>{{ Math.round(parameterVectorWeight * 100) }}%</b>
           </label>
           <label class="parameter-switch" for="playground-rerank">
             <span>
               <strong>启用相关性重排</strong>
-              <small>按问题与证据词组重排，并过滤明显无关片段，建议保持开启。</small>
+              <small
+                >按问题与证据词组重排，并过滤明显无关片段，建议保持开启。</small
+              >
             </span>
             <input
               id="playground-rerank"

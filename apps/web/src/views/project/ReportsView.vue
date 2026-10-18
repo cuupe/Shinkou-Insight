@@ -169,7 +169,9 @@ const selectedReport = computed(
 );
 const markdown = new MarkdownIt({ html: false, linkify: false });
 markdown.disable("image");
-const renderedContent = computed(() => DOMPurify.sanitize(markdown.render(selectedReport.value?.content || "")));
+const renderedContent = computed(() =>
+  DOMPurify.sanitize(markdown.render(selectedReport.value?.content || "")),
+);
 
 const publishedCount = computed(
   () => reportItems.filter((report) => report.status === "已发布").length,
@@ -217,7 +219,9 @@ async function saveReport() {
       title: updated.title || editForm.title.trim(),
       lead: String(updated.lead ?? editForm.lead.trim()),
       summary: String(updated.summary ?? payload.summary),
-      content: String(updated.content ?? updated.markdownContent ?? payload.content),
+      content: String(
+        updated.content ?? updated.markdownContent ?? payload.content,
+      ),
       recommendation: String(
         updated.recommendation ?? editForm.recommendation.trim(),
       ),
@@ -302,13 +306,19 @@ async function copySummary() {
 }
 
 function createActionFromRecommendation() {
-  if(selectedReport.value) actionImportOpen.value=true;
+  if (selectedReport.value) actionImportOpen.value = true;
 }
-function goReportActions(reportId:number|string) {
-  void router.push({...routeTo("project-action-items"),query:{reportId:String(reportId)}});
+function goReportActions(reportId: number | string) {
+  void router.push({
+    ...routeTo("project-action-items"),
+    query: { reportId: String(reportId) },
+  });
 }
-function createLinkedAction(reportId:number|string,title:string) {
-  void router.push({...routeTo("project-action-items"),query:{sourceReportId:String(reportId),actionTitle:`跟进：${title}`}});
+function createLinkedAction(reportId: number | string, title: string) {
+  void router.push({
+    ...routeTo("project-action-items"),
+    query: { sourceReportId: String(reportId), actionTitle: `跟进：${title}` },
+  });
 }
 </script>
 
@@ -466,8 +476,22 @@ function createLinkedAction(reportId:number|string,title:string) {
           >
         </div>
         <div class="heading-actions">
-          <button class="text-button" type="button" :disabled="!selectedReport" @click="actionImportOpen=true"><ClipboardList :size="14"/>建立行动项</button>
-          <button v-if="selectedReport" class="text-button" type="button" @click="goReportActions(selectedReport.id)">查看关联任务</button>
+          <button
+            class="text-button"
+            type="button"
+            :disabled="!selectedReport"
+            @click="actionImportOpen = true"
+          >
+            <ClipboardList :size="14" />建立行动项
+          </button>
+          <button
+            v-if="selectedReport"
+            class="text-button"
+            type="button"
+            @click="goReportActions(selectedReport.id)"
+          >
+            查看关联任务
+          </button>
           <button class="text-button" type="button" @click="openEditor">
             <Edit3 :size="14" />编辑</button
           ><button
@@ -502,7 +526,11 @@ function createLinkedAction(reportId:number|string,title:string) {
         </div>
         <hr />
         <h3>01 / 报告正文</h3>
-        <div v-if="selectedReport.content" class="report-content" v-html="renderedContent"></div>
+        <div
+          v-if="selectedReport.content"
+          class="report-content"
+          v-html="renderedContent"
+        ></div>
         <div v-else class="empty-state">该报告暂无正文内容。</div>
         <div
           v-if="
@@ -543,7 +571,14 @@ function createLinkedAction(reportId:number|string,title:string) {
     </section>
   </div>
 
-  <ReportActionImportDialog v-model:open="actionImportOpen" :workspace-id="workspaceId" :project-id="projectId" :report-id="selectedReport?.id" @imported="goReportActions" @manual="createLinkedAction"/>
+  <ReportActionImportDialog
+    v-model:open="actionImportOpen"
+    :workspace-id="workspaceId"
+    :project-id="projectId"
+    :report-id="selectedReport?.id"
+    @imported="goReportActions"
+    @manual="createLinkedAction"
+  />
   <Dialog v-model:open="editorOpen">
     <DialogContent class="report-editor-dialog">
       <DialogHeader
@@ -944,19 +979,73 @@ function createLinkedAction(reportId:number|string,title:string) {
   max-height: calc(100dvh - 2rem);
   overflow-y: auto;
 }
-.report-content { min-width: 0; overflow-x: auto; overflow-wrap: anywhere; font-size: .875rem; line-height: 1.9; }
-.report-content :deep(p),.report-content :deep(ul),.report-content :deep(ol) { margin: .8rem 0; }
-.report-content :deep(h1),.report-content :deep(h2),.report-content :deep(h3),.report-content :deep(h4) { margin: 1.5rem 0 .75rem; color: var(--workspace-text); font-weight: 650; line-height: 1.5; }
-.report-content :deep(h1) { font-size: 1.35rem; }
-.report-content :deep(h2) { font-size: 1.1rem; }
-.report-content :deep(h3),.report-content :deep(h4) { font-size: .95rem; }
-.report-content :deep(table) { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .8125rem; }
-.report-content :deep(th),.report-content :deep(td) { padding: .65rem; border: 1px solid var(--workspace-divider); min-width: 5rem; text-align: left; vertical-align: top; }
-.report-content :deep(th) { background: var(--surface-soft); font-weight: 600; }
-.report-content :deep(blockquote) { margin: 1rem 0; padding: .1rem 1rem; border-left: 3px solid var(--teal); color: var(--workspace-muted); background: var(--surface-soft); }
-.report-content :deep(pre) { padding: .8rem; background: var(--surface-soft); overflow-x: auto; }
-.report-content :deep(code) { font-size: .9em; }
-.report-content :deep(li) { margin: .4rem 0; }
+.report-content {
+  min-width: 0;
+  overflow-x: auto;
+  overflow-wrap: anywhere;
+  font-size: 0.875rem;
+  line-height: 1.9;
+}
+.report-content :deep(p),
+.report-content :deep(ul),
+.report-content :deep(ol) {
+  margin: 0.8rem 0;
+}
+.report-content :deep(h1),
+.report-content :deep(h2),
+.report-content :deep(h3),
+.report-content :deep(h4) {
+  margin: 1.5rem 0 0.75rem;
+  color: var(--workspace-text);
+  font-weight: 650;
+  line-height: 1.5;
+}
+.report-content :deep(h1) {
+  font-size: 1.35rem;
+}
+.report-content :deep(h2) {
+  font-size: 1.1rem;
+}
+.report-content :deep(h3),
+.report-content :deep(h4) {
+  font-size: 0.95rem;
+}
+.report-content :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.8125rem;
+}
+.report-content :deep(th),
+.report-content :deep(td) {
+  padding: 0.65rem;
+  border: 1px solid var(--workspace-divider);
+  min-width: 5rem;
+  text-align: left;
+  vertical-align: top;
+}
+.report-content :deep(th) {
+  background: var(--surface-soft);
+  font-weight: 600;
+}
+.report-content :deep(blockquote) {
+  margin: 1rem 0;
+  padding: 0.1rem 1rem;
+  border-left: 3px solid var(--teal);
+  color: var(--workspace-muted);
+  background: var(--surface-soft);
+}
+.report-content :deep(pre) {
+  padding: 0.8rem;
+  background: var(--surface-soft);
+  overflow-x: auto;
+}
+.report-content :deep(code) {
+  font-size: 0.9em;
+}
+.report-content :deep(li) {
+  margin: 0.4rem 0;
+}
 .editor-form {
   display: grid;
   gap: 0.875rem;

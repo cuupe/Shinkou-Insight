@@ -13,7 +13,13 @@ class EchoAgent:
     capabilities = ("echo",)
 
     async def handle(self, message: AgentMessage, context: AgentContext) -> AgentResult:
-        return AgentResult(agent=self.name, payload={"received": message.payload, "model": context.model_for(self.name)})
+        return AgentResult(
+            agent=self.name,
+            payload={
+                "received": message.payload,
+                "model": context.model_for(self.name),
+            },
+        )
 
 
 def test_agent_registry_and_message_bus_keep_agents_isolated():
@@ -79,26 +85,68 @@ def test_assignments_execute_in_parallel_with_three_worker_limit():
         registry = AgentRegistry()
         registry.register(BlockingAgent())
         bus = AgentMessageBus(registry)
-        context = AgentContext(run_id="parallel", workspace_id=1, project_id=1, user_id=1,
-                               model_router=AgentModelRouter("test"), web_search=None, tools=None,
-                               repository=None, events=events, max_evidence=12)
-        requests = [asyncio.create_task(bus.request(run_id="parallel", sender="primary", recipient="echo",
-                    intent="research", payload={"_task_title": f"任务 {i}", "_task_objective": f"问题 {i}"}, context=context)) for i in range(4)]
+        context = AgentContext(
+            run_id="parallel",
+            workspace_id=1,
+            project_id=1,
+            user_id=1,
+            model_router=AgentModelRouter("test"),
+            web_search=None,
+            tools=None,
+            repository=None,
+            events=events,
+            max_evidence=12,
+        )
+        requests = [
+            asyncio.create_task(
+                bus.request(
+                    run_id="parallel",
+                    sender="primary",
+                    recipient="echo",
+                    intent="research",
+                    payload={
+                        "_task_title": f"任务 {i}",
+                        "_task_objective": f"问题 {i}",
+                    },
+                    context=context,
+                )
+            )
+            for i in range(4)
+        ]
         try:
             await asyncio.wait_for(three_started.wait(), 2)
             assert not any(request.done() for request in requests)
-            assert len([event for event in events.history("parallel") if event.event_type == "agent.started"]) == 3
+            assert (
+                len(
+                    [
+                        event
+                        for event in events.history("parallel")
+                        if event.event_type == "agent.started"
+                    ]
+                )
+                == 3
+            )
             gate.set()
             await asyncio.wait_for(asyncio.gather(*requests), 2)
             assert peak == 3
-            finished = [event.payload["task"] for event in events.history("parallel") if event.event_type == "agent.completed"]
+            finished = [
+                event.payload["task"]
+                for event in events.history("parallel")
+                if event.event_type == "agent.completed"
+            ]
             assert len({task["id"] for task in finished}) == 4
-            assert all(task["parentId"] == "parallel:primary" and task["durationMs"] >= 0 for task in finished)
-            assert {task["objective"] for task in finished} == {f"问题 {i}" for i in range(4)}
+            assert all(
+                task["parentId"] == "parallel:primary" and task["durationMs"] >= 0
+                for task in finished
+            )
+            assert {task["objective"] for task in finished} == {
+                f"问题 {i}" for i in range(4)
+            }
             assert all(task["summary"] == "未找到可引用证据" for task in finished)
         finally:
             gate.set()
             await bus.close()
+
     asyncio.run(scenario())
 
 
@@ -106,16 +154,35 @@ def test_failed_result_is_not_reported_as_completed():
     async def scenario():
         class FailedAgent(EchoAgent):
             async def handle(self, message, context):
-                return AgentResult(agent=self.name, status="FAILED", error="retrieval unavailable")
+                return AgentResult(
+                    agent=self.name, status="FAILED", error="retrieval unavailable"
+                )
+
         events = EventBus()
         registry = AgentRegistry()
         registry.register(FailedAgent())
         bus = AgentMessageBus(registry)
-        context = AgentContext(run_id="failed", workspace_id=1, project_id=1, user_id=1,
-                               model_router=AgentModelRouter("test"), web_search=None, tools=None,
-                               repository=None, events=events, max_evidence=12)
+        context = AgentContext(
+            run_id="failed",
+            workspace_id=1,
+            project_id=1,
+            user_id=1,
+            model_router=AgentModelRouter("test"),
+            web_search=None,
+            tools=None,
+            repository=None,
+            events=events,
+            max_evidence=12,
+        )
         try:
-            result = await bus.request(run_id="failed", sender="primary", recipient="echo", intent="test", payload={}, context=context)
+            result = await bus.request(
+                run_id="failed",
+                sender="primary",
+                recipient="echo",
+                intent="test",
+                payload={},
+                context=context,
+            )
             assert result.status == "FAILED"
             history = events.history("failed")
             assert history[-1].event_type == "agent.failed"
@@ -123,6 +190,7 @@ def test_failed_result_is_not_reported_as_completed():
             assert not any(event.event_type == "agent.completed" for event in history)
         finally:
             await bus.close()
+
     asyncio.run(scenario())
 
 
@@ -132,9 +200,11 @@ def test_cancellation_stops_active_work_and_does_not_start_queued_work():
         invoked = 0
         stopped = 0
         ready = asyncio.Event()
+
         class Repository:
             def is_cancelled(self, run_id):
                 return cancelled
+
         class BlockingAgent(EchoAgent):
             async def handle(self, message, context):
                 nonlocal invoked, stopped
@@ -145,23 +215,49 @@ def test_cancellation_stops_active_work_and_does_not_start_queued_work():
                     await asyncio.Event().wait()
                 finally:
                     stopped += 1
+
         events = EventBus()
         registry = AgentRegistry()
         registry.register(BlockingAgent())
         bus = AgentMessageBus(registry)
-        context = AgentContext(run_id="cancelled", workspace_id=1, project_id=1, user_id=1,
-                               model_router=AgentModelRouter("test"), web_search=None, tools=None,
-                               repository=Repository(), events=events, max_evidence=12)
-        requests = [asyncio.create_task(bus.request(run_id="cancelled", sender="primary", recipient="echo",
-                    intent="test", payload={}, context=context)) for _ in range(4)]
+        context = AgentContext(
+            run_id="cancelled",
+            workspace_id=1,
+            project_id=1,
+            user_id=1,
+            model_router=AgentModelRouter("test"),
+            web_search=None,
+            tools=None,
+            repository=Repository(),
+            events=events,
+            max_evidence=12,
+        )
+        requests = [
+            asyncio.create_task(
+                bus.request(
+                    run_id="cancelled",
+                    sender="primary",
+                    recipient="echo",
+                    intent="test",
+                    payload={},
+                    context=context,
+                )
+            )
+            for _ in range(4)
+        ]
         try:
             await asyncio.wait_for(ready.wait(), 2)
             cancelled = True
             await asyncio.wait_for(asyncio.gather(*requests), 2)
             assert invoked == stopped == 3
-            terminal = [event.payload["task"] for event in events.history("cancelled") if event.event_type == "agent.cancelled"]
+            terminal = [
+                event.payload["task"]
+                for event in events.history("cancelled")
+                if event.event_type == "agent.cancelled"
+            ]
             assert len(terminal) == 4
         finally:
             cancelled = True
             await bus.close()
+
     asyncio.run(scenario())

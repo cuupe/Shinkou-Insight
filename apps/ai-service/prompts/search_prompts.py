@@ -555,16 +555,18 @@ def knowledge_answer_prompt(
     safe_language = sanitize_untrusted_text(answer_language or "zh-CN", max_chars=80)
     from core.clock import with_time_context
 
-    return with_time_context([
-        {
-            "role": "system",
-            "content": KNOWLEDGE_ANSWER_SYSTEM.format(language=safe_language),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"Question:\n{safe_query}\n\nEvidence:\n"
-                f"{render_evidence_context(evidence, max_chars=18_000)}"
-            ),
-        },
-    ])
+    return with_time_context(
+        [
+            {
+                "role": "system",
+                "content": KNOWLEDGE_ANSWER_SYSTEM.format(language=safe_language),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Question:\n{safe_query}\n\nEvidence:\n"
+                    f"{render_evidence_context(evidence, max_chars=18_000)}"
+                ),
+            },
+        ]
+    )

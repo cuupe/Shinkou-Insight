@@ -3,17 +3,34 @@ from datetime import date, datetime
 
 import pytest
 
-from agents.runtime import AgentRuntime, _aggregate_usage, _compact_chat_context, _materialize_multimodal_messages, _normalize_model_markdown, _select_chat_context
+from agents.runtime import (
+    AgentRuntime,
+    _aggregate_usage,
+    _compact_chat_context,
+    _materialize_multimodal_messages,
+    _normalize_model_markdown,
+    _select_chat_context,
+)
 
 from core.events import EventBus
 from core.repository import InMemoryRunRepository
 from graph.store import GraphEdge, GraphNode
 from models.llm import MockModelGateway, ModelStreamChunk
-from models.schemas import ChatMessage, Evidence, ExecuteRunRequest, ModelChatResult, ModelGenerationConfig, ReflectionResult, ResearchConfig, TokenUsage
+from models.schemas import (
+    ChatMessage,
+    Evidence,
+    ExecuteRunRequest,
+    ModelChatResult,
+    ModelGenerationConfig,
+    ReflectionResult,
+    ResearchConfig,
+    TokenUsage,
+)
 from rag.retriever import InMemoryRetriever
 from tools.knowledge import KnowledgeTool
 from tools.registry import ToolRegistry, ToolSpec
 from tools.web import DisabledWebSearch
+
 
 @pytest.fixture
 def temporal_clock(monkeypatch):
@@ -24,9 +41,11 @@ def temporal_clock(monkeypatch):
     monkeypatch.setattr(clock, "timezone_name", lambda: "Asia/Shanghai")
     return now
 
+
 class EmptyRetriever:
     async def retrieve(self, **kwargs):
         return []
+
 
 class RecordingWebSearch:
     def __init__(self):
@@ -35,6 +54,7 @@ class RecordingWebSearch:
     async def search(self, query, top_k=5):
         self.queries.append(query)
         return []
+
 
 class RecordingGraphStore:
     def __init__(self):
@@ -72,6 +92,7 @@ class RecordingGraphStore:
         ]
         return nodes[:limit], edges[:limit]
 
+
 def test_model_markdown_unescapes_provider_artifacts_but_keeps_code():
     value = "\\#标题\\n\\n\\*\\*重点\\*\\*\\n\\n```text\n\\#keep\n```"
 
@@ -80,14 +101,26 @@ def test_model_markdown_unescapes_provider_artifacts_but_keeps_code():
     assert normalized.startswith("# 标题\n\n**重点**")
     assert "```text\n\\#keep\n```" in normalized
 
+
 def test_aggregate_usage_keeps_the_model_used_by_the_run():
-    result = _aggregate_usage([
-        ModelChatResult(content="draft", model="model-a", usage=TokenUsage(input_tokens=4, output_tokens=2, total_tokens=6)),
-        ModelChatResult(content="review", model="model-a", usage=TokenUsage(input_tokens=3, output_tokens=1, total_tokens=4)),
-    ])
+    result = _aggregate_usage(
+        [
+            ModelChatResult(
+                content="draft",
+                model="model-a",
+                usage=TokenUsage(input_tokens=4, output_tokens=2, total_tokens=6),
+            ),
+            ModelChatResult(
+                content="review",
+                model="model-a",
+                usage=TokenUsage(input_tokens=3, output_tokens=1, total_tokens=4),
+            ),
+        ]
+    )
 
     assert result.total_tokens == 10
     assert result.model == "model-a"
+
 
 def test_context_is_not_discarded_by_keyword_mismatch():
     selected, stats = _select_chat_context(
@@ -99,7 +132,12 @@ def test_context_is_not_discarded_by_keyword_mismatch():
     )
 
     assert len(selected) == 2
-    assert stats == {"providedContextMessages": 2, "selectedContextMessages": 2, "filteredMessages": 0}
+    assert stats == {
+        "providedContextMessages": 2,
+        "selectedContextMessages": 2,
+        "filteredMessages": 0,
+    }
+
 
 def test_related_chat_context_keeps_the_user_assistant_pair():
     selected, stats = _select_chat_context(
@@ -112,6 +150,7 @@ def test_related_chat_context_keeps_the_user_assistant_pair():
 
     assert len(selected) == 2
     assert stats["filteredMessages"] == 0
+
 
 def test_follow_up_chat_context_keeps_recent_messages():
     selected, stats = _select_chat_context(
@@ -132,6 +171,7 @@ def test_follow_up_chat_context_keeps_recent_messages():
     ]
     assert stats["filteredMessages"] == 0
 
+
 def test_implicit_answer_format_follow_up_keeps_recent_messages():
     selected, stats = _select_chat_context(
         [
@@ -146,6 +186,7 @@ def test_implicit_answer_format_follow_up_keeps_recent_messages():
         {"role": "assistant", "content": "上一次已经计算出结果，请按步骤说明。"},
     ]
     assert stats["filteredMessages"] == 0
+
 
 def test_image_follow_up_keeps_attachment_context_and_short_instruction():
     selected, stats = _select_chat_context(
@@ -170,10 +211,12 @@ def test_image_follow_up_keeps_attachment_context_and_short_instruction():
     assert selected[0]["attachments"][0]["storageKey"] == "workspaces/1/problem.png"
     assert stats["selectedContextMessages"] == 2
 
+
 class MemoryAttachmentStorage:
     async def get(self, key):
         assert key == "workspaces/1/problem.png"
         return b"image-bytes"
+
 
 @pytest.mark.asyncio
 async def test_historical_image_is_materialized_as_a_provider_image_block():
@@ -195,7 +238,10 @@ async def test_historical_image_is_materialized_as_a_provider_image_block():
 
     assert messages[0]["content"][0] == {"type": "text", "text": "请继续分析这张图"}
     assert messages[0]["content"][1]["type"] == "image_url"
-    assert messages[0]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert messages[0]["content"][1]["image_url"]["url"].startswith(
+        "data:image/png;base64,"
+    )
+
 
 class ReflectingModelGateway:
     model = "reflection-test"
@@ -208,7 +254,11 @@ class ReflectingModelGateway:
     async def chat(self, messages, *, temperature=None):
         self.chat_calls += 1
         self.chat_messages.append(messages)
-        content = "初稿：缺少依据" if self.chat_calls == 1 else "修正版：已补充依据并保留不确定性"
+        content = (
+            "初稿：缺少依据"
+            if self.chat_calls == 1
+            else "修正版：已补充依据并保留不确定性"
+        )
         return ModelChatResult(
             content=content,
             model=self.model,
@@ -231,25 +281,56 @@ class ReflectingModelGateway:
             ),
         )
 
+
 class StreamingModelGateway(MockModelGateway):
     async def stream(self, messages, *, temperature=None):
         yield ModelStreamChunk(delta="第一段")
-        yield ModelStreamChunk(delta="第二段", usage=TokenUsage(input_tokens=3, output_tokens=4, total_tokens=7))
+        yield ModelStreamChunk(
+            delta="第二段",
+            usage=TokenUsage(input_tokens=3, output_tokens=4, total_tokens=7),
+        )
+
 
 class StreamingWithoutUsageGateway(MockModelGateway):
     async def stream(self, messages, *, temperature=None):
         yield ModelStreamChunk(delta="没有 usage 的回答")
 
+
 def make_runtime(model=None, web_search=None, graph_store=None):
     events = EventBus()
     repository = InMemoryRunRepository(events)
-    retriever = InMemoryRetriever([
-        {"workspace_id": 1, "project_id": 1, "chunk_id": 1002, "asset_id": 77, "asset_name": "architecture.md", "content": "Production database uses PostgreSQL with a connection pool.", "page_number": 3, "source_name": "architecture.md"},
-    ])
+    retriever = InMemoryRetriever(
+        [
+            {
+                "workspace_id": 1,
+                "project_id": 1,
+                "chunk_id": 1002,
+                "asset_id": 77,
+                "asset_name": "architecture.md",
+                "content": "Production database uses PostgreSQL with a connection pool.",
+                "page_number": 3,
+                "source_name": "architecture.md",
+            },
+        ]
+    )
     knowledge = KnowledgeTool(retriever)
     tools = ToolRegistry()
-    tools.register(ToolSpec(name="search_knowledge", permission="READ"), knowledge.search_knowledge)
-    return AgentRuntime(model=model or MockModelGateway(), retriever=retriever, web_search=web_search or DisabledWebSearch(), tools=tools, repository=repository, events=events, graph_store=graph_store), repository
+    tools.register(
+        ToolSpec(name="search_knowledge", permission="READ"), knowledge.search_knowledge
+    )
+    return (
+        AgentRuntime(
+            model=model or MockModelGateway(),
+            retriever=retriever,
+            web_search=web_search or DisabledWebSearch(),
+            tools=tools,
+            repository=repository,
+            events=events,
+            graph_store=graph_store,
+        ),
+        repository,
+    )
+
 
 @pytest.mark.asyncio
 async def test_duplicate_execution_for_same_run_is_ignored():
@@ -268,8 +349,11 @@ async def test_duplicate_execution_for_same_run_is_ignored():
     assert sum(event.event_type == "run.started" for event in events) == 1
     assert sum(event.event_type == "run.completed" for event in events) == 1
 
+
 def test_context_compression_uses_model_token_budget():
-    messages = [{"role": "user", "content": "项目资料说明 PostgreSQL 的连接池配置。" * 30}]
+    messages = [
+        {"role": "user", "content": "项目资料说明 PostgreSQL 的连接池配置。" * 30}
+    ]
     compacted, metrics = _compact_chat_context(
         messages,
         max_chars=100_000,
@@ -282,6 +366,7 @@ def test_context_compression_uses_model_token_budget():
     assert metrics["contextTokenBudget"] == 80
     assert metrics["finalTokenEstimate"] <= 80
     assert compacted
+
 
 def test_context_compression_stays_within_budget_with_older_turns():
     messages = [
@@ -298,10 +383,17 @@ def test_context_compression_stays_within_budget_with_older_turns():
     assert metrics["finalTokenEstimate"] <= 120
     assert len(compacted) <= 8
 
+
 @pytest.mark.asyncio
 async def test_cancelled_run_does_not_continue():
     runtime, repository = make_runtime()
-    request = ExecuteRunRequest(run_id="run-2", workspace_id=1, project_id=1, goal="PostgreSQL", config=ResearchConfig())
+    request = ExecuteRunRequest(
+        run_id="run-2",
+        workspace_id=1,
+        project_id=1,
+        goal="PostgreSQL",
+        config=ResearchConfig(),
+    )
     await runtime.accept(request)
     assert await runtime.cancel("run-2")
     await runtime.execute(request)

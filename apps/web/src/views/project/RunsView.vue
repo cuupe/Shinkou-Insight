@@ -60,15 +60,17 @@ function queueStatusLabel(status: QueueStatus) {
 function mapRun(run: ResearchRun): QueueTask {
   const rawStatus = String(run.status || "PENDING").toLowerCase();
   const status: QueueStatus =
-    rawStatus === "paused" ? "paused" : rawStatus === "running" || rawStatus === "cancelling"
-      ? "running"
-      : rawStatus === "completed"
-        ? "completed"
-        : rawStatus === "failed"
-          ? "failed"
-          : rawStatus === "cancelled"
-            ? "cancelled"
-            : "queued";
+    rawStatus === "paused"
+      ? "paused"
+      : rawStatus === "running" || rawStatus === "cancelling"
+        ? "running"
+        : rawStatus === "completed"
+          ? "completed"
+          : rawStatus === "failed"
+            ? "failed"
+            : rawStatus === "cancelled"
+              ? "cancelled"
+              : "queued";
   const rawPriority = String(run.priority || "NORMAL").toUpperCase();
   return {
     id: String(run.id),
@@ -87,7 +89,10 @@ function mapRun(run: ResearchRun): QueueTask {
     projectName: selectedProject.value?.name || "—",
     time: formatDateTime(run.updatedAt || run.createdAt, "—"),
     duration: run.durationSeconds == null ? "—" : `${run.durationSeconds} 秒`,
-    tokens: run.tokenCount == null ? "暂未返回" : Number(run.tokenCount).toLocaleString(),
+    tokens:
+      run.tokenCount == null
+        ? "暂未返回"
+        : Number(run.tokenCount).toLocaleString(),
   };
 }
 
@@ -101,13 +106,25 @@ async function loadRuns() {
     syncError.value = "";
   } catch (error) {
     if (version !== loadVersion) return;
-    syncError.value = error instanceof Error ? error.message : "分析记录同步失败";
+    syncError.value =
+      error instanceof Error ? error.message : "分析记录同步失败";
   } finally {
-    if (version === loadVersion) pollTimer = setTimeout(() => void loadRuns(), 4000);
+    if (version === loadVersion)
+      pollTimer = setTimeout(() => void loadRuns(), 4000);
   }
 }
-watch(() => [workspaceId.value, projectId.value], () => { tasks.value = []; void loadRuns(); }, { immediate: true });
-onUnmounted(() => { loadVersion++; clearTimeout(pollTimer); });
+watch(
+  () => [workspaceId.value, projectId.value],
+  () => {
+    tasks.value = [];
+    void loadRuns();
+  },
+  { immediate: true },
+);
+onUnmounted(() => {
+  loadVersion++;
+  clearTimeout(pollTimer);
+});
 
 const filteredTasks = computed(() => {
   const query = searchQuery.value.trim().toLowerCase();
@@ -221,7 +238,9 @@ async function cancelQueuedTask(task: QueueTask) {
         <h2>执行任务</h2>
         <p>每个任务都会沿着规划、检索、核对和回答阶段推进。</p>
       </div>
-      <span class="queue-live-note" :title="syncError"><i />{{ syncError ? '同步中断，正在重试' : '每 4 秒同步状态' }}</span>
+      <span class="queue-live-note" :title="syncError"
+        ><i />{{ syncError ? "同步中断，正在重试" : "每 4 秒同步状态" }}</span
+      >
     </div>
     <div class="queue-toolbar">
       <label class="queue-search"

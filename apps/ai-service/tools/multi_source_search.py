@@ -86,7 +86,9 @@ class MultiSourceWebSearch:
     async def search(self, query: str, top_k: int = 5) -> list[Evidence]:
         return await self.search_semantic(query, top_k)
 
-    async def search_semantic(self, query: str, top_k: int = 5, *, sources: list[str] | None = None) -> list[Evidence]:
+    async def search_semantic(
+        self, query: str, top_k: int = 5, *, sources: list[str] | None = None
+    ) -> list[Evidence]:
         limit = max(1, min(int(top_k), 20))
         handlers: dict[str, SourceSearch] = {
             "general": self.general.search,
@@ -97,7 +99,9 @@ class MultiSourceWebSearch:
             "stackoverflow": self._search_stackoverflow,
         }
         selected = [
-            source for source in dict.fromkeys(sources or ["general"]) if source in handlers and (source in self.sources or "all" in self.sources)
+            source
+            for source in dict.fromkeys(sources or ["general"])
+            if source in handlers and (source in self.sources or "all" in self.sources)
         ]
         results = await asyncio.gather(
             *(

@@ -301,7 +301,9 @@ class MilvusKnowledgeStore:
         # hybrid result (especially when a project contains a large novel or
         # other unrelated corpus). Use the reliable keyword path for both
         # HYBRID and explicit VECTOR requests until a semantic model is set.
-        if mode in {"HYBRID", "VECTOR"} and embedding_model.startswith("hash-embedding"):
+        if mode in {"HYBRID", "VECTOR"} and embedding_model.startswith(
+            "hash-embedding"
+        ):
             effective_mode = "KEYWORD"
 
         async def vector_recall() -> tuple[list[dict[str, Any]], list[tuple]]:
@@ -320,15 +322,23 @@ class MilvusKnowledgeStore:
                 self.retrieval_timeout_seconds,
             )
             rows = await self._fetch_rows_by_ids(
-                pool, workspace_id, project_id,
-                [int(hit["id"]) for hit in hits if hit.get("id") is not None], asset_ids,
+                pool,
+                workspace_id,
+                project_id,
+                [int(hit["id"]) for hit in hits if hit.get("id") is not None],
+                asset_ids,
             )
             return hits, rows
 
         async def keyword_recall() -> list[tuple]:
             return await self._fetch_keyword_rows(
-                pool, workspace_id, project_id, question, asset_ids,
-                candidate_limit, query_variants=query_variants,
+                pool,
+                workspace_id,
+                project_id,
+                question,
+                asset_ids,
+                candidate_limit,
+                query_variants=query_variants,
             )
 
         vector_hits: list[dict[str, Any]] = []
@@ -344,12 +354,17 @@ class MilvusKnowledgeStore:
                 return_exceptions=True,
             )
             failures: list[Exception] = []
-            for name, result in (("vector", vector_result), ("keyword", keyword_result)):
+            for name, result in (
+                ("vector", vector_result),
+                ("keyword", keyword_result),
+            ):
                 if isinstance(result, BaseException):
                     if not isinstance(result, Exception):
                         raise result
                     failures.append(result)
-                    logger.warning("hybrid %s recall failed: %s", name, type(result).__name__)
+                    logger.warning(
+                        "hybrid %s recall failed: %s", name, type(result).__name__
+                    )
             if not isinstance(vector_result, BaseException):
                 vector_hits, vector_rows = vector_result
             if not isinstance(keyword_result, BaseException):
@@ -363,25 +378,35 @@ class MilvusKnowledgeStore:
                 mode,
                 embedding_model or "unknown",
             )
-            keyword_rows = await asyncio.wait_for(keyword_recall(), self.retrieval_timeout_seconds)
+            keyword_rows = await asyncio.wait_for(
+                keyword_recall(), self.retrieval_timeout_seconds
+            )
         elif effective_mode == "VECTOR":
             vector_hits, vector_rows = await asyncio.wait_for(
-                vector_recall(), self.retrieval_timeout_seconds,
+                vector_recall(),
+                self.retrieval_timeout_seconds,
             )
         elif effective_mode == "KEYWORD":
-            keyword_rows = await asyncio.wait_for(keyword_recall(), self.retrieval_timeout_seconds)
+            keyword_rows = await asyncio.wait_for(
+                keyword_recall(), self.retrieval_timeout_seconds
+            )
 
         file_names = explicit_file_names(question)
         if file_names:
             # An explicit file name is a source constraint. Do not let a
             # semantically similar chunk from another asset outrank it.
-            vector_rows = [row for row in vector_rows if asset_name_matches(row[2], file_names)]
-            keyword_rows = [row for row in keyword_rows if asset_name_matches(row[2], file_names)]
+            vector_rows = [
+                row for row in vector_rows if asset_name_matches(row[2], file_names)
+            ]
+            keyword_rows = [
+                row for row in keyword_rows if asset_name_matches(row[2], file_names)
+            ]
             matching_chunk_ids = {int(row[0]) for row in [*vector_rows, *keyword_rows]}
             if not matching_chunk_ids:
                 return []
             vector_hits = [
-                hit for hit in vector_hits
+                hit
+                for hit in vector_hits
                 if hit.get("id") is not None and int(hit["id"]) in matching_chunk_ids
             ]
 
@@ -477,7 +502,9 @@ class MilvusKnowledgeStore:
             selected_assets = list(dict.fromkeys(item.asset_id for item in primary))
             try:
                 context_rows = await asyncio.wait_for(
-                    self._fetch_short_document_rows(pool, workspace_id, project_id, selected_assets),
+                    self._fetch_short_document_rows(
+                        pool, workspace_id, project_id, selected_assets
+                    ),
                     self.retrieval_timeout_seconds,
                 )
             except Exception as exc:
@@ -486,8 +513,14 @@ class MilvusKnowledgeStore:
             if context_rows:
                 selected = list(primary)
                 seen = {item.chunk_id for item in selected}
-                groups = [[row for row in context_rows if row[1] == asset and row[0] not in seen]
-                          for asset in selected_assets]
+                groups = [
+                    [
+                        row
+                        for row in context_rows
+                        if row[1] == asset and row[0] not in seen
+                    ]
+                    for asset in selected_assets
+                ]
                 # Longer body sections precede title-only sections, but each
                 # primary document gets a turn before another context section.
                 for group in groups:
@@ -499,12 +532,22 @@ class MilvusKnowledgeStore:
                         row = group.pop(0)
                         if row[0] in seen:
                             continue
-                        center = next(item for item in primary if item.asset_id == row[1])
-                        selected.append(RetrievalItem(
-                            id=f"E{len(selected)+1}", chunk_id=row[0], asset_id=row[1],
-                            asset_name=row[2], source_name=row[2], page_number=row[3],
-                            section_title=row[4], content=row[5], score=(center.score or 0) * 0.5,
-                        ))
+                        center = next(
+                            item for item in primary if item.asset_id == row[1]
+                        )
+                        selected.append(
+                            RetrievalItem(
+                                id=f"E{len(selected)+1}",
+                                chunk_id=row[0],
+                                asset_id=row[1],
+                                asset_name=row[2],
+                                source_name=row[2],
+                                page_number=row[3],
+                                section_title=row[4],
+                                content=row[5],
+                                score=(center.score or 0) * 0.5,
+                            )
+                        )
                         seen.add(row[0])
                 selected.extend(item for item in result if item.chunk_id not in seen)
                 result = selected
@@ -539,8 +582,9 @@ class MilvusKnowledgeStore:
             for hit in (response[0] if response else [])
         ]
 
-    async def _fetch_short_document_rows(self, pool: Any, workspace_id: int, project_id: int,
-                                         asset_ids: list[int]) -> list[tuple]:
+    async def _fetch_short_document_rows(
+        self, pool: Any, workspace_id: int, project_id: int, asset_ids: list[int]
+    ) -> list[tuple]:
         if not asset_ids:
             return []
         sql = """
@@ -604,5 +648,11 @@ class MilvusKnowledgeStore:
         query_variants: list[str] | None = None,
     ) -> list[tuple]:
         return await fetch_keyword_rows(
-            pool, workspace_id, project_id, question, asset_ids, limit, query_variants,
+            pool,
+            workspace_id,
+            project_id,
+            question,
+            asset_ids,
+            limit,
+            query_variants,
         )

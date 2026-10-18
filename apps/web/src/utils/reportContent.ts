@@ -21,10 +21,19 @@ export function reportTextFields(report: Record<string, unknown>) {
   // The stored Markdown is independent of the short summary. Preserve it
   // exactly so metadata edits cannot silently rebuild or truncate the body.
   const body = [report.content, report.markdownContent]
-    .map(text).find(value => value.trim());
+    .map(text)
+    .find((value) => value.trim());
   return {
     ...fields,
-    content: body ?? [...new Set(Object.values(fields).map(value => value.trim()).filter(Boolean))].join("\n\n"),
+    content:
+      body ??
+      [
+        ...new Set(
+          Object.values(fields)
+            .map((value) => value.trim())
+            .filter(Boolean),
+        ),
+      ].join("\n\n"),
   };
 }
 

@@ -26,25 +26,29 @@ test("timeout and network interruptions offer actionable recovery", () => {
 });
 
 test("semantic research nodes show their actual active stages", () => {
-  assert.equal(researchStageIndex({status:"RUNNING",currentNode:"DECISION"}),1);
-  assert.equal(researchStageIndex({status:"RUNNING",currentNode:"SYNTHESIS"}),2);
-  assert.equal(researchStageIndex({status:"RUNNING",currentNode:"REFLECTION"}),3);
+  assert.equal(researchStageIndex({ status: "RUNNING", currentNode: "DECISION" }), 1);
+  assert.equal(researchStageIndex({ status: "RUNNING", currentNode: "SYNTHESIS" }), 2);
+  assert.equal(researchStageIndex({ status: "RUNNING", currentNode: "REFLECTION" }), 3);
 });
 
 test("report headings and export keep content without duplicate gaps or empty sections", () => {
-  const run = {status:"COMPLETED",report:{title:"试点评估",executive_summary:"成本已核实，周期待补充",sections:[
-    {heading:"分析结果",content:"成本139000元。\n\n- 核实实际周期"},
-  ],recommendations:[],limitations:["核实实际周期"]}};
-  assert.equal(researchSections(run)[0].title,"分析结果");
-  assert.deepEqual(researchVisibleList(run,"limitations"),[]);
-  assert.equal(researchMarkdown(run).split("核实实际周期").length-1,1);
-  assert.doesNotMatch(researchMarkdown(run),/## 建议|## 限制与待确认事项/);
-  assert.equal(researchSections({report:{sections:[{content:"结果"}]}})[0].title,"分析结果");
+  const run = {
+    status: "COMPLETED", report: {
+      title: "试点评估", executive_summary: "成本已核实，周期待补充", sections: [
+        { heading: "分析结果", content: "成本139000元。\n\n- 核实实际周期" },
+      ], recommendations: [], limitations: ["核实实际周期"]
+    }
+  };
+  assert.equal(researchSections(run)[0].title, "分析结果");
+  assert.deepEqual(researchVisibleList(run, "limitations"), []);
+  assert.equal(researchMarkdown(run).split("核实实际周期").length - 1, 1);
+  assert.doesNotMatch(researchMarkdown(run), /## 建议|## 限制与待确认事项/);
+  assert.equal(researchSections({ report: { sections: [{ content: "结果" }] } })[0].title, "分析结果");
 });
 
 test("partial and clarification outcomes do not imply completed acceptance", () => {
-  assert.equal(researchOutcome({report:{outcome:"PARTIAL"}}),"PARTIAL");
-  assert.equal(researchOutcome({report:{outcome:"NEEDS_INPUT"}}),"NEEDS_INPUT");
-  assert.equal(researchOutcome({reviewResult:{approved:false,issues:["缺少依据"]}}),"PARTIAL");
-  assert.equal(researchOutcome({report:{outcome:"COMPLETE"}}),"COMPLETE");
+  assert.equal(researchOutcome({ report: { outcome: "PARTIAL" } }), "PARTIAL");
+  assert.equal(researchOutcome({ report: { outcome: "NEEDS_INPUT" } }), "NEEDS_INPUT");
+  assert.equal(researchOutcome({ reviewResult: { approved: false, issues: ["缺少依据"] } }), "PARTIAL");
+  assert.equal(researchOutcome({ report: { outcome: "COMPLETE" } }), "COMPLETE");
 });

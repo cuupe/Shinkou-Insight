@@ -1,4 +1,5 @@
 """Output channel isolation and bounded generation, shared by provider streams."""
+
 from __future__ import annotations
 
 import re
@@ -41,8 +42,11 @@ class FinalChannelFilter:
     Preserve partial delimiters across chunks so no prefix leaks to the UI.
     Unlabelled prose cannot be reliably classified as private reasoning.
     """
+
     _tags = ("think", "thinking", "analysis", "reasoning", "scratchpad", "planner")
-    _tag = re.compile(r"</?(?:think|thinking|analysis|reasoning|scratchpad|planner)\s*>", re.I)
+    _tag = re.compile(
+        r"</?(?:think|thinking|analysis|reasoning|scratchpad|planner)\s*>", re.I
+    )
 
     def __init__(self):
         self.pending = ""
@@ -55,15 +59,23 @@ class FinalChannelFilter:
             match = self._tag.search(self.pending)
             if match:
                 if not self.depth:
-                    output.append(self.pending[:match.start()])
-                self.depth = max(0, self.depth - 1) if match[0].startswith("</") else self.depth + 1
-                self.pending = self.pending[match.end():]
+                    output.append(self.pending[: match.start()])
+                self.depth = (
+                    max(0, self.depth - 1)
+                    if match[0].startswith("</")
+                    else self.depth + 1
+                )
+                self.pending = self.pending[match.end() :]
                 continue
             keep = 0
             if not final:
                 for length in range(1, min(16, len(self.pending)) + 1):
                     suffix = self.pending[-length:].lower()
-                    if any(tag.startswith(suffix) for name in self._tags for tag in (f"<{name}>", f"</{name}>")):
+                    if any(
+                        tag.startswith(suffix)
+                        for name in self._tags
+                        for tag in (f"<{name}>", f"</{name}>")
+                    ):
                         keep = length
             visible = self.pending[:-keep] if keep else self.pending
             if not self.depth:

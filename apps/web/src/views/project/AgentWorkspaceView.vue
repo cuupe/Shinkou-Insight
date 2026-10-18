@@ -48,7 +48,11 @@ import {
 import PageHeader from "@/components/common/PageHeader.vue";
 import ProjectWorkflow from "@/components/project/ProjectWorkflow.vue";
 import AgentMessageProgress from "@/components/project/AgentMessageProgress.vue";
-import { conversationStatusLabel, elapsedMs, visibleAnswerContent } from "@/utils/agentProgress";
+import {
+  conversationStatusLabel,
+  elapsedMs,
+  visibleAnswerContent,
+} from "@/utils/agentProgress";
 import { agentApi } from "@/api/agent";
 import { getApiErrorMessage } from "@/api/core";
 import { assetsApi } from "@/api/assets";
@@ -190,13 +194,17 @@ function handleWebSearchToggle(event: Event) {
 }
 
 // Capability permission only. Semantic decisions in the service choose actual calls.
-const requestUsesWebSearch = computed(() => webSearchReady.value && allowWeb.value);
+const requestUsesWebSearch = computed(
+  () => webSearchReady.value && allowWeb.value,
+);
 
 const agentConfig = computed(() => ({
   modelName: activeModel.value?.name || "项目默认模型",
   allowWebSearch: requestUsesWebSearch.value,
   reflectionEnabled: reflectionEnabled.value,
-  decisionReasoningEffort: generation.thinkingEnabled ? generation.reasoningEffort : ("none" as const),
+  decisionReasoningEffort: generation.thinkingEnabled
+    ? generation.reasoningEffort
+    : ("none" as const),
   strategy: generation.strategy,
   multiAgentMode: multiAgentMode.value,
   maxResearchRounds: 3,
@@ -218,9 +226,11 @@ const completedEvents = computed(
   () => events.value.filter((event) => event.status === "completed").length,
 );
 const progress = computed(() =>
-  activeThread.value.status === "completed" ? 100 : events.value.length
-    ? Math.round((completedEvents.value / events.value.length) * 100)
-    : 0,
+  activeThread.value.status === "completed"
+    ? 100
+    : events.value.length
+      ? Math.round((completedEvents.value / events.value.length) * 100)
+      : 0,
 );
 const currentEvent = computed(() => {
   for (let index = events.value.length - 1; index >= 0; index -= 1) {
@@ -1865,7 +1875,10 @@ onUnmounted(() => {
                   />
                 </div>
                 <div
-                  v-if="visibleAnswerContent(message) && message.status !== 'streaming'"
+                  v-if="
+                    visibleAnswerContent(message) &&
+                    message.status !== 'streaming'
+                  "
                   class="message-copy-actions"
                 >
                   <button
@@ -2554,7 +2567,9 @@ onUnmounted(() => {
           </select>
         </label>
       </div>
-      <p class="config-description">模型决策理由始终显示。开启额外推理会增加等待时间和 token 用量。</p>
+      <p class="config-description">
+        模型决策理由始终显示。开启额外推理会增加等待时间和 token 用量。
+      </p>
       <DialogFooter>
         <button
           class="button button-primary"

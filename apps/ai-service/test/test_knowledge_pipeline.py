@@ -13,14 +13,36 @@ async def test_document_parse_chunk_embed_and_graph_pipeline():
     embedding = HashEmbeddingProvider(dimension=64)
     store = InMemoryKnowledgeStore(embedding)
     graph = MemoryGraphStore()
-    indexer = KnowledgeIndexer(DocumentParser(), DocumentChunker(chunk_size=40, chunk_overlap=8), embedding, store, graph, GraphExtractor())
-    result = await indexer.index_bytes(data="# Architecture\nKafka and PostgreSQL are used by the service.".encode(), file_name="architecture.md", mime_type="text/markdown", workspace_id=7, project_id=8, asset_id=9)
+    indexer = KnowledgeIndexer(
+        DocumentParser(),
+        DocumentChunker(chunk_size=40, chunk_overlap=8),
+        embedding,
+        store,
+        graph,
+        GraphExtractor(),
+    )
+    result = await indexer.index_bytes(
+        data="# Architecture\nKafka and PostgreSQL are used by the service.".encode(),
+        file_name="architecture.md",
+        mime_type="text/markdown",
+        workspace_id=7,
+        project_id=8,
+        asset_id=9,
+    )
     assert result["chunk_count"] >= 1
     assert result["embedding_dimension"] == 64
     assert result["graph_entities"] >= 2
-    items = await store.retrieve(workspace_id=7, project_id=8, question="Kafka PostgreSQL", top_k=3, retrieval_mode="HYBRID")
+    items = await store.retrieve(
+        workspace_id=7,
+        project_id=8,
+        question="Kafka PostgreSQL",
+        top_k=3,
+        retrieval_mode="HYBRID",
+    )
     assert items and items[0].asset_id == 9
-    nodes, edges = await graph.search(workspace_id=7, project_id=8, query="Kafka", limit=5)
+    nodes, edges = await graph.search(
+        workspace_id=7, project_id=8, query="Kafka", limit=5
+    )
     assert nodes and any(node.name == "Kafka" for node in nodes)
 
 
@@ -31,11 +53,15 @@ async def test_file_parser_rejects_unsupported_type():
 
 
 def test_chunker_keeps_markdown_section_title_with_each_section():
-    document = DocumentParser().parse_bytes(
-        b"# Overview\nFirst paragraph.\n\n## Details\nSecond paragraph.",
-        file_name="notes.md",
-        mime_type="text/markdown",
-    ).documents[0]
+    document = (
+        DocumentParser()
+        .parse_bytes(
+            b"# Overview\nFirst paragraph.\n\n## Details\nSecond paragraph.",
+            file_name="notes.md",
+            mime_type="text/markdown",
+        )
+        .documents[0]
+    )
 
     chunks = DocumentChunker(chunk_size=200, chunk_overlap=20).split([document])
 
@@ -64,7 +90,9 @@ def test_docx_parser_extracts_tables_and_keeps_document_metadata():
 
 
 def test_media_parser_degrades_with_explicit_tool_warning():
-    parsed = DocumentParser().parse_bytes(b"not-an-image", file_name="diagram.png", mime_type="image/png")
+    parsed = DocumentParser().parse_bytes(
+        b"not-an-image", file_name="diagram.png", mime_type="image/png"
+    )
 
     assert parsed.metadata["kind"] == "image"
     assert parsed.documents
@@ -83,7 +111,12 @@ async def test_indexer_applies_project_chunking_config():
         workspace_id=1,
         project_id=2,
         asset_id=3,
-        chunking={"strategy": "fixed", "chunk_size": 40, "chunk_overlap": 0, "preserve_sections": False},
+        chunking={
+            "strategy": "fixed",
+            "chunk_size": 40,
+            "chunk_overlap": 0,
+            "preserve_sections": False,
+        },
     )
 
     assert result["chunk_count"] > 1

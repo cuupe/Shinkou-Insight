@@ -14,14 +14,20 @@ from tools.source_content import hydrate_web_evidence
 def _pdf_bytes() -> bytes:
     writer = PdfWriter()
     page = writer.add_blank_page(width=612, height=792)
-    font = DictionaryObject({
-        NameObject("/Type"): NameObject("/Font"),
-        NameObject("/Subtype"): NameObject("/Type1"),
-        NameObject("/BaseFont"): NameObject("/Helvetica"),
-    })
-    page[NameObject("/Resources")] = DictionaryObject({
-        NameObject("/Font"): DictionaryObject({NameObject("/F1"): writer._add_object(font)})
-    })
+    font = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+    page[NameObject("/Resources")] = DictionaryObject(
+        {
+            NameObject("/Font"): DictionaryObject(
+                {NameObject("/F1"): writer._add_object(font)}
+            )
+        }
+    )
     stream = DecodedStreamObject()
     stream.set_data(
         b"BT /F1 12 Tf 72 720 Td (3D Gaussian Splatting method enables real-time rendering of novel views and dynamic scene reconstruction for computer graphics research.) Tj ET"
@@ -59,7 +65,9 @@ async def test_hydrate_web_evidence_uses_article_body_not_search_description():
         content_kind="search_snippet",
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        results = await hydrate_web_evidence(client, [candidate], "3D Gaussian Splatting real-time rendering")
+        results = await hydrate_web_evidence(
+            client, [candidate], "3D Gaussian Splatting real-time rendering"
+        )
 
     assert len(results) == 1
     assert results[0].content_kind == "fulltext"
@@ -119,7 +127,9 @@ async def test_hydrate_web_evidence_extracts_actual_pdf_page_text():
         content_kind="search_snippet",
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        results = await hydrate_web_evidence(client, [candidate], "3D Gaussian Splatting rendering")
+        results = await hydrate_web_evidence(
+            client, [candidate], "3D Gaussian Splatting rendering"
+        )
 
     assert len(results) == 1
     assert results[0].content_kind == "fulltext"

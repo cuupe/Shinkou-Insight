@@ -20,14 +20,20 @@ async def test_async_tool_has_handle_lifecycle_and_redacted_result():
     registry = ToolRegistry(event_sink=sink)
     registry.register(ToolSpec(name="demo", permission="READ"), handler)
 
-    accepted = await registry.submit_async("demo", run_id="run-1", input_data={"value": 3, "api_key": "secret"})
+    accepted = await registry.submit_async(
+        "demo", run_id="run-1", input_data={"value": 3, "api_key": "secret"}
+    )
     assert accepted["status"] == "QUEUED"
     result = await registry.wait_task(accepted["callId"])
 
     assert result["status"] == "SUCCEEDED"
     assert result["result"]["value"] == 3
     assert result["result"]["apiKey"] == "secret"
-    assert [event[1] for event in events] == ["tool.queued", "tool.started", "tool.completed"]
+    assert [event[1] for event in events] == [
+        "tool.queued",
+        "tool.started",
+        "tool.completed",
+    ]
     assert registry.history("run-1")[0]["input_data"]["api_key"] == "[REDACTED]"
 
 
@@ -38,13 +44,21 @@ async def test_async_tool_timeout_and_cancel_are_terminal():
         return "done"
 
     registry = ToolRegistry()
-    registry.register(ToolSpec(name="slow", permission="READ", timeout_seconds=0.02), sleepy)
-    timed_out = await registry.submit_async("slow", run_id="timeout", input_data={"seconds": 0.2})
+    registry.register(
+        ToolSpec(name="slow", permission="READ", timeout_seconds=0.02), sleepy
+    )
+    timed_out = await registry.submit_async(
+        "slow", run_id="timeout", input_data={"seconds": 0.2}
+    )
     timeout_result = await registry.wait_task(timed_out["callId"])
     assert timeout_result["status"] == "TIMEOUT"
 
-    registry.register(ToolSpec(name="cancel", permission="READ", timeout_seconds=2), sleepy)
-    cancelled = await registry.submit_async("cancel", run_id="cancel", input_data={"seconds": 2})
+    registry.register(
+        ToolSpec(name="cancel", permission="READ", timeout_seconds=2), sleepy
+    )
+    cancelled = await registry.submit_async(
+        "cancel", run_id="cancel", input_data={"seconds": 2}
+    )
     await asyncio.sleep(0)
     cancel_result = await registry.cancel_task(cancelled["callId"])
     assert cancel_result["status"] == "CANCELLED"
@@ -74,8 +88,18 @@ async def test_tool_chain_passes_explicit_outputs_and_runs_branches():
     accepted = await registry.submit_chain(
         [
             ToolChainStep(id="source", tool="source", input_data={"value": 2}),
-            ToolChainStep(id="left", tool="branch", input_data={"value": {"$from": "source.value"}}, depends_on=("source",)),
-            ToolChainStep(id="right", tool="branch", input_data={"value": {"$from": "source.value"}}, depends_on=("source",)),
+            ToolChainStep(
+                id="left",
+                tool="branch",
+                input_data={"value": {"$from": "source.value"}},
+                depends_on=("source",),
+            ),
+            ToolChainStep(
+                id="right",
+                tool="branch",
+                input_data={"value": {"$from": "source.value"}},
+                depends_on=("source",),
+            ),
             ToolChainStep(
                 id="combine",
                 tool="combine",
@@ -100,10 +124,19 @@ async def test_write_tool_requires_explicit_allow_and_confirmation():
     async def write(**_):
         return "written"
 
-    registry.register(ToolSpec(name="write", permission="WRITE", requires_confirmation=True), write)
+    registry.register(
+        ToolSpec(name="write", permission="WRITE", requires_confirmation=True), write
+    )
     with pytest.raises(ToolCallError):
-        await registry.execute("write", run_id="write-1", input_data={}, allow_writes=True)
-    assert await registry.execute("write", run_id="write-1", input_data={}, allow_writes=True, confirmed=True) == "written"
+        await registry.execute(
+            "write", run_id="write-1", input_data={}, allow_writes=True
+        )
+    assert (
+        await registry.execute(
+            "write", run_id="write-1", input_data={}, allow_writes=True, confirmed=True
+        )
+        == "written"
+    )
 
 
 @pytest.mark.asyncio
@@ -122,7 +155,9 @@ async def test_custom_python_module_is_discovered_and_registered(tmp_path):
     assert report.modules == ["weather.py"]
     assert report.tools == ["custom.echo"]
     assert registry.describe()[0]["source"] == "custom"
-    assert await registry.execute("custom.echo", run_id="custom-1", input_data={"value": "ok"}) == {"value": "ok"}
+    assert await registry.execute(
+        "custom.echo", run_id="custom-1", input_data={"value": "ok"}
+    ) == {"value": "ok"}
 
 
 def test_custom_module_register_hook_is_scoped_as_custom(tmp_path):

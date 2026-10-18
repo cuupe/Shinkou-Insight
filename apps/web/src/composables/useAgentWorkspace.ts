@@ -219,8 +219,14 @@ function createHttpTransport(): AgentTransport {
         source: eventSource,
         parse: agentApi.parseEvent,
         afterId: context.resume?.afterEventId,
-        snapshot: afterId => agentApi.runSnapshot(context.workspaceId, context.projectId, accepted.runId, afterId),
-        onEvent: event => {
+        snapshot: (afterId) =>
+          agentApi.runSnapshot(
+            context.workspaceId,
+            context.projectId,
+            accepted.runId,
+            afterId,
+          ),
+        onEvent: (event) => {
           callbacks.onProgress?.(event);
           handleStreamEvent(event, callbacks);
         },

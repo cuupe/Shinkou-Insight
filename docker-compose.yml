@@ -1,12 +1,79 @@
 name: shinkou-insight
 
 services:
+  web:
+    image: shinkou-insight/web:${IMAGE_TAG:-local}
+    build:
+      context: ./apps/web
+      args:
+        BASE_IMAGE_REGISTRY: ${BASE_IMAGE_REGISTRY:-docker.io}
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - shinkou-infra
+
+  backend:
+    image: shinkou-insight/backend:${IMAGE_TAG:-local}
+    build:
+      context: ./apps/backend
+      args:
+        BASE_IMAGE_REGISTRY: ${BASE_IMAGE_REGISTRY:-docker.io}
+        MAVEN_MIRROR_URL: ${MAVEN_MIRROR_URL:-https://repo.maven.apache.org/maven2}
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      SHINKOU_ENVIRONMENT: ${SHINKOU_ENVIRONMENT:-development}
+      SHINKOU_COOKIE_SECURE: ${SHINKOU_COOKIE_SECURE:-false}
+      SHINKOU_ALLOWED_ORIGINS: ${SHINKOU_ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:${WEB_PORT:-80},http://127.0.0.1:${WEB_PORT:-80}}
+      SHINKOU_ENCRYPTION_KEY: ${SHINKOU_ENCRYPTION_KEY:-}
+      SHINKOU_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shinkou_insight}
+      SHINKOU_DB_USERNAME: ${POSTGRES_USER:-postgres}
+      SHINKOU_DB_PASSWORD: ${POSTGRES_PASSWORD:-shinkou_dev_password}
+      SHINKOU_DB_POOL_MAX: ${SHINKOU_DB_POOL_MAX:-20}
+      SHINKOU_DB_POOL_MIN: ${SHINKOU_DB_POOL_MIN:-5}
+      SHINKOU_REDIS_HOST: redis
+      SHINKOU_REDIS_PORT: 6379
+      SHINKOU_REDIS_PASSWORD: ${REDIS_PASSWORD:-shinkou_redis_password}
+      SHINKOU_MINIO_ENDPOINT: http://minio:9000
+      SHINKOU_MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-shinkou_minio}
+      SHINKOU_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-shinkou_minio_password}
+      SHINKOU_MINIO_BUCKET: ${MINIO_BUCKET:-shinkou-files}
+      SHINKOU_NEO4J_URI: bolt://neo4j:7687
+      SHINKOU_NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
+      SHINKOU_NEO4J_PASSWORD: ${NEO4J_PASSWORD:-shinkou_graph_password}
+      SHINKOU_AI_SERVICE_URL: http://ai-service:8000
+      SHINKOU_AI_INTERNAL_API_KEY: ${INTERNAL_API_KEY:-local-dev-key}
+      SHINKOU_AI_CALLBACK_BASE_URL: http://backend:8080
+      SHINKOU_AI_INDEXING_TIMEOUT_SECONDS: ${SHINKOU_AI_INDEXING_TIMEOUT_SECONDS:-600}
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      ai-service:
+        condition: service_healthy
+    networks:
+      - shinkou-infra
+
   ai-service:
+    image: shinkou-insight/ai-service:${IMAGE_TAG:-local}
     build:
       context: ./apps/ai-service
+      args:
+        BASE_IMAGE_REGISTRY: ${BASE_IMAGE_REGISTRY:-docker.io}
+        DEBIAN_MIRROR_URL: ${DEBIAN_MIRROR_URL:-http://deb.debian.org}
     restart: unless-stopped
     environment:
       APP_NAME: ai-service
+      TZ: ${TZ:-Asia/Shanghai}
       APP_ENV: ${APP_ENV:-local}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-local-dev-key}
       LLM_MODE: ${LLM_MODE:-http}
@@ -15,6 +82,24 @@ services:
       RETRIEVER_MODE: ${RETRIEVER_MODE:-milvus}
       DB_POOL_MIN_SIZE: ${DB_POOL_MIN_SIZE:-2}
       DB_POOL_MAX_SIZE: ${DB_POOL_MAX_SIZE:-10}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-shinkou_redis_password}
+      TASK_QUEUE_ENABLED: ${TASK_QUEUE_ENABLED:-true}
+      TASK_QUEUE_STREAM: ${TASK_QUEUE_STREAM:-shinkou:research-tasks}
+      TASK_QUEUE_GROUP: ${TASK_QUEUE_GROUP:-ai-service}
+      TASK_QUEUE_MAX_RETRIES: ${TASK_QUEUE_MAX_RETRIES:-3}
+      TASK_QUEUE_CONCURRENCY: ${TASK_QUEUE_CONCURRENCY:-8}
+      CACHE_ENABLED: ${CACHE_ENABLED:-true}
+      CACHE_BACKEND: ${CACHE_BACKEND:-auto}
+      CACHE_NAMESPACE: ${CACHE_NAMESPACE:-shinkou-insight}
+      CACHE_RETRIEVAL_TTL_SECONDS: ${CACHE_RETRIEVAL_TTL_SECONDS:-300}
+      CACHE_WEB_TTL_SECONDS: ${CACHE_WEB_TTL_SECONDS:-900}
+      CACHE_EMBEDDING_TTL_SECONDS: ${CACHE_EMBEDDING_TTL_SECONDS:-86400}
+      CACHE_MAX_ENTRIES: ${CACHE_MAX_ENTRIES:-2000}
+      AGENT_TRANSPORT: ${AGENT_TRANSPORT:-in-process}
+      AGENT_WORKER_URLS: ${AGENT_WORKER_URLS:-}
+      AGENT_WORKER_ROLE: ${AGENT_WORKER_ROLE:-}
       MILVUS_URI: ${AI_MILVUS_URI:-http://milvus:19530}
       MILVUS_TOKEN: ${MILVUS_TOKEN:-}
       MILVUS_DB_NAME: ${MILVUS_DB_NAME:-default}
@@ -29,9 +114,10 @@ services:
       WEB_SEARCH_LANGUAGE: ${WEB_SEARCH_LANGUAGE:-zh-hans}
       WEB_SEARCH_SOURCES: ${WEB_SEARCH_SOURCES:-general,arxiv,openalex,crossref,github,stackoverflow}
       STORAGE_MODE: ${STORAGE_MODE:-minio}
+      STORAGE_ROOT: /app/data
       MINIO_ENDPOINT: ${AI_MINIO_ENDPOINT:-http://minio:9000}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-shinkou_minio}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-shinkou_minio_password}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-shinkou_minio}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-shinkou_minio_password}
       MINIO_BUCKET: ${MINIO_BUCKET:-shinkou-files}
       GRAPH_MODE: ${GRAPH_MODE:-memory}
       GRAPH_EXTRACTION_MODE: ${GRAPH_EXTRACTION_MODE:-heuristic}
@@ -61,7 +147,9 @@ services:
     ports:
       - "${AI_SERVICE_PORT:-8000}:8000"
     volumes:
-      - ./apps/ai-service/custom_tools:/app/custom_tools
+      - ./apps/ai-service/custom_tools:/app/apps/ai-service/custom_tools:ro
+      - ai-data:/app/data
+      - ai-model-cache:/app/model-cache
     depends_on:
       postgres:
         condition: service_healthy
@@ -69,15 +157,26 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     networks:
       - shinkou-infra
 
   mcp-server:
     profiles: ["mcp"]
+    image: shinkou-insight/ai-service:${IMAGE_TAG:-local}
     build:
       context: ./apps/ai-service
+      args:
+        BASE_IMAGE_REGISTRY: ${BASE_IMAGE_REGISTRY:-docker.io}
+        DEBIAN_MIRROR_URL: ${DEBIAN_MIRROR_URL:-http://deb.debian.org}
     restart: unless-stopped
     command: ["python", "mcp_server.py"]
+    # The image's HTTP healthcheck targets uvicorn, not the optional MCP process.
+    healthcheck:
+      disable: true
     environment:
       APP_ENV: ${APP_ENV:-local}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-local-dev-key}
@@ -286,6 +385,10 @@ services:
       - shinkou-infra
 
 volumes:
+  ai-data:
+    name: shinkou-ai-data
+  ai-model-cache:
+    name: shinkou-ai-model-cache
   postgres-data:
     name: shinkou-postgres-data
   redis-data:

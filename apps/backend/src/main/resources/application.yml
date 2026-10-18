@@ -39,7 +39,7 @@ spring:
   # Redis
   data:
     redis:
-      host: localhost
+      host: ${SHINKOU_REDIS_HOST:localhost}
       port: ${SHINKOU_REDIS_PORT:16379}
       database: 0
       password: ${SHINKOU_REDIS_PASSWORD:shinkou_redis_password}

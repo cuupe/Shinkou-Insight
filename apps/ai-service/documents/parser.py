@@ -234,17 +234,12 @@ class DocumentParser:
         def visit(node: Any) -> None:
             if node.tag == hyperlink_tag:
                 relationship_id = node.get(qn("r:id"))
-                label = "".join(
-                    child.text or ""
-                    for child in node.iter(qn("w:t"))
-                )
+                label = "".join(child.text or "" for child in node.iter(qn("w:t")))
                 target = ""
                 if relationship_id:
                     relationship = paragraph.part.rels.get(relationship_id)
                     target = str(getattr(relationship, "target_ref", "") or "")
-                parts.append(
-                    f"[{label}]({target})" if label and target else label
-                )
+                parts.append(f"[{label}]({target})" if label and target else label)
                 return
             if node.tag == qn("w:t"):
                 parts.append(node.text or "")
@@ -265,7 +260,9 @@ class DocumentParser:
         style_match = re.search(r"(?:bullet|number)\s+(\d+)", style_name.casefold())
         if style_match:
             return max(0, int(style_match.group(1)) - 1)
-        ilvl = paragraph._p.find("./" + qn("w:pPr") + "/" + qn("w:numPr") + "/" + qn("w:ilvl"))
+        ilvl = paragraph._p.find(
+            "./" + qn("w:pPr") + "/" + qn("w:numPr") + "/" + qn("w:ilvl")
+        )
         try:
             return max(0, int(ilvl.get(qn("w:val")))) if ilvl is not None else 0
         except (TypeError, ValueError):
@@ -450,9 +447,7 @@ class DocumentParser:
 
     def _image(self, data: bytes, file_name: str) -> ParsedDocument:
         if Path(file_name).suffix.casefold() == ".svg":
-            text = self._clean(
-                re.sub(r"<[^>]+>", " ", self._decode_text(data))
-            )
+            text = self._clean(re.sub(r"<[^>]+>", " ", self._decode_text(data)))
             return ParsedDocument(
                 [self._document(text, file_name=file_name)],
                 tools=["svg-text"],

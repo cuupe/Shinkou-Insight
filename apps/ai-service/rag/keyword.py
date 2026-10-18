@@ -50,10 +50,13 @@ async def fetch_keyword_rows(
     query_variants: list[str] | None = None,
 ) -> list[tuple]:
     variants = query_variants or build_query_variants(question)
-    terms = list(dict.fromkeys(
-        term for variant in [question, *variants]
-        for term in extract_search_terms(variant)
-    ))[:128]
+    terms = list(
+        dict.fromkeys(
+            term
+            for variant in [question, *variants]
+            for term in extract_search_terms(variant)
+        )
+    )[:128]
     file_names = explicit_file_names(question)
     if not terms and not file_names:
         return []
@@ -72,11 +75,14 @@ async def fetch_keyword_rows(
     if asset_ids:
         scope += " AND c.asset_id = ANY(%s)"
         params.append(asset_ids)
-    sql = """
+    sql = (
+        """
         WITH scoped AS MATERIALIZED (
             SELECT c.id,c.asset_id,a.name,c.page_number,c.section_title,c.content,
                    c.chunk_index,c.search_vector,lower(c.content) AS normalized_content
-    """ + scope + """
+    """
+        + scope
+        + """
         ), scored AS MATERIALIZED (
             SELECT c.*,
                    GREATEST(
@@ -96,6 +102,7 @@ async def fetch_keyword_rows(
         FROM scored WHERE score > 0
         ORDER BY score DESC, chunk_index, id LIMIT %s
     """
+    )
     # Longer entity n-grams contribute more than incidental two-character
     # matches. Rank BEFORE LIMIT so a relevant older chunk cannot be crowded
     # out by documents that merely share one common term.

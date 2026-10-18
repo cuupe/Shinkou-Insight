@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+.idea
+.vscode
+node_modules
+dist
+dist-ssr
+coverage
+test
+*.log
+*.log.*
+*.tsbuildinfo
+tmp-*.png
+*tmp*.png
