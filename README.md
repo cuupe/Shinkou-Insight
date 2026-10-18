@@ -467,6 +467,8 @@ Docker 镜像内会安装 Tesseract、Poppler、LibreOffice 和 FFmpeg；本地 
 
 ## 文档导航
 
+- [面试技术文档（私有仓库）](https://github.com/cuupe/Shinkou-Insight-Interview-Docs)：全栈技术拆解、120 个问答与官方资料，需仓库访问权限。
+
 - [产品定位](docs/product-positioning.md)：目标用户、核心模块、反虚构制度和产品边界。
 - [系统架构](docs/docs/02-architecture.md)：服务拆分、数据流和部署关系。
 - [数据库设计](docs/docs/04-database.md)：业务表、运行数据、证据、报告和评估模型。
@@ -484,4 +486,5 @@ Docker 镜像内会安装 Tesseract、Poppler、LibreOffice 和 FFmpeg；本地 
 ## 项目边界
 
 Shinkou Insight 的目标是提高调研、分析和审查效率，而不是让模型绕过责任链直接做决定。生产部署前应至少替换默认密码和内部 Key，设置稳定的加密密钥，限制 CORS 来源，启用 HTTPS Cookie，并为 LLM、Embedding、搜索服务和对象存储配置独立凭据。
+
 
