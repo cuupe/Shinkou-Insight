@@ -20,7 +20,6 @@ public class UserLoginByPassword implements UserDetails {
     private String password;
     private Integer status;
 
-
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return List.of();

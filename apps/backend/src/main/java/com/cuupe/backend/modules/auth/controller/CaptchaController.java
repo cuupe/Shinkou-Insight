@@ -19,15 +19,14 @@ public class CaptchaController {
     private final AuthRateLimiter rateLimiter;
 
     @GetMapping("/captcha")
-    public Result<CaptchaResponse> captcha(HttpServletRequest request, HttpServletResponse response){
+    public Result<CaptchaResponse> captcha(HttpServletRequest request, HttpServletResponse response) {
         rateLimiter.checkCaptcha(request);
         response.setHeader("Cache-Control", "no-store");
         var res = captchaService.generate();
 
         return Result.success("SUCCESS", "图片验证码获取成功", new CaptchaResponse(
                 res.captchaId(),
-                res.imgUrl()
-        ));
+                res.imgUrl()));
     }
 
 }

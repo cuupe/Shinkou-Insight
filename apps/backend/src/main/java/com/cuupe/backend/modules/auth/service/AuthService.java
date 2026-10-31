@@ -18,34 +18,34 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 
 public interface AuthService {
-    LoginResponse loginByPassword(
-            @Valid LoginRequestByPassword request,
-            HttpServletRequest httpRequest,
-            HttpServletResponse httpResponse);
+        LoginResponse loginByPassword(
+                        @Valid LoginRequestByPassword request,
+                        HttpServletRequest httpRequest,
+                        HttpServletResponse httpResponse);
 
-    LoginResponse loginBySms(
-            @Valid LoginRequestBySms request,
-            HttpServletRequest httpRequest,
-            HttpServletResponse httpResponse);
+        LoginResponse loginBySms(
+                        @Valid LoginRequestBySms request,
+                        HttpServletRequest httpRequest,
+                        HttpServletResponse httpResponse);
 
-    SmsResponse generateSms(
-            String phoneNumber,
-            SmsPurpose purpose,
-            String captchaId,
-            String captcha,
-            HttpServletRequest httpRequest);
+        SmsResponse generateSms(
+                        String phoneNumber,
+                        SmsPurpose purpose,
+                        String captchaId,
+                        String captcha,
+                        HttpServletRequest httpRequest);
 
-    RegisterResponse register(@Valid RegisterRequest request, HttpServletRequest httpRequest);
+        RegisterResponse register(@Valid RegisterRequest request, HttpServletRequest httpRequest);
 
-    void resetPassword(@Valid ResetPasswordRequest request, HttpServletRequest httpRequest);
+        void resetPassword(@Valid ResetPasswordRequest request, HttpServletRequest httpRequest);
 
-    User currentUser(Long userId);
+        User currentUser(Long userId);
 
-    User updateProfile(Long userId, UpdateProfileRequest request);
+        User updateProfile(Long userId, UpdateProfileRequest request);
 
-    User updatePreferences(Long userId, UpdatePreferencesRequest request);
+        User updatePreferences(Long userId, UpdatePreferencesRequest request);
 
-    void updatePassword(Long userId, UpdatePasswordRequest request, HttpServletRequest httpRequest);
+        void updatePassword(Long userId, UpdatePasswordRequest request, HttpServletRequest httpRequest);
 
-    User updatePhoneNumber(Long userId, UpdatePhoneRequest request, HttpServletRequest httpRequest);
+        User updatePhoneNumber(Long userId, UpdatePhoneRequest request, HttpServletRequest httpRequest);
 }

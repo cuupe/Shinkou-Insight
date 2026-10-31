@@ -65,8 +65,7 @@ public class AuthServiceImpl implements AuthService {
                     "return 1 " +
                     "end " +
                     "return 0",
-            Long.class
-    );
+            Long.class);
 
     private final CaptchaService captchaService;
     private final SecurityContextRepository securityContextRepository;
@@ -105,7 +104,8 @@ public class AuthServiceImpl implements AuthService {
 
         UserLoginByPassword user = userMapper.findAuthUserByPhoneNumber(phoneNumber);
         String hashForTimingCheck = user != null && user.isEnabled() && user.getPassword() != null
-                ? user.getPassword() : dummyPasswordHash;
+                ? user.getPassword()
+                : dummyPasswordHash;
         boolean passwordMatches = passwordEncoder.matches(request.password(), hashForTimingCheck);
         boolean credentialsValid = user != null && user.isEnabled()
                 && user.getPassword() != null && passwordMatches;
@@ -208,8 +208,7 @@ public class AuthServiceImpl implements AuthService {
                 phoneNumber,
                 passwordEncoder.encode(request.password()),
                 LocalDateTime.now(),
-                UserStatus.NORMAL_STATUS()
-        );
+                UserStatus.NORMAL_STATUS());
 
         UserLoginByPassword createdUser = userMapper.findAuthUserByPhoneNumber(phoneNumber);
         if (createdUser != null) {
@@ -217,8 +216,7 @@ public class AuthServiceImpl implements AuthService {
                     request.userName().trim() + " 的工作区",
                     null,
                     null,
-                    createdUser.getId()
-            );
+                    createdUser.getId());
             auditLogService.record(createdWorkspace.getId(), null, createdUser.getId(),
                     "WORKSPACE_CREATED", "WORKSPACE", createdWorkspace.getId(),
                     Map.of("reason", "REGISTRATION"));
@@ -299,7 +297,8 @@ public class AuthServiceImpl implements AuthService {
 
         userMapper.updatePassword(userId, passwordEncoder.encode(request.newPassword()));
         String currentSessionId = httpRequest.getSession(false) == null
-                ? null : httpRequest.getSession(false).getId();
+                ? null
+                : httpRequest.getSession(false).getId();
         sessionSecurityService.expireOtherSessions(user.getUsername(), currentSessionId);
         auditLogService.record(null, null, userId, "PASSWORD_UPDATED", "USER", userId);
     }
@@ -331,7 +330,8 @@ public class AuthServiceImpl implements AuthService {
             principal.setPhoneNumber(newPhoneNumber);
         }
         String currentSessionId = httpRequest.getSession(false) == null
-                ? null : httpRequest.getSession(false).getId();
+                ? null
+                : httpRequest.getSession(false).getId();
         sessionSecurityService.expireOtherSessions(user.getUsername(), currentSessionId);
         auditLogService.record(null, null, userId, "PHONE_UPDATED", "USER", userId);
         return currentUser(userId);
@@ -368,12 +368,12 @@ public class AuthServiceImpl implements AuthService {
                         "method", method,
                         "reason", reason,
                         "phone", maskPhone(phoneNumber),
-                        "ip", rateLimiter.clientAddress(request)
-                ));
+                        "ip", rateLimiter.clientAddress(request)));
     }
 
     private String maskPhone(String phoneNumber) {
-        if (phoneNumber == null || phoneNumber.length() < 7) return "***";
+        if (phoneNumber == null || phoneNumber.length() < 7)
+            return "***";
         return phoneNumber.substring(0, 3) + "****" + phoneNumber.substring(phoneNumber.length() - 4);
     }
 
@@ -387,8 +387,7 @@ public class AuthServiceImpl implements AuthService {
         Long verified = redisTemplate.execute(
                 VERIFY_AND_DELETE_SMS_SCRIPT,
                 Collections.singletonList(smsId),
-                expected
-        );
+                expected);
         return Long.valueOf(1L).equals(verified);
     }
 

@@ -46,8 +46,7 @@ public class AgentController {
             @PathVariable Long workspaceId,
             @PathVariable Long projectId,
             @RequestBody AgentMessageRequest request,
-            Authentication authentication
-    ) {
+            Authentication authentication) {
         Long userId = userId(authentication);
         AgentRunAccepted accepted = agentService.accept(workspaceId, projectId, userId, request);
         auditLogService.record(workspaceId, projectId, userId, "AGENT_RUN_CREATED", "AGENT_RUN", accepted.getRunId());
@@ -57,8 +56,7 @@ public class AgentController {
     @GetMapping("/threads")
     public Result<List<Map<String, Object>>> threads(
             @PathVariable Long projectId,
-            Authentication authentication
-    ) {
+            Authentication authentication) {
         return Result.success(agentService.history(projectId, userId(authentication)));
     }
 
@@ -67,8 +65,7 @@ public class AgentController {
             @PathVariable Long workspaceId,
             @PathVariable Long projectId,
             @PathVariable String threadId,
-            Authentication authentication
-    ) {
+            Authentication authentication) {
         Long userId = userId(authentication);
         agentService.deleteThread(workspaceId, projectId, userId, threadId);
         auditLogService.record(workspaceId, projectId, userId, "AGENT_THREAD_DELETED", "AGENT_THREAD", threadId);
@@ -82,8 +79,7 @@ public class AgentController {
             @PathVariable String runId,
             @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId,
             @RequestParam(value = "afterId", required = false) String afterId,
-            Authentication authentication
-    ) {
+            Authentication authentication) {
         return agentService.subscribe(workspaceId, projectId, userId(authentication), runId,
                 parseEventId(lastEventId == null || lastEventId.isBlank() ? afterId : lastEventId));
     }
@@ -93,7 +89,8 @@ public class AgentController {
             @PathVariable Long workspaceId, @PathVariable Long projectId, @PathVariable String runId,
             @RequestParam(value = "afterId", required = false) String afterId,
             Authentication authentication) {
-        return Result.success(agentService.snapshot(workspaceId, projectId, userId(authentication), runId, parseEventId(afterId)));
+        return Result.success(
+                agentService.snapshot(workspaceId, projectId, userId(authentication), runId, parseEventId(afterId)));
     }
 
     @PostMapping("/runs/{runId}/cancel")
@@ -101,8 +98,7 @@ public class AgentController {
             @PathVariable Long workspaceId,
             @PathVariable Long projectId,
             @PathVariable String runId,
-            Authentication authentication
-    ) {
+            Authentication authentication) {
         Long userId = userId(authentication);
         agentService.cancel(workspaceId, projectId, userId, runId);
         auditLogService.record(workspaceId, projectId, userId, "AGENT_RUN_CANCELLED", "AGENT_RUN", runId);
@@ -113,8 +109,7 @@ public class AgentController {
     public Result<List<AgentAttachmentResponse>> listAttachments(
             @PathVariable Long workspaceId,
             @PathVariable Long projectId,
-            Authentication authentication
-    ) {
+            Authentication authentication) {
         return Result.success(agentService.listAttachments(workspaceId, projectId, userId(authentication)));
     }
 
@@ -123,11 +118,11 @@ public class AgentController {
             @PathVariable Long workspaceId,
             @PathVariable Long projectId,
             @RequestPart("file") MultipartFile file,
-            Authentication authentication
-    ) throws Exception {
+            Authentication authentication) throws Exception {
         Long userId = userId(authentication);
         AgentAttachmentResponse response = agentService.uploadAttachment(workspaceId, projectId, userId, file);
-        auditLogService.record(workspaceId, projectId, userId, "AGENT_ATTACHMENT_UPLOADED", "AGENT_ATTACHMENT", null, Map.of("fileName", file.getOriginalFilename() == null ? "" : file.getOriginalFilename()));
+        auditLogService.record(workspaceId, projectId, userId, "AGENT_ATTACHMENT_UPLOADED", "AGENT_ATTACHMENT", null,
+                Map.of("fileName", file.getOriginalFilename() == null ? "" : file.getOriginalFilename()));
         return Result.success(response);
     }
 
@@ -136,9 +131,9 @@ public class AgentController {
             @PathVariable Long workspaceId,
             @PathVariable Long projectId,
             @PathVariable Long attachmentId,
-            Authentication authentication
-    ) {
-        AgentAttachment attachment = agentService.getAttachment(workspaceId, projectId, userId(authentication), attachmentId);
+            Authentication authentication) {
+        AgentAttachment attachment = agentService.getAttachment(workspaceId, projectId, userId(authentication),
+                attachmentId);
         MediaType mediaType;
         try {
             mediaType = MediaType.parseMediaType(attachment.getMimeType());
@@ -148,7 +143,9 @@ public class AgentController {
         try (InputStream input = agentService.openAttachment(attachment)) {
             return ResponseEntity.ok()
                     .contentType(mediaType)
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename*=UTF-8''" + java.net.URLEncoder.encode(attachment.getFileName(), StandardCharsets.UTF_8).replace("+", "%20"))
+                    .header(HttpHeaders.CONTENT_DISPOSITION,
+                            "inline; filename*=UTF-8''" + java.net.URLEncoder
+                                    .encode(attachment.getFileName(), StandardCharsets.UTF_8).replace("+", "%20"))
                     .body(input.readAllBytes());
         } catch (Exception exception) {
             throw new IllegalStateException("附件读取失败", exception);
@@ -160,15 +157,14 @@ public class AgentController {
             @PathVariable Long workspaceId,
             @PathVariable Long projectId,
             @PathVariable Long attachmentId,
-            Authentication authentication
-    ) throws IOException {
-        AgentAttachment attachment = agentService.getAttachment(workspaceId, projectId, userId(authentication), attachmentId);
+            Authentication authentication) throws IOException {
+        AgentAttachment attachment = agentService.getAttachment(workspaceId, projectId, userId(authentication),
+                attachmentId);
         try (InputStream input = agentService.openAttachment(attachment)) {
             return Result.success(aiIndexingClient.previewFile(
                     attachment.getFileName(),
                     attachment.getMimeType(),
-                    input.readAllBytes()
-            ));
+                    input.readAllBytes()));
         } catch (IOException exception) {
             throw exception;
         } catch (Exception exception) {
@@ -178,12 +174,14 @@ public class AgentController {
 
     private Long userId(Authentication authentication) {
         Object principal = authentication.getPrincipal();
-        if (principal instanceof UserLoginByPassword user && user.getId() != null) return user.getId();
+        if (principal instanceof UserLoginByPassword user && user.getId() != null)
+            return user.getId();
         throw new IllegalStateException("当前会话缺少用户信息");
     }
 
     private Long parseEventId(String value) {
-        if (value == null || value.isBlank()) return null;
+        if (value == null || value.isBlank())
+            return null;
         try {
             return Long.valueOf(value);
         } catch (NumberFormatException ignored) {

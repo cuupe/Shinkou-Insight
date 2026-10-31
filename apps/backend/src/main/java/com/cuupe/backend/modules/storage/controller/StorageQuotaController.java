@@ -25,8 +25,7 @@ public class StorageQuotaController {
     public Result<StorageQuotaResponse> quota(
             @PathVariable Long workspaceId,
             @PathVariable Long projectId,
-            Authentication authentication
-    ) {
+            Authentication authentication) {
         Long userId = userId(authentication);
         if (projectMapper.findAccessibleById(workspaceId, projectId, userId) == null) {
             throw new ApiException(HttpStatus.NOT_FOUND, "PROJECT_NOT_FOUND", "项目不存在或无权访问");
@@ -36,7 +35,8 @@ public class StorageQuotaController {
 
     private Long userId(Authentication authentication) {
         Object principal = authentication.getPrincipal();
-        if (principal instanceof UserLoginByPassword user && user.getId() != null) return user.getId();
+        if (principal instanceof UserLoginByPassword user && user.getId() != null)
+            return user.getId();
         throw new IllegalStateException("当前会话缺少用户信息");
     }
 }

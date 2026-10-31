@@ -16,8 +16,7 @@ public class NotificationService {
             String kind,
             String title,
             String body,
-            String routeName
-    ) {
+            String routeName) {
         mapper.insert(workspaceId, recipientUserId, projectId, kind, title, body, routeName);
     }
 }

@@ -19,8 +19,7 @@ public class NotificationController {
     @GetMapping
     public Result<List<Notification>> list(
             @PathVariable Long workspaceId,
-            Authentication auth
-    ) {
+            Authentication auth) {
         return Result.success(mapper.findByWorkspaceAndUser(workspaceId, userId(auth)));
     }
 
@@ -28,8 +27,7 @@ public class NotificationController {
     public Result<Void> markRead(
             @PathVariable Long workspaceId,
             @PathVariable Long id,
-            Authentication auth
-    ) {
+            Authentication auth) {
         mapper.markRead(id, workspaceId, userId(auth));
         return Result.success();
     }
@@ -37,15 +35,15 @@ public class NotificationController {
     @PatchMapping("/read-all")
     public Result<Void> markAllRead(
             @PathVariable Long workspaceId,
-            Authentication auth
-    ) {
+            Authentication auth) {
         mapper.markAllRead(workspaceId, userId(auth));
         return Result.success();
     }
 
     private Long userId(Authentication auth) {
         Object principal = auth.getPrincipal();
-        if (principal instanceof UserLoginByPassword user && user.getId() != null) return user.getId();
+        if (principal instanceof UserLoginByPassword user && user.getId() != null)
+            return user.getId();
         throw new IllegalStateException("当前会话缺少用户信息");
     }
 }

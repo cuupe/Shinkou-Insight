@@ -11,8 +11,7 @@ public class StorageConfig {
     public MinioClient minioClient(
             @Value("${shinkou.storage.minio.endpoint:http://localhost:9000}") String endpoint,
             @Value("${shinkou.storage.minio.access-key:shinkou_minio}") String accessKey,
-            @Value("${shinkou.storage.minio.secret-key:shinkou_minio_password}") String secretKey
-    ) {
+            @Value("${shinkou.storage.minio.secret-key:shinkou_minio_password}") String secretKey) {
         return MinioClient.builder().endpoint(endpoint).credentials(accessKey, secretKey).build();
     }
 }

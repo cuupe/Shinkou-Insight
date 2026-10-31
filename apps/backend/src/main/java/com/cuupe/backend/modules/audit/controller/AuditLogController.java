@@ -20,9 +20,11 @@ public class AuditLogController {
     private final AuditLogService auditLogService;
 
     @GetMapping
-    public Result<List<AuditLog>> list(@PathVariable Long workspaceId, @RequestParam(defaultValue = "50") int limit, Authentication auth) {
+    public Result<List<AuditLog>> list(@PathVariable Long workspaceId, @RequestParam(defaultValue = "50") int limit,
+            Authentication auth) {
         Long userId = ((UserLoginByPassword) auth.getPrincipal()).getId();
-        if (workspaceMapper.findAccessible(workspaceId, userId) == null) throw new ApiException(HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND", "工作区不存在或无权访问");
+        if (workspaceMapper.findAccessible(workspaceId, userId) == null)
+            throw new ApiException(HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND", "工作区不存在或无权访问");
         return Result.success(auditLogService.list(workspaceId, limit));
     }
 }

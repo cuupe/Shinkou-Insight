@@ -68,15 +68,18 @@ public class AgentService {
             throw new ApiException(HttpStatus.NOT_FOUND, "PROJECT_NOT_FOUND", "项目不存在或无权访问");
         }
         String content = clean(request.getContent());
-        if (content.isBlank()) throw ApiException.badRequest("VALIDATION_ERROR", "问题内容不能为空");
-        if (content.length() > 20000) throw ApiException.badRequest("CONTENT_TOO_LARGE", "问题内容不能超过 20000 个字符");
+        if (content.isBlank())
+            throw ApiException.badRequest("VALIDATION_ERROR", "问题内容不能为空");
+        if (content.length() > 20000)
+            throw ApiException.badRequest("CONTENT_TOO_LARGE", "问题内容不能超过 20000 个字符");
         validateGeneration(request);
 
         List<Map<String, Object>> attachments = request.getAttachments() == null ? List.of() : request.getAttachments();
         if (attachments.size() > MAX_ATTACHMENTS_PER_MESSAGE) {
             throw ApiException.badRequest("TOO_MANY_ATTACHMENTS", "一次最多上传 10 个附件");
         }
-        for (Map<String, Object> attachment : attachments) validateAttachmentReference(workspaceId, projectId, userId, attachment);
+        for (Map<String, Object> attachment : attachments)
+            validateAttachmentReference(workspaceId, projectId, userId, attachment);
 
         String threadKey = safeKey(request.getThreadId(), "thread-" + UUID.randomUUID());
         String messageKey = safeKey(request.getMessageId(), "message-" + UUID.randomUUID());
@@ -92,12 +95,14 @@ public class AgentService {
         } else {
             AgentMessage firstUserMessage = mapper.findFirstUserMessage(thread.getId(), projectId, userId);
             String title = firstUserMessage == null
-                    ? (thread.getTitle() == null || thread.getTitle().isBlank() ? summarizeThreadTitle(content) : thread.getTitle())
+                    ? (thread.getTitle() == null || thread.getTitle().isBlank() ? summarizeThreadTitle(content)
+                            : thread.getTitle())
                     : summarizeThreadTitle(firstUserMessage.getContent());
             mapper.touchThread(thread.getId(), title);
         }
 
-        AgentMessage userMessage = message(thread.getId(), messageKey + "-user", "USER", content, "COMPLETED", request.getAttachments());
+        AgentMessage userMessage = message(thread.getId(), messageKey + "-user", "USER", content, "COMPLETED",
+                request.getAttachments());
         AgentMessage assistantMessage = message(thread.getId(), messageKey, "ASSISTANT", "", "STREAMING", List.of());
         assistantMessage.setModelName(shortText(clean(request.getModelName()), 300));
         mapper.insertMessage(userMessage);
@@ -118,8 +123,8 @@ public class AgentService {
                 run.getRunKey(),
                 messageKey,
                 "RUNNING",
-                "/api/workspaces/" + workspaceId + "/projects/" + projectId + "/agent/runs/" + run.getRunKey() + "/events"
-        );
+                "/api/workspaces/" + workspaceId + "/projects/" + projectId + "/agent/runs/" + run.getRunKey()
+                        + "/events");
     }
 
     @SuppressWarnings("unchecked")
@@ -135,10 +140,12 @@ public class AgentService {
                 if (message.getModelName() != null && !message.getModelName().isBlank()) {
                     item.put("modelName", message.getModelName());
                 }
-                item.put("status", "STREAMING".equalsIgnoreCase(message.getStatus()) ? "streaming" : "FAILED".equalsIgnoreCase(message.getStatus()) ? "failed" : "completed");
+                item.put("status", "STREAMING".equalsIgnoreCase(message.getStatus()) ? "streaming"
+                        : "FAILED".equalsIgnoreCase(message.getStatus()) ? "failed" : "completed");
                 item.put("createdAt", message.getCreatedAt());
                 try {
-                    item.put("attachments", objectMapper.readValue(message.getAttachments() == null ? "[]" : message.getAttachments(), List.class));
+                    item.put("attachments", objectMapper
+                            .readValue(message.getAttachments() == null ? "[]" : message.getAttachments(), List.class));
                 } catch (Exception ignored) {
                     item.put("attachments", List.of());
                 }
@@ -154,13 +161,18 @@ public class AgentService {
             AgentRun latestRun = runs.isEmpty() ? null : runs.get(runs.size() - 1);
             for (AgentRun run : runs) {
                 String messageKey = findMessageKey(run.getAssistantMessageId());
-                if (messageKey == null) continue;
-                Map<String, Object> answer = messages.stream().filter(entry -> messageKey.equals(entry.get("id"))).findFirst().orElse(new LinkedHashMap<>());
+                if (messageKey == null)
+                    continue;
+                Map<String, Object> answer = messages.stream().filter(entry -> messageKey.equals(entry.get("id")))
+                        .findFirst().orElse(new LinkedHashMap<>());
                 answer.put("runId", run.getRunKey());
-                if (run.getStartedAt() != null) answer.put("runStartedAt", run.getStartedAt().toString());
+                if (run.getStartedAt() != null)
+                    answer.put("runStartedAt", run.getStartedAt().toString());
                 if (run.getFinishedAt() != null) {
                     answer.put("runFinishedAt", run.getFinishedAt().toString());
-                    if (run.getStartedAt() != null) answer.put("runDurationMs", Math.max(0L, Duration.between(run.getStartedAt(), run.getFinishedAt()).toMillis()));
+                    if (run.getStartedAt() != null)
+                        answer.put("runDurationMs",
+                                Math.max(0L, Duration.between(run.getStartedAt(), run.getFinishedAt()).toMillis()));
                 }
                 for (AgentRunEvent event : mapper.findEvents(run.getRunKey(), null)) {
                     try {
@@ -200,8 +212,10 @@ public class AgentService {
                         if (latest && "run.completed".equals(event.getEventType())) {
                             Object rawUsage = payload.get("usage");
                             Object rawContext = payload.get("contextCompression");
-                            if (rawUsage instanceof Map<?, ?> value) tokenUsage = normalizeTokenUsage(value);
-                            if (rawContext instanceof Map<?, ?> value) contextUsage = normalizeContextUsage(value);
+                            if (rawUsage instanceof Map<?, ?> value)
+                                tokenUsage = normalizeTokenUsage(value);
+                            if (rawContext instanceof Map<?, ?> value)
+                                contextUsage = normalizeContextUsage(value);
                         }
                     } catch (Exception ignored) {
                         // A malformed historical event must not hide the conversation itself.
@@ -217,8 +231,10 @@ public class AgentService {
                     putIfPresent(tokenUsage, "totalTokens", storedUsage.getTotalTokens());
                     putIfPresent(tokenUsage, "model", storedUsage.getModelName());
                     tokenUsage.put("available", true);
-                    if (contextUsage == null && ((storedUsage.getCompressedContextTokens() != null && storedUsage.getCompressedContextTokens() > 0)
-                            || (storedUsage.getContextMessageCount() != null && storedUsage.getContextMessageCount() > 0))) {
+                    if (contextUsage == null && ((storedUsage.getCompressedContextTokens() != null
+                            && storedUsage.getCompressedContextTokens() > 0)
+                            || (storedUsage.getContextMessageCount() != null
+                                    && storedUsage.getContextMessageCount() > 0))) {
                         contextUsage = new LinkedHashMap<>();
                         putIfPresent(contextUsage, "compressedContextTokens", storedUsage.getCompressedContextTokens());
                         putIfPresent(contextUsage, "finalMessageCount", storedUsage.getContextMessageCount());
@@ -233,7 +249,8 @@ public class AgentService {
             }
             String title = thread.getTitle();
             for (Map<String, Object> message : messages) {
-                if ("user".equals(message.get("role")) && !String.valueOf(message.getOrDefault("content", "")).isBlank()) {
+                if ("user".equals(message.get("role"))
+                        && !String.valueOf(message.getOrDefault("content", "")).isBlank()) {
                     title = summarizeThreadTitle(String.valueOf(message.get("content")));
                     break;
                 }
@@ -241,14 +258,18 @@ public class AgentService {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("id", thread.getThreadKey());
             item.put("title", title == null || title.isBlank() ? "新的问题整理" : title);
-            item.put("preview", messages.isEmpty() ? "等待输入第一个问题" : shortText(String.valueOf(messages.get(messages.size() - 1).get("content")), 120));
+            item.put("preview", messages.isEmpty() ? "等待输入第一个问题"
+                    : shortText(String.valueOf(messages.get(messages.size() - 1).get("content")), 120));
             item.put("updatedAt", thread.getUpdatedAt());
             item.put("messageCount", messages.size());
             item.put("messages", messages);
             item.put("events", new java.util.ArrayList<>(timeline.values()));
             item.put("eventHistory", eventHistory);
             item.put("citations", new java.util.ArrayList<>(citations.values()));
-            item.put("status", latestRun == null ? "idle" : "FAILED".equalsIgnoreCase(latestRun.getStatus()) ? "failed" : "RUNNING".equalsIgnoreCase(latestRun.getStatus()) ? "running" : "completed");
+            item.put("status",
+                    latestRun == null ? "idle"
+                            : "FAILED".equalsIgnoreCase(latestRun.getStatus()) ? "failed"
+                                    : "RUNNING".equalsIgnoreCase(latestRun.getStatus()) ? "running" : "completed");
             item.put("runId", latestRun == null ? null : latestRun.getRunKey());
             if (latestRun != null && latestRun.getStartedAt() != null) {
                 item.put("runStartedAt", latestRun.getStartedAt().toString());
@@ -256,19 +277,24 @@ public class AgentService {
             if (latestRun != null && latestRun.getFinishedAt() != null) {
                 item.put("runFinishedAt", latestRun.getFinishedAt().toString());
                 if (latestRun.getStartedAt() != null) {
-                    item.put("runDurationMs", Math.max(0L, Duration.between(latestRun.getStartedAt(), latestRun.getFinishedAt()).toMillis()));
+                    item.put("runDurationMs", Math.max(0L,
+                            Duration.between(latestRun.getStartedAt(), latestRun.getFinishedAt()).toMillis()));
                 }
             }
             if (latestRun != null) {
-                messages.stream().filter(message -> latestRun.getRunKey().equals(message.get("runId"))).findFirst().ifPresent(answer -> {
-                    for (String key : List.of("runStartedAt", "runFinishedAt", "runDurationMs", "lastEventId", "multiAgent")) {
-                        AgentProgress.copy(answer, item, key, key);
-                    }
-                    AgentProgress.copy(answer, item, "events", "events");
-                });
+                messages.stream().filter(message -> latestRun.getRunKey().equals(message.get("runId"))).findFirst()
+                        .ifPresent(answer -> {
+                            for (String key : List.of("runStartedAt", "runFinishedAt", "runDurationMs", "lastEventId",
+                                    "multiAgent")) {
+                                AgentProgress.copy(answer, item, key, key);
+                            }
+                            AgentProgress.copy(answer, item, "events", "events");
+                        });
             }
-            if (tokenUsage != null) item.put("tokenUsage", tokenUsage);
-            if (contextUsage != null) item.put("contextUsage", contextUsage);
+            if (tokenUsage != null)
+                item.put("tokenUsage", tokenUsage);
+            if (contextUsage != null)
+                item.put("contextUsage", contextUsage);
             result.add(item);
         }
         return result;
@@ -302,20 +328,23 @@ public class AgentService {
             throw new ApiException(HttpStatus.NOT_FOUND, "PROJECT_NOT_FOUND", "项目不存在或无权访问");
         }
         AgentRun run = mapper.findRun(runKey, projectId, userId);
-        if (run == null) throw new ApiException(HttpStatus.NOT_FOUND, "AGENT_RUN_NOT_FOUND", "Agent 运行不存在或无权访问");
+        if (run == null)
+            throw new ApiException(HttpStatus.NOT_FOUND, "AGENT_RUN_NOT_FOUND", "Agent 运行不存在或无权访问");
         List<Map<String, Object>> pendingEvents = new java.util.ArrayList<>();
         for (AgentRunEvent event : mapper.findEvents(runKey, afterId)) {
             try {
                 Map<String, Object> payload = objectMapper.readValue(event.getPayload(), Map.class);
                 payload.putIfAbsent("eventId", String.valueOf(event.getId()));
                 pendingEvents.add(payload);
-            } catch (Exception ignored) { /* Older malformed events cannot block a terminal snapshot. */ }
+            } catch (Exception ignored) {
+                /* Older malformed events cannot block a terminal snapshot. */ }
         }
         Map<String, Object> result = new LinkedHashMap<>();
         if (isTerminal(run.getStatus())) {
             Map<String, Object> progress = replayProgress(runKey);
             result.putAll(progress);
-            if (progress.get("executionError") != null) result.put("error", progress.get("executionError"));
+            if (progress.get("executionError") != null)
+                result.put("error", progress.get("executionError"));
             result.put("startedAt", progress.get("runStartedAt"));
             result.put("finishedAt", progress.get("runFinishedAt"));
             result.put("durationMs", progress.get("runDurationMs"));
@@ -333,10 +362,12 @@ public class AgentService {
 
     private SseEmitter subscribeLocked(Long workspaceId, Long projectId, Long userId, String runKey, Long afterId) {
         AgentRun run = mapper.findRun(runKey, projectId, userId);
-        if (run == null) throw new ApiException(HttpStatus.NOT_FOUND, "AGENT_RUN_NOT_FOUND", "Agent 运行不存在或无权访问");
+        if (run == null)
+            throw new ApiException(HttpStatus.NOT_FOUND, "AGENT_RUN_NOT_FOUND", "Agent 运行不存在或无权访问");
 
         SseEmitter emitter = new SseEmitter(0L);
-        CopyOnWriteArrayList<SseEmitter> runSubscribers = subscribers.computeIfAbsent(runKey, ignored -> new CopyOnWriteArrayList<>());
+        CopyOnWriteArrayList<SseEmitter> runSubscribers = subscribers.computeIfAbsent(runKey,
+                ignored -> new CopyOnWriteArrayList<>());
         runSubscribers.add(emitter);
         Runnable remove = () -> removeSubscriber(runKey, emitter);
         emitter.onCompletion(remove);
@@ -344,7 +375,8 @@ public class AgentService {
         emitter.onError(ignored -> remove.run());
 
         try {
-            for (AgentRunEvent event : mapper.findEvents(runKey, afterId)) send(emitter, event);
+            for (AgentRunEvent event : mapper.findEvents(runKey, afterId))
+                send(emitter, event);
             AgentRun current = mapper.findRun(runKey, projectId, userId);
             if (current != null && isTerminal(current.getStatus())) {
                 emitter.complete();
@@ -358,11 +390,13 @@ public class AgentService {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public AgentAttachmentResponse uploadAttachment(Long workspaceId, Long projectId, Long userId, MultipartFile file) throws Exception {
+    public AgentAttachmentResponse uploadAttachment(Long workspaceId, Long projectId, Long userId, MultipartFile file)
+            throws Exception {
         if (!mapper.hasProjectAccess(workspaceId, projectId, userId)) {
             throw new ApiException(HttpStatus.NOT_FOUND, "PROJECT_NOT_FOUND", "项目不存在或无权访问");
         }
-        if (file == null || file.isEmpty()) throw ApiException.badRequest("EMPTY_FILE", "附件不能为空");
+        if (file == null || file.isEmpty())
+            throw ApiException.badRequest("EMPTY_FILE", "附件不能为空");
         storageQuotaService.validateFileSize(file.getSize());
         storageQuotaService.reserve(userId, file.getSize());
 
@@ -372,9 +406,11 @@ public class AgentService {
         attachment.setUploadedBy(userId);
         attachment.setFileName(safeFileName(file.getOriginalFilename()));
         attachment.setKind(kindOf(file.getContentType(), file.getOriginalFilename()));
-        attachment.setMimeType(file.getContentType() == null ? MediaType.APPLICATION_OCTET_STREAM_VALUE : file.getContentType());
+        attachment.setMimeType(
+                file.getContentType() == null ? MediaType.APPLICATION_OCTET_STREAM_VALUE : file.getContentType());
         attachment.setFileSize(file.getSize());
-        String storageKey = "workspaces/" + workspaceId + "/projects/" + projectId + "/agent/" + UUID.randomUUID() + "/" + attachment.getFileName();
+        String storageKey = "workspaces/" + workspaceId + "/projects/" + projectId + "/agent/" + UUID.randomUUID() + "/"
+                + attachment.getFileName();
         try (var input = file.getInputStream()) {
             objectStorageService.put(storageKey, input, file.getSize(), attachment.getMimeType());
         }
@@ -382,10 +418,14 @@ public class AgentService {
         try {
             mapper.insertAttachment(attachment);
         } catch (RuntimeException exception) {
-            try { objectStorageService.remove(storageKey); } catch (Exception ignored) { }
+            try {
+                objectStorageService.remove(storageKey);
+            } catch (Exception ignored) {
+            }
             throw exception;
         }
-        String url = "/api/workspaces/" + workspaceId + "/projects/" + projectId + "/agent/attachments/" + attachment.getId() + "/content";
+        String url = "/api/workspaces/" + workspaceId + "/projects/" + projectId + "/agent/attachments/"
+                + attachment.getId() + "/content";
         return attachmentResponse(attachment, url);
     }
 
@@ -408,13 +448,13 @@ public class AgentService {
                 attachment.getMimeType(),
                 attachment.getFileSize(),
                 url,
-                attachment.getCreatedAt()
-        );
+                attachment.getCreatedAt());
     }
 
     public AgentAttachment getAttachment(Long workspaceId, Long projectId, Long userId, Long attachmentId) {
         AgentAttachment attachment = mapper.findAttachment(attachmentId, workspaceId, projectId, userId);
-        if (attachment == null) throw new ApiException(HttpStatus.NOT_FOUND, "ATTACHMENT_NOT_FOUND", "附件不存在或无权访问");
+        if (attachment == null)
+            throw new ApiException(HttpStatus.NOT_FOUND, "ATTACHMENT_NOT_FOUND", "附件不存在或无权访问");
         return attachment;
     }
 
@@ -431,20 +471,25 @@ public class AgentService {
     private void handleAiCallbackLocked(String runKey, Map<String, Object> body) {
         Long projectId = longValue(body.get("projectId"));
         Long userId = longValue(body.get("userId"));
-        if (projectId == null || userId == null) return;
+        if (projectId == null || userId == null)
+            return;
         AgentRun run = mapper.findRun(runKey, projectId, userId);
-        if (run == null) return;
+        if (run == null)
+            return;
         String eventType = String.valueOf(body.getOrDefault("eventType", ""));
         // A late callback from a retried/recovered worker must never append to
         // a message that has already been finalized.
-        if (isTerminal(run.getStatus())) return;
+        if (isTerminal(run.getStatus()))
+            return;
         String upstreamEventId = String.valueOf(body.getOrDefault("eventId", "")).trim();
         if (!upstreamEventId.isBlank()) {
             Set<String> seen = receivedUpstreamEvents.computeIfAbsent(runKey, ignored -> ConcurrentHashMap.newKeySet());
-            if (!seen.add(upstreamEventId)) return;
+            if (!seen.add(upstreamEventId))
+                return;
         }
         Map<String, Object> payload = body.get("payload") instanceof Map<?, ?> value
-                ? (Map<String, Object>) value : Map.of();
+                ? (Map<String, Object>) value
+                : Map.of();
         try {
             if ("decision.updated".equals(eventType)) {
                 publish(run, eventType, Map.of("type", eventType, "runId", runKey,
@@ -468,7 +513,8 @@ public class AgentService {
                 Map<String, Object> started = new LinkedHashMap<>();
                 started.put("type", "run.started");
                 started.put("runId", runKey);
-                if (payload.get("startedAt") != null) started.put("startedAt", payload.get("startedAt"));
+                if (payload.get("startedAt") != null)
+                    started.put("startedAt", payload.get("startedAt"));
                 publish(run, "run.started", started);
                 return;
             }
@@ -476,9 +522,12 @@ public class AgentService {
                 Map<String, Object> usage = new LinkedHashMap<>();
                 usage.put("type", "usage.updated");
                 usage.put("runId", runKey);
-                if (payload.get("usage") != null) usage.put("usage", payload.get("usage"));
-                if (payload.get("latencyMs") != null) usage.put("latencyMs", payload.get("latencyMs"));
-                if (payload.get("delta") != null) usage.put("delta", payload.get("delta"));
+                if (payload.get("usage") != null)
+                    usage.put("usage", payload.get("usage"));
+                if (payload.get("latencyMs") != null)
+                    usage.put("latencyMs", payload.get("latencyMs"));
+                if (payload.get("delta") != null)
+                    usage.put("delta", payload.get("delta"));
                 publish(run, "usage.updated", usage);
                 return;
             }
@@ -490,9 +539,12 @@ public class AgentService {
             }
             if (eventType.startsWith("node.")) {
                 String node = String.valueOf(payload.getOrDefault("node", "agent"));
-                String status = eventType.endsWith("failed") || Boolean.TRUE.equals(payload.get("failed")) ? "failed" : eventType.endsWith("started") || eventType.endsWith("updated") ? "running" : "completed";
-                String kind = "ATTACHMENT_ANALYSIS".equalsIgnoreCase(node) ? "file" : "DECISION".equals(node) ? "plan" : node.toLowerCase(Locale.ROOT);
-                publishStep(run, kind, String.valueOf(payload.getOrDefault("title", node)), String.valueOf(payload.getOrDefault("detail", "")), status, payload);
+                String status = eventType.endsWith("failed") || Boolean.TRUE.equals(payload.get("failed")) ? "failed"
+                        : eventType.endsWith("started") || eventType.endsWith("updated") ? "running" : "completed";
+                String kind = "ATTACHMENT_ANALYSIS".equalsIgnoreCase(node) ? "file"
+                        : "DECISION".equals(node) ? "plan" : node.toLowerCase(Locale.ROOT);
+                publishStep(run, kind, String.valueOf(payload.getOrDefault("title", node)),
+                        String.valueOf(payload.getOrDefault("detail", "")), status, payload);
                 return;
             }
             if (eventType.startsWith("tool.")) {
@@ -505,9 +557,11 @@ public class AgentService {
                 } else {
                     detail = String.valueOf(payload.getOrDefault("query", ""));
                 }
-                String status = eventType.endsWith("failed") ? "failed" : eventType.endsWith("started") ? "running"
-                        : eventType.endsWith("blocked") ? "blocked" : eventType.endsWith("reused") ? "reused"
-                        : "no_results".equals(payload.get("status")) ? "empty" : "completed";
+                String status = eventType.endsWith("failed") ? "failed"
+                        : eventType.endsWith("started") ? "running"
+                                : eventType.endsWith("blocked") ? "blocked"
+                                        : eventType.endsWith("reused") ? "reused"
+                                                : "no_results".equals(payload.get("status")) ? "empty" : "completed";
                 publishStep(run, "tool", "调用 " + tool, detail, status, payload);
                 return;
             }
@@ -515,7 +569,8 @@ public class AgentService {
                 Object items = payload.get("items");
                 if (items instanceof List<?> list) {
                     publishStep(run, "evidence", "整理证据", "已收集 " + list.size() + " 条可引用来源", "completed");
-                    for (Object raw : list) publishCitation(run, raw);
+                    for (Object raw : list)
+                        publishCitation(run, raw);
                 }
                 return;
             }
@@ -536,8 +591,7 @@ public class AgentService {
                             "type", "message.delta",
                             "runId", runKey,
                             "messageId", messageId,
-                            "delta", delta
-                    ));
+                            "delta", delta));
                 }
                 return;
             }
@@ -547,15 +601,15 @@ public class AgentService {
                         "type", "message.replace",
                         "runId", runKey,
                         "messageId", findMessageKey(run.getAssistantMessageId()),
-                        "content", String.valueOf(payload.getOrDefault("content", ""))
-                ));
+                        "content", String.valueOf(payload.getOrDefault("content", ""))));
                 return;
             }
             if ("run.completed".equals(eventType)) {
                 Object rawArtifacts = payload.get("artifacts");
                 if (rawArtifacts instanceof List<?> artifacts) {
                     for (Object rawArtifact : artifacts) {
-                        if (!(rawArtifact instanceof Map<?, ?>)) continue;
+                        if (!(rawArtifact instanceof Map<?, ?>))
+                            continue;
                         Map<String, Object> artifactPayload = new LinkedHashMap<>();
                         artifactPayload.put("artifact", rawArtifact);
                         artifactPayload.put("messageId", findMessageKey(run.getAssistantMessageId()));
@@ -572,19 +626,27 @@ public class AgentService {
                 streamedMessageRuns.remove(runKey);
                 publish(run, "message.replace", Map.of("type", "message.replace", "runId", runKey,
                         "messageId", findMessageKey(run.getAssistantMessageId()), "content", answer));
-                publish(run, "message.completed", Map.of("type", "message.completed", "runId", runKey, "messageId", findMessageKey(run.getAssistantMessageId())));
+                publish(run, "message.completed", Map.of("type", "message.completed", "runId", runKey, "messageId",
+                        findMessageKey(run.getAssistantMessageId())));
                 mapper.updateRun(run.getId(), "COMPLETED", null);
                 Map<String, Object> completion = new LinkedHashMap<>();
                 completion.put("type", "run.completed");
                 completion.put("runId", runKey);
-                if (payload.get("usage") != null) completion.put("usage", payload.get("usage"));
-                if (payload.get("contextCompression") != null) completion.put("contextCompression", payload.get("contextCompression"));
-                if (payload.get("decisionMetrics") != null) completion.put("decisionMetrics", payload.get("decisionMetrics"));
-                if (payload.get("startedAt") != null) completion.put("startedAt", payload.get("startedAt"));
-                if (payload.get("durationMs") != null) completion.put("durationMs", payload.get("durationMs"));
+                if (payload.get("usage") != null)
+                    completion.put("usage", payload.get("usage"));
+                if (payload.get("contextCompression") != null)
+                    completion.put("contextCompression", payload.get("contextCompression"));
+                if (payload.get("decisionMetrics") != null)
+                    completion.put("decisionMetrics", payload.get("decisionMetrics"));
+                if (payload.get("startedAt") != null)
+                    completion.put("startedAt", payload.get("startedAt"));
+                if (payload.get("durationMs") != null)
+                    completion.put("durationMs", payload.get("durationMs"));
                 completion.put("finishedAt", payload.getOrDefault("finishedAt", java.time.Instant.now().toString()));
-                if (payload.get("strategy") != null) completion.put("strategy", payload.get("strategy"));
-                if (payload.get("multiAgent") != null) completion.put("multiAgent", payload.get("multiAgent"));
+                if (payload.get("strategy") != null)
+                    completion.put("strategy", payload.get("strategy"));
+                if (payload.get("multiAgent") != null)
+                    completion.put("multiAgent", payload.get("multiAgent"));
                 publish(run, "run.completed", completion);
                 completeSubscribers(runKey);
                 receivedUpstreamEvents.remove(runKey);
@@ -601,7 +663,8 @@ public class AgentService {
                 mapper.updateRun(run.getId(), "FAILED", message);
                 streamedMessageRuns.remove(runKey);
                 Map<String, Object> failed = new LinkedHashMap<>(payload);
-                failed.putAll(Map.of("type", "run.failed", "runId", runKey, "message", message, "finishedAt", java.time.Instant.now().toString()));
+                failed.putAll(Map.of("type", "run.failed", "runId", runKey, "message", message, "finishedAt",
+                        java.time.Instant.now().toString()));
                 publish(run, "run.failed", failed);
                 completeSubscribers(runKey);
                 receivedUpstreamEvents.remove(runKey);
@@ -626,8 +689,10 @@ public class AgentService {
             throw new ApiException(HttpStatus.NOT_FOUND, "PROJECT_NOT_FOUND", "项目不存在或无权访问");
         }
         AgentRun run = mapper.findRun(runKey, projectId, userId);
-        if (run == null) throw new ApiException(HttpStatus.NOT_FOUND, "AGENT_RUN_NOT_FOUND", "Agent 运行不存在或无权访问");
-        if (run.getStatus() != null && !"RUNNING".equalsIgnoreCase(run.getStatus())) return;
+        if (run == null)
+            throw new ApiException(HttpStatus.NOT_FOUND, "AGENT_RUN_NOT_FOUND", "Agent 运行不存在或无权访问");
+        if (run.getStatus() != null && !"RUNNING".equalsIgnoreCase(run.getStatus()))
+            return;
         try {
             aiClient.cancelRun(runKey);
         } catch (IOException exception) {
@@ -652,10 +717,13 @@ public class AgentService {
         callbackLocks.remove(runKey);
         try {
             String messageId = findMessageKey(run.getAssistantMessageId());
-            publish(run, "message.replace", Map.of("type", "message.replace", "runId", runKey, "messageId", messageId, "content", answer));
-            publish(run, "message.completed", Map.of("type", "message.completed", "runId", runKey, "messageId", messageId));
+            publish(run, "message.replace",
+                    Map.of("type", "message.replace", "runId", runKey, "messageId", messageId, "content", answer));
+            publish(run, "message.completed",
+                    Map.of("type", "message.completed", "runId", runKey, "messageId", messageId));
             Map<String, Object> completion = new LinkedHashMap<>();
-            completion.putAll(Map.of("type", "run.completed", "runId", runKey, "status", "CANCELLED", "finishedAt", java.time.Instant.now().toString()));
+            completion.putAll(Map.of("type", "run.completed", "runId", runKey, "status", "CANCELLED", "finishedAt",
+                    java.time.Instant.now().toString()));
             AgentProgress.copy(progress, completion, "runStartedAt", "startedAt");
             publish(run, "run.completed", completion);
         } catch (IOException exception) {
@@ -670,8 +738,10 @@ public class AgentService {
         progress.put("status", "streaming");
         for (AgentRunEvent event : mapper.findEvents(runKey, null)) {
             try {
-                AgentProgress.apply(progress, event.getEventType(), objectMapper.readValue(event.getPayload(), Map.class));
-            } catch (Exception ignored) { /* Preserve readable events from older runs. */ }
+                AgentProgress.apply(progress, event.getEventType(),
+                        objectMapper.readValue(event.getPayload(), Map.class));
+            } catch (Exception ignored) {
+                /* Preserve readable events from older runs. */ }
         }
         return progress;
     }
@@ -680,10 +750,12 @@ public class AgentService {
         if (attachment.getStorageKey() != null && !attachment.getStorageKey().isBlank()) {
             return objectStorageService.open(attachment.getStorageKey());
         }
-        return new java.io.ByteArrayInputStream(attachment.getContent() == null ? new byte[0] : attachment.getContent());
+        return new java.io.ByteArrayInputStream(
+                attachment.getContent() == null ? new byte[0] : attachment.getContent());
     }
 
-    private void runPipeline(AgentRun run, Long workspaceId, Long projectId, Long userId, String query, AgentMessageRequest request) {
+    private void runPipeline(AgentRun run, Long workspaceId, Long projectId, Long userId, String query,
+            AgentMessageRequest request) {
         try {
             Map<String, Object> config = new LinkedHashMap<>();
             putIfPresent(config, "allowWebSearch", request.getAllowWebSearch());
@@ -707,7 +779,8 @@ public class AgentService {
             putIfPresent(requested, "modelConfigId", request.getModelConfigId());
             Map<String, Object> runtime = runtimeConfigResolver.resolve(workspaceId, projectId, userId, requested);
             // 只有本次运行明确开启联网搜索时，才把独立搜索凭证传给 AI 服务。
-            if (!Boolean.TRUE.equals(request.getAllowWebSearch())) runtime.remove("webSearch");
+            if (!Boolean.TRUE.equals(request.getAllowWebSearch()))
+                runtime.remove("webSearch");
             // 没有项目级模型时，仍把本次生成参数作为独立覆盖传给 AI 服务默认模型。
             if (!runtime.containsKey("model")) {
                 Map<String, Object> generation = new LinkedHashMap<>();
@@ -717,7 +790,8 @@ public class AgentService {
                 putIfPresent(generation, "maxTokens", request.getMaxTokens());
                 putIfPresent(generation, "frequencyPenalty", request.getFrequencyPenalty());
                 putIfPresent(generation, "reasoningEffort", request.getReasoningEffort());
-                if (!generation.isEmpty()) config.put("generation", generation);
+                if (!generation.isEmpty())
+                    config.put("generation", generation);
             }
             applyGenerationOverrides(runtime, request);
             // Anchor history to this user turn. Client state may be stale after a
@@ -750,7 +824,8 @@ public class AgentService {
             try {
                 publish(run, "run.failed", Map.of("type", "run.failed", "runId", run.getRunKey(), "message", message));
             } catch (Exception ignored) {
-                // The persisted FAILED status remains the source of truth if the stream itself is unavailable.
+                // The persisted FAILED status remains the source of truth if the stream itself
+                // is unavailable.
             }
             completeSubscribers(run.getRunKey());
         }
@@ -775,13 +850,15 @@ public class AgentService {
             putText(context, "successMetrics", plan.getSuccessMetrics(), 4_000);
             putText(context, "constraints", plan.getConstraints(), 4_000);
             putText(context, "owner", plan.getOwner(), 120);
-            if (plan.getDeadline() != null) context.put("deadline", plan.getDeadline().toString());
+            if (plan.getDeadline() != null)
+                context.put("deadline", plan.getDeadline().toString());
         }
         return context;
     }
 
     private void putText(Map<String, Object> target, String key, String value, int maxLength) {
-        if (value == null || value.isBlank()) return;
+        if (value == null || value.isBlank())
+            return;
         String normalized = value.trim();
         target.put(key, normalized.length() <= maxLength ? normalized : normalized.substring(0, maxLength));
     }
@@ -789,35 +866,44 @@ public class AgentService {
     @SuppressWarnings("unchecked")
     private Map<String, Object> agentPolicy(Long workspaceId, Long userId) {
         Workspace workspace = workspaceMapper.findAccessible(workspaceId, userId);
-        if (workspace == null || workspace.getPreferences() == null || workspace.getPreferences().isBlank()) return Map.of();
+        if (workspace == null || workspace.getPreferences() == null || workspace.getPreferences().isBlank())
+            return Map.of();
         try {
             Map<String, Object> preferences = objectMapper.readValue(workspace.getPreferences(), Map.class);
             Object raw = preferences.get("agentPolicy");
             Map<String, Object> result = new LinkedHashMap<>();
             if (raw instanceof Map<?, ?> policy) {
-                if (policy.get("maxCalls") != null) result.put("toolMaxCalls", policy.get("maxCalls"));
-                if (policy.get("requireApproval") != null) result.put("requireToolApproval", policy.get("requireApproval"));
+                if (policy.get("maxCalls") != null)
+                    result.put("toolMaxCalls", policy.get("maxCalls"));
+                if (policy.get("requireApproval") != null)
+                    result.put("requireToolApproval", policy.get("requireApproval"));
             }
             Object localTools = preferences.get("localTools");
             if (localTools instanceof Map<?, ?> configuredTools) {
                 List<String> disabledTools = new java.util.ArrayList<>();
                 for (Map.Entry<?, ?> entry : configuredTools.entrySet()) {
-                    if (Boolean.FALSE.equals(entry.getValue())) disabledTools.add(String.valueOf(entry.getKey()));
+                    if (Boolean.FALSE.equals(entry.getValue()))
+                        disabledTools.add(String.valueOf(entry.getKey()));
                 }
-                if (!disabledTools.isEmpty()) result.put("disabledTools", disabledTools);
+                if (!disabledTools.isEmpty())
+                    result.put("disabledTools", disabledTools);
             }
             return result;
-        } catch (Exception ignored) { return Map.of(); }
+        } catch (Exception ignored) {
+            return Map.of();
+        }
     }
 
     private void putIfPresent(Map<String, Object> target, String key, Object value) {
-        if (value != null) target.put(key, value);
+        if (value != null)
+            target.put(key, value);
     }
 
     @SuppressWarnings("unchecked")
     private void applyGenerationOverrides(Map<String, Object> runtime, AgentMessageRequest request) {
         Object rawModel = runtime.get("model");
-        if (!(rawModel instanceof Map<?, ?>)) return;
+        if (!(rawModel instanceof Map<?, ?>))
+            return;
         Map<String, Object> model = (Map<String, Object>) rawModel;
         Map<String, Object> generation = model.get("generation") instanceof Map<?, ?> existing
                 ? new LinkedHashMap<>((Map<String, Object>) existing)
@@ -848,13 +934,16 @@ public class AgentService {
         if (request.getMaxTokens() != null && (request.getMaxTokens() < 1 || request.getMaxTokens() > 1_000_000)) {
             throw ApiException.badRequest("INVALID_MAX_TOKENS", "Max Tokens 必须在 1 到 1000000 之间");
         }
-        if (request.getFrequencyPenalty() != null && (request.getFrequencyPenalty() < -2 || request.getFrequencyPenalty() > 2)) {
+        if (request.getFrequencyPenalty() != null
+                && (request.getFrequencyPenalty() < -2 || request.getFrequencyPenalty() > 2)) {
             throw ApiException.badRequest("INVALID_FREQUENCY_PENALTY", "频率惩罚必须在 -2 到 2 之间");
         }
-        if (request.getReasoningEffort() != null && !List.of("none", "low", "medium", "high").contains(request.getReasoningEffort())) {
+        if (request.getReasoningEffort() != null
+                && !List.of("none", "low", "medium", "high").contains(request.getReasoningEffort())) {
             throw ApiException.badRequest("INVALID_REASONING_EFFORT", "推理强度只能是 none、low、medium 或 high");
         }
-        if (request.getStrategy() != null && !List.of("AUTO", "DIRECT", "REACT", "PLAN_AND_SOLVE", "REFLECTION").contains(request.getStrategy().toUpperCase(Locale.ROOT))) {
+        if (request.getStrategy() != null && !List.of("AUTO", "DIRECT", "REACT", "PLAN_AND_SOLVE", "REFLECTION")
+                .contains(request.getStrategy().toUpperCase(Locale.ROOT))) {
             throw ApiException.badRequest("INVALID_AGENT_STRATEGY", "回答方式不受支持");
         }
     }
@@ -863,15 +952,19 @@ public class AgentService {
         publishStep(run, kind, title, detail, status, Map.of());
     }
 
-    private void publishStep(AgentRun run, String kind, String title, String detail, String status, Map<String, Object> metadata) throws IOException {
+    private void publishStep(AgentRun run, String kind, String title, String detail, String status,
+            Map<String, Object> metadata) throws IOException {
         Map<String, Object> event = new LinkedHashMap<>();
         String key = run.getRunKey() + ":" + kind + ":" + title;
-        if (metadata.get("callId") != null) key += ":" + metadata.get("callId");
+        if (metadata.get("callId") != null)
+            key += ":" + metadata.get("callId");
         Map<String, Object> previous = stepSnapshots.get(key);
-        boolean continuing = previous != null && ("running".equals(previous.get("status")) || !"running".equals(status));
+        boolean continuing = previous != null
+                && ("running".equals(previous.get("status")) || !"running".equals(status));
         event.put("id", continuing ? previous.get("id") : key + ":" + UUID.randomUUID());
         event.put("startedAt", continuing ? previous.get("startedAt") : java.time.Instant.now().toString());
-        if (!"running".equals(status)) event.put("completedAt", java.time.Instant.now().toString());
+        if (!"running".equals(status))
+            event.put("completedAt", java.time.Instant.now().toString());
         event.put("kind", kind);
         event.put("title", title);
         event.put("detail", detail);
@@ -881,16 +974,19 @@ public class AgentService {
         meta.remove("node");
         meta.remove("title");
         meta.remove("detail");
-        if (!meta.isEmpty()) event.put("meta", meta);
+        if (!meta.isEmpty())
+            event.put("meta", meta);
         stepSnapshots.put(key, event);
         publish(run, "event.updated", Map.of("type", "event.updated", "runId", run.getRunKey(),
                 "messageId", findMessageKey(run.getAssistantMessageId()), "event", event));
     }
 
     private void publishCitation(AgentRun run, Object raw) throws IOException {
-        if (!(raw instanceof Map<?, ?> item)) return;
+        if (!(raw instanceof Map<?, ?> item))
+            return;
         String id = String.valueOf(value(item, "id", "evidence"));
-        String title = String.valueOf(valueAny(item, "assetName", "asset_name", valueAny(item, "sourceName", "source_name", "外部来源")));
+        String title = String.valueOf(
+                valueAny(item, "assetName", "asset_name", valueAny(item, "sourceName", "source_name", "外部来源")));
         String source = String.valueOf(valueAny(item, "sourceName", "source_name", title));
         Object page = valueAny(item, "pageNumber", "page_number", null);
         Map<String, Object> citation = new LinkedHashMap<>();
@@ -906,23 +1002,28 @@ public class AgentService {
         citation.put("pageNumber", page);
         citation.put("url", item.get("url"));
         citation.put("contentKind", valueAny(item, "contentKind", "content_kind", null));
-        publish(run, "citation.added", Map.of("type", "citation.added", "runId", run.getRunKey(), "citation", citation));
+        publish(run, "citation.added",
+                Map.of("type", "citation.added", "runId", run.getRunKey(), "citation", citation));
     }
 
     @SuppressWarnings("unchecked")
-    private void publishArtifact(AgentRun run, Map<String, Object> body, Map<String, Object> payload) throws IOException {
-        if (!(payload.get("artifact") instanceof Map<?, ?> raw)) return;
+    private void publishArtifact(AgentRun run, Map<String, Object> body, Map<String, Object> payload)
+            throws IOException {
+        if (!(payload.get("artifact") instanceof Map<?, ?> raw))
+            return;
         Long workspaceId = longValue(body.get("workspaceId"));
         Long projectId = longValue(body.get("projectId"));
         Long userId = longValue(body.get("userId"));
         String storageKey = String.valueOf(value(raw, "storageKey", ""));
-        String expectedPrefix = "workspaces/" + workspaceId + "/projects/" + projectId + "/agent/" + run.getRunKey() + "/artifacts/";
+        String expectedPrefix = "workspaces/" + workspaceId + "/projects/" + projectId + "/agent/" + run.getRunKey()
+                + "/artifacts/";
         if (workspaceId == null || projectId == null || userId == null || !storageKey.startsWith(expectedPrefix)) {
             throw new IOException("生成文件存储路径无效");
         }
         String fileName = safeFileName(String.valueOf(valueAny(raw, "fileName", "file_name", "generated-file")));
         String mimeType = String.valueOf(valueAny(raw, "mimeType", "mime_type", "application/octet-stream"));
-        long fileSize = Math.max(0L, longValue(valueAny(raw, "fileSize", "file_size", 0L)) == null ? 0L : longValue(valueAny(raw, "fileSize", "file_size", 0L)));
+        long fileSize = Math.max(0L, longValue(valueAny(raw, "fileSize", "file_size", 0L)) == null ? 0L
+                : longValue(valueAny(raw, "fileSize", "file_size", 0L)));
         storageQuotaService.validateFileSize(fileSize);
         AgentAttachment attachment = mapper.findAttachmentByStorageKey(storageKey, workspaceId, projectId, userId);
         if (attachment == null) {
@@ -938,7 +1039,10 @@ public class AgentService {
             try {
                 storageQuotaService.reserve(userId, fileSize);
             } catch (RuntimeException exception) {
-                try { objectStorageService.remove(storageKey); } catch (Exception ignored) { }
+                try {
+                    objectStorageService.remove(storageKey);
+                } catch (Exception ignored) {
+                }
                 throw exception;
             }
             mapper.insertAttachment(attachment);
@@ -950,7 +1054,8 @@ public class AgentService {
         attachmentMap.put("kind", attachment.getKind());
         attachmentMap.put("mimeType", attachment.getMimeType());
         attachmentMap.put("size", formatFileSize(attachment.getFileSize()));
-        attachmentMap.put("url", "/api/workspaces/" + workspaceId + "/projects/" + projectId + "/agent/attachments/" + attachment.getId() + "/content");
+        attachmentMap.put("url", "/api/workspaces/" + workspaceId + "/projects/" + projectId + "/agent/attachments/"
+                + attachment.getId() + "/content");
         attachmentMap.put("generated", true);
         appendMessageAttachment(run.getAssistantMessageId(), attachmentMap);
         String messageId = String.valueOf(value(payload, "messageId", findMessageKey(run.getAssistantMessageId())));
@@ -958,8 +1063,7 @@ public class AgentService {
                 "type", "artifact.added",
                 "runId", run.getRunKey(),
                 "messageId", messageId,
-                "artifact", attachmentMap
-        ));
+                "artifact", attachmentMap));
     }
 
     @SuppressWarnings("unchecked")
@@ -969,14 +1073,17 @@ public class AgentService {
         if (current != null && !current.isBlank()) {
             try {
                 List<?> parsed = objectMapper.readValue(current, List.class);
-                for (Object item : parsed) if (item instanceof Map<?, ?> value) attachments.add(new LinkedHashMap<>((Map<String, Object>) value));
+                for (Object item : parsed)
+                    if (item instanceof Map<?, ?> value)
+                        attachments.add(new LinkedHashMap<>((Map<String, Object>) value));
             } catch (RuntimeException exception) {
                 throw new IOException("消息附件格式无效", exception);
             }
         }
         String attachmentId = String.valueOf(attachment.get("id"));
         boolean exists = attachments.stream().anyMatch(item -> attachmentId.equals(String.valueOf(item.get("id"))));
-        if (!exists) attachments.add(attachment);
+        if (!exists)
+            attachments.add(attachment);
         try {
             mapper.updateMessageAttachments(messageId, objectMapper.writeValueAsString(attachments));
         } catch (RuntimeException exception) {
@@ -987,7 +1094,8 @@ public class AgentService {
     @SuppressWarnings("unchecked")
     private void saveTokenUsage(AgentRun run, Map<String, Object> body, Map<String, Object> payload) {
         Object rawUsage = payload.get("usage");
-        if (!(rawUsage instanceof Map<?, ?> usage)) return;
+        if (!(rawUsage instanceof Map<?, ?> usage))
+            return;
         Object rawCompression = payload.get("contextCompression");
         Map<?, ?> compression = rawCompression instanceof Map<?, ?> value ? value : Map.of();
         AgentTokenUsage record = new AgentTokenUsage();
@@ -997,23 +1105,31 @@ public class AgentService {
         record.setRunId(run.getId());
         record.setRunKey(run.getRunKey());
         Object model = firstValue(usage, "model", "modelName", "model_name");
-        if (model == null) model = firstValue(payload, "model", "modelName", "model_name");
-        if (model != null && !String.valueOf(model).isBlank()) record.setModelName(String.valueOf(model));
-        record.setInputTokens(intValue(firstValue(usage, "inputTokens", "input_tokens", "promptTokens", "prompt_tokens"), null));
-        record.setOutputTokens(intValue(firstValue(usage, "outputTokens", "output_tokens", "completionTokens", "completion_tokens"), null));
+        if (model == null)
+            model = firstValue(payload, "model", "modelName", "model_name");
+        if (model != null && !String.valueOf(model).isBlank())
+            record.setModelName(String.valueOf(model));
+        record.setInputTokens(
+                intValue(firstValue(usage, "inputTokens", "input_tokens", "promptTokens", "prompt_tokens"), null));
+        record.setOutputTokens(intValue(
+                firstValue(usage, "outputTokens", "output_tokens", "completionTokens", "completion_tokens"), null));
         record.setTotalTokens(intValue(firstValue(usage, "totalTokens", "total_tokens"), null));
-        if (record.getTotalTokens() == 0) record.setTotalTokens(record.getInputTokens() + record.getOutputTokens());
-        int originalContextTokens = intValue(firstValue(compression, "originalTokenEstimate", "original_token_estimate"), null);
+        if (record.getTotalTokens() == 0)
+            record.setTotalTokens(record.getInputTokens() + record.getOutputTokens());
+        int originalContextTokens = intValue(
+                firstValue(compression, "originalTokenEstimate", "original_token_estimate"), null);
         int finalContextTokens = intValue(firstValue(compression, "finalTokenEstimate", "final_token_estimate"), null);
         record.setCompressedContextTokens(Math.max(0, originalContextTokens - finalContextTokens));
-        record.setContextMessageCount(intValue(firstValue(compression, "finalMessageCount", "final_message_count"), null));
+        record.setContextMessageCount(
+                intValue(firstValue(compression, "finalMessageCount", "final_message_count"), null));
         mapper.upsertTokenUsage(record);
     }
 
     private Map<String, Object> normalizeTokenUsage(Map<?, ?> raw) {
         Map<String, Object> normalized = new LinkedHashMap<>();
         putNormalized(normalized, "inputTokens", raw, "inputTokens", "input_tokens", "promptTokens", "prompt_tokens");
-        putNormalized(normalized, "outputTokens", raw, "outputTokens", "output_tokens", "completionTokens", "completion_tokens");
+        putNormalized(normalized, "outputTokens", raw, "outputTokens", "output_tokens", "completionTokens",
+                "completion_tokens");
         putNormalized(normalized, "totalTokens", raw, "totalTokens", "total_tokens");
         putNormalized(normalized, "model", raw, "model", "modelName", "model_name");
         putNormalized(normalized, "available", raw, "available");
@@ -1029,7 +1145,8 @@ public class AgentService {
         putNormalized(normalized, "originalTokenEstimate", raw, "originalTokenEstimate", "original_token_estimate");
         putNormalized(normalized, "finalTokenEstimate", raw, "finalTokenEstimate", "final_token_estimate");
         putNormalized(normalized, "finalMessageCount", raw, "finalMessageCount", "final_message_count");
-        putNormalized(normalized, "compressedContextTokens", raw, "compressedContextTokens", "compressed_context_tokens");
+        putNormalized(normalized, "compressedContextTokens", raw, "compressedContextTokens",
+                "compressed_context_tokens");
         putNormalized(normalized, "modelContextWindow", raw, "modelContextWindow", "model_context_window");
         putNormalized(normalized, "contextTokenBudget", raw, "contextTokenBudget", "context_token_budget");
         putNormalized(normalized, "compressionTriggered", raw, "compressionTriggered", "compression_triggered");
@@ -1038,7 +1155,8 @@ public class AgentService {
 
     private void putNormalized(Map<String, Object> target, String targetKey, Map<?, ?> source, String... sourceKeys) {
         Object value = firstValue(source, sourceKeys);
-        if (value != null) target.put(targetKey, value);
+        if (value != null)
+            target.put(targetKey, value);
     }
 
     private boolean hasStoredTokenUsage(AgentTokenUsage usage) {
@@ -1050,7 +1168,8 @@ public class AgentService {
     private Object firstValue(Map<?, ?> source, String... keys) {
         for (String key : keys) {
             Object value = source.get(key);
-            if (value != null) return value;
+            if (value != null)
+                return value;
         }
         return null;
     }
@@ -1066,40 +1185,56 @@ public class AgentService {
 
     @SuppressWarnings("unchecked")
     private String formatReport(Object raw) {
-        if (!(raw instanceof Map<?, ?> report)) return String.valueOf(raw == null ? "Agent 未返回报告" : raw);
+        if (!(raw instanceof Map<?, ?> report))
+            return String.valueOf(raw == null ? "Agent 未返回报告" : raw);
         StringBuilder answer = new StringBuilder();
         appendLine(answer, report.get("title"));
         appendLine(answer, valueAny(report, "executiveSummary", "executive_summary", null));
         Object sections = report.get("sections");
-        if (sections instanceof List<?> list) for (Object section : list) {
-            if (!(section instanceof Map<?, ?> value)) continue;
-            appendLine(answer, value.get("heading"));
-            appendLine(answer, valueAny(value, "content", "body", null));
-        }
+        if (sections instanceof List<?> list)
+            for (Object section : list) {
+                if (!(section instanceof Map<?, ?> value))
+                    continue;
+                appendLine(answer, value.get("heading"));
+                appendLine(answer, valueAny(value, "content", "body", null));
+            }
         Object recommendations = report.get("recommendations");
         if (recommendations instanceof List<?> list && !list.isEmpty()) {
             appendLine(answer, "建议");
-            for (Object item : list) appendLine(answer, "- " + item);
+            for (Object item : list)
+                appendLine(answer, "- " + item);
         }
         return answer.length() == 0 ? "Agent 已完成分析，但报告内容为空。" : answer.toString().trim();
     }
 
     private void appendLine(StringBuilder target, Object value) {
-        if (value != null && !String.valueOf(value).isBlank()) target.append(String.valueOf(value)).append("\n\n");
+        if (value != null && !String.valueOf(value).isBlank())
+            target.append(String.valueOf(value)).append("\n\n");
     }
 
     private Long longValue(Object value) {
-        if (value == null) return null;
-        try { return Long.valueOf(String.valueOf(value)); } catch (NumberFormatException ignored) { return null; }
+        if (value == null)
+            return null;
+        try {
+            return Long.valueOf(String.valueOf(value));
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     private Integer intValue(Object first, Object fallback) {
         Object value = first == null ? fallback : first;
-        if (value == null) return 0;
-        try { return Integer.valueOf(String.valueOf(value)); } catch (NumberFormatException ignored) { return 0; }
+        if (value == null)
+            return 0;
+        try {
+            return Integer.valueOf(String.valueOf(value));
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
     }
 
-    private AgentMessage message(Long threadId, String key, String role, String content, String status, List<Map<String, Object>> attachments) {
+    private AgentMessage message(Long threadId, String key, String role, String content, String status,
+            List<Map<String, Object>> attachments) {
         AgentMessage message = new AgentMessage();
         message.setThreadId(threadId);
         message.setClientMessageId(key);
@@ -1156,7 +1291,8 @@ public class AgentService {
         afterCommit(() -> {
             stepSnapshots.keySet().removeIf(key -> key.startsWith(runKey + ":"));
             CopyOnWriteArrayList<SseEmitter> current = subscribers.remove(runKey);
-            if (current != null) current.forEach(SseEmitter::complete);
+            if (current != null)
+                current.forEach(SseEmitter::complete);
         });
     }
 
@@ -1166,7 +1302,10 @@ public class AgentService {
         if (TransactionSynchronizationManager.isSynchronizationActive()
                 && TransactionSynchronizationManager.isActualTransactionActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override public void afterCommit() { action.run(); }
+                @Override
+                public void afterCommit() {
+                    action.run();
+                }
             });
         } else {
             action.run();
@@ -1175,9 +1314,11 @@ public class AgentService {
 
     private void removeSubscriber(String runKey, SseEmitter emitter) {
         CopyOnWriteArrayList<SseEmitter> current = subscribers.get(runKey);
-        if (current == null) return;
+        if (current == null)
+            return;
         current.remove(emitter);
-        if (current.isEmpty()) subscribers.remove(runKey, current);
+        if (current.isEmpty())
+            subscribers.remove(runKey, current);
     }
 
     private boolean isTerminal(String status) {
@@ -1186,7 +1327,8 @@ public class AgentService {
 
     private String safeKey(String value, String fallback) {
         String key = clean(value);
-        if (key.isBlank() || key.length() > 120 || !key.matches("[A-Za-z0-9._:-]+")) return fallback;
+        if (key.isBlank() || key.length() > 120 || !key.matches("[A-Za-z0-9._:-]+"))
+            return fallback;
         return key;
     }
 
@@ -1203,14 +1345,21 @@ public class AgentService {
         String text = value == null ? "" : value.replaceAll("\\s+", " ").trim();
         text = text.replaceFirst("^(请问|请帮我|帮我|我想|想了解|能否|可以)\\s*", "");
         text = text.replaceAll("[。！？?!；;：:]+$", "").trim();
-        if (text.isBlank()) return "新的问题整理";
+        if (text.isBlank())
+            return "新的问题整理";
         String summary;
-        if (text.matches("^为什么\\s*.+")) summary = "排查" + text.substring(3).trim() + "问题";
-        else if (text.matches("^(如何|怎么|怎样)\\s*.+")) summary = "梳理" + text.replaceFirst("^(如何|怎么|怎样)\\s*", "") + "方案";
-        else if (text.matches("^(什么是|是什么)\\s*.+")) summary = "了解" + text.replaceFirst("^(什么是|是什么)\\s*", "");
-        else if (text.matches("^(总结|概括)\\s*.+")) summary = "总结" + text.replaceFirst("^(总结|概括)\\s*", "");
-        else if (text.matches("^(比较|对比)\\s*.+")) summary = "比较" + text.replaceFirst("^(比较|对比)\\s*", "");
-        else summary = "整理：" + text;
+        if (text.matches("^为什么\\s*.+"))
+            summary = "排查" + text.substring(3).trim() + "问题";
+        else if (text.matches("^(如何|怎么|怎样)\\s*.+"))
+            summary = "梳理" + text.replaceFirst("^(如何|怎么|怎样)\\s*", "") + "方案";
+        else if (text.matches("^(什么是|是什么)\\s*.+"))
+            summary = "了解" + text.replaceFirst("^(什么是|是什么)\\s*", "");
+        else if (text.matches("^(总结|概括)\\s*.+"))
+            summary = "总结" + text.replaceFirst("^(总结|概括)\\s*", "");
+        else if (text.matches("^(比较|对比)\\s*.+"))
+            summary = "比较" + text.replaceFirst("^(比较|对比)\\s*", "");
+        else
+            summary = "整理：" + text;
         return shortText(summary, 80);
     }
 
@@ -1221,37 +1370,52 @@ public class AgentService {
 
     private String formatFileSize(Long bytes) {
         long value = bytes == null ? 0L : Math.max(0L, bytes);
-        if (value < 1024) return value + " B";
-        if (value < 1024 * 1024) return String.format(Locale.ROOT, "%.1f KB", value / 1024.0);
+        if (value < 1024)
+            return value + " B";
+        if (value < 1024 * 1024)
+            return String.format(Locale.ROOT, "%.1f KB", value / 1024.0);
         return String.format(Locale.ROOT, "%.1f MB", value / (1024.0 * 1024.0));
     }
 
     private String kindOf(String mimeType, String fileName) {
         String mime = mimeType == null ? "" : mimeType.toLowerCase(Locale.ROOT);
         String extension = extension(fileName);
-        if (mime.startsWith("image/")) return "image";
-        if (mime.startsWith("video/")) return "video";
-        if (mime.startsWith("audio/")) return "audio";
-        if (mime.contains("pdf") || extension.equals("pdf")) return "pdf";
-        if (Set.of("doc", "docx", "odt", "rtf", "md", "markdown", "txt").contains(extension)) return "document";
-        if (Set.of("xls", "xlsx", "ods", "csv").contains(extension)) return "spreadsheet";
-        if (Set.of("ppt", "pptx", "odp").contains(extension)) return "presentation";
+        if (mime.startsWith("image/"))
+            return "image";
+        if (mime.startsWith("video/"))
+            return "video";
+        if (mime.startsWith("audio/"))
+            return "audio";
+        if (mime.contains("pdf") || extension.equals("pdf"))
+            return "pdf";
+        if (Set.of("doc", "docx", "odt", "rtf", "md", "markdown", "txt").contains(extension))
+            return "document";
+        if (Set.of("xls", "xlsx", "ods", "csv").contains(extension))
+            return "spreadsheet";
+        if (Set.of("ppt", "pptx", "odp").contains(extension))
+            return "presentation";
         return "file";
     }
 
     @SuppressWarnings("unchecked")
     List<Map<String, Object>> storedContextMessages(AgentRun run, Long projectId, Long userId) {
         List<Map<String, Object>> result = new java.util.ArrayList<>();
-        for (AgentMessage message : mapper.findContextMessages(run.getThreadId(), projectId, userId, run.getUserMessageId())) {
-            if (message.getId() >= run.getUserMessageId()) continue;
+        for (AgentMessage message : mapper.findContextMessages(run.getThreadId(), projectId, userId,
+                run.getUserMessageId())) {
+            if (message.getId() >= run.getUserMessageId())
+                continue;
             boolean user = "USER".equals(message.getRole());
-            if (!user && !("ASSISTANT".equals(message.getRole()) && "COMPLETED".equals(message.getStatus()))) continue;
+            if (!user && !("ASSISTANT".equals(message.getRole()) && "COMPLETED".equals(message.getStatus())))
+                continue;
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("role", user ? "user" : "assistant");
             item.put("content", message.getContent() == null ? "" : message.getContent());
             try {
-                item.put("attachments", objectMapper.readValue(message.getAttachments() == null ? "[]" : message.getAttachments(), List.class));
-            } catch (Exception ignored) { item.put("attachments", List.of()); }
+                item.put("attachments", objectMapper
+                        .readValue(message.getAttachments() == null ? "[]" : message.getAttachments(), List.class));
+            } catch (Exception ignored) {
+                item.put("attachments", List.of());
+            }
             result.add(item);
         }
         return result;
@@ -1262,11 +1426,13 @@ public class AgentService {
             Long projectId,
             Long userId,
             List<Map<String, Object>> messages) {
-        if (messages == null || messages.isEmpty()) return List.of();
+        if (messages == null || messages.isEmpty())
+            return List.of();
         List<Map<String, Object>> payload = new java.util.ArrayList<>();
         Set<Long> seen = new java.util.HashSet<>();
         for (Map<String, Object> message : messages) {
-            if (message == null) continue;
+            if (message == null)
+                continue;
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("role", message.getOrDefault("role", "user"));
             item.put("content", message.getOrDefault("content", ""));
@@ -1287,11 +1453,14 @@ public class AgentService {
                 List<Map<String, Object>> bounded = new java.util.ArrayList<>();
                 for (Map<String, Object> attachment : trusted) {
                     Long attachmentId = longValue(attachment.get("attachmentId"));
-                    if (attachmentId == null || !seen.add(attachmentId)) continue;
+                    if (attachmentId == null || !seen.add(attachmentId))
+                        continue;
                     bounded.add(attachment);
-                    if (seen.size() >= MAX_ATTACHMENTS_PER_MESSAGE) break;
+                    if (seen.size() >= MAX_ATTACHMENTS_PER_MESSAGE)
+                        break;
                 }
-                if (!bounded.isEmpty()) item.put("attachments", bounded);
+                if (!bounded.isEmpty())
+                    item.put("attachments", bounded);
             }
             payload.add(item);
         }
@@ -1313,12 +1482,15 @@ public class AgentService {
             List<Map<String, Object>> currentReferences,
             List<Map<String, Object>> contextMessages) {
         List<Map<String, Object>> references = new java.util.ArrayList<>();
-        if (currentReferences != null) references.addAll(currentReferences);
+        if (currentReferences != null)
+            references.addAll(currentReferences);
         if (contextMessages != null) {
             for (Map<String, Object> message : contextMessages) {
-                if (message == null) continue;
+                if (message == null)
+                    continue;
                 Object rawAttachments = message.get("attachments");
-                if (!(rawAttachments instanceof List<?> list)) continue;
+                if (!(rawAttachments instanceof List<?> list))
+                    continue;
                 for (Object value : list) {
                     if (value instanceof Map<?, ?> raw) {
                         Map<String, Object> reference = new LinkedHashMap<>();
@@ -1330,15 +1502,19 @@ public class AgentService {
                 }
             }
         }
-        if (references.isEmpty()) return List.of();
+        if (references.isEmpty())
+            return List.of();
         List<Map<String, Object>> payload = new java.util.ArrayList<>();
         Set<Long> seen = new java.util.HashSet<>();
         for (Map<String, Object> reference : references) {
             Long attachmentId = longValue(reference == null ? null : reference.get("uploadId"));
-            if (attachmentId == null) continue;
-            if (!seen.add(attachmentId)) continue;
+            if (attachmentId == null)
+                continue;
+            if (!seen.add(attachmentId))
+                continue;
             AgentAttachment attachment = mapper.findAttachment(attachmentId, workspaceId, projectId, userId);
-            if (attachment == null || attachment.getStorageKey() == null || attachment.getStorageKey().isBlank()) continue;
+            if (attachment == null || attachment.getStorageKey() == null || attachment.getStorageKey().isBlank())
+                continue;
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("attachmentId", attachment.getId());
             item.put("fileName", attachment.getFileName());
@@ -1346,14 +1522,17 @@ public class AgentService {
             item.put("storageKey", attachment.getStorageKey());
             item.put("fileSize", attachment.getFileSize());
             payload.add(item);
-            if (payload.size() >= MAX_ATTACHMENTS_PER_MESSAGE) break;
+            if (payload.size() >= MAX_ATTACHMENTS_PER_MESSAGE)
+                break;
         }
         return payload;
     }
 
-    private void validateAttachmentReference(Long workspaceId, Long projectId, Long userId, Map<String, Object> attachment) {
+    private void validateAttachmentReference(Long workspaceId, Long projectId, Long userId,
+            Map<String, Object> attachment) {
         Object uploadId = attachment == null ? null : attachment.get("uploadId");
-        if (uploadId == null) throw ApiException.badRequest("INVALID_ATTACHMENT", "消息附件缺少上传凭证");
+        if (uploadId == null)
+            throw ApiException.badRequest("INVALID_ATTACHMENT", "消息附件缺少上传凭证");
         try {
             Long id = Long.valueOf(String.valueOf(uploadId));
             if (!mapper.hasAttachmentAccess(id, workspaceId, projectId, userId)) {
@@ -1371,7 +1550,8 @@ public class AgentService {
     }
 
     private String extension(String fileName) {
-        if (fileName == null || !fileName.contains(".")) return "";
+        if (fileName == null || !fileName.contains("."))
+            return "";
         return fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
     }
 

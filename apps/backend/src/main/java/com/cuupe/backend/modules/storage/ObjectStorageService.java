@@ -36,7 +36,8 @@ public class ObjectStorageService {
     }
 
     public void remove(String key) throws Exception {
-        if (key == null || key.isBlank()) return;
+        if (key == null || key.isBlank())
+            return;
         minioClient.removeObject(RemoveObjectArgs.builder().bucket(bucket).object(key).build());
     }
 

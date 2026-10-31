@@ -23,16 +23,21 @@ public class AiCallbackController {
     private String internalApiKey;
 
     @PostMapping("/runs/{runId}/callback")
-    public void callback(@PathVariable Long runId, @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey, @RequestBody Map<String, Object> body) {
+    public void callback(@PathVariable Long runId,
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey,
+            @RequestBody Map<String, Object> body) {
         verify(apiKey);
         Long projectId = longValue(body.get("projectId"));
         Long userId = longValue(body.get("userId"));
-        if (projectId == null || userId == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "callback context missing");
+        if (projectId == null || userId == null)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "callback context missing");
         researchProgress.accept(runId, projectId, userId, body);
     }
 
     @PostMapping("/agent-runs/{runKey}/callback")
-    public void agentCallback(@PathVariable String runKey, @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey, @RequestBody Map<String, Object> body) {
+    public void agentCallback(@PathVariable String runKey,
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey,
+            @RequestBody Map<String, Object> body) {
         verify(apiKey);
         agentService.handleAiCallback(runKey, body);
     }
@@ -40,14 +45,19 @@ public class AiCallbackController {
     private void verify(String apiKey) {
         if (apiKey == null || internalApiKey == null
                 || !MessageDigest.isEqual(
-                internalApiKey.getBytes(StandardCharsets.UTF_8),
-                apiKey.getBytes(StandardCharsets.UTF_8))) {
+                        internalApiKey.getBytes(StandardCharsets.UTF_8),
+                        apiKey.getBytes(StandardCharsets.UTF_8))) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "invalid internal api key");
         }
     }
 
     private Long longValue(Object value) {
-        if (value == null) return null;
-        try { return Long.valueOf(String.valueOf(value)); } catch (NumberFormatException ignored) { return null; }
+        if (value == null)
+            return null;
+        try {
+            return Long.valueOf(String.valueOf(value));
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 }

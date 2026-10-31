@@ -29,12 +29,15 @@ public class RuntimeConfigResolver {
         Long creatorId = projectMapper.findCreatorId(projectId);
         ModelConfig model = resolveModel(workspaceId, projectId, creatorId, userId,
                 requested == null ? null : requested.get("modelConfigId"));
-        if (model != null) runtime.put("model", modelPayload(model));
+        if (model != null)
+            runtime.put("model", modelPayload(model));
         WebSearchConfig webSearch = resolveWebSearch(projectId, userId);
-        if (webSearch != null) runtime.put("webSearch", webPayload(webSearch));
+        if (webSearch != null)
+            runtime.put("webSearch", webPayload(webSearch));
         ModelConfig embedding = resolveEmbedding(workspaceId, projectId, creatorId, userId,
                 requested == null ? null : requested.get("embeddingConfigId"));
-        if (embedding != null) runtime.put("embedding", embeddingPayload(embedding));
+        if (embedding != null)
+            runtime.put("embedding", embeddingPayload(embedding));
         return runtime;
     }
 
@@ -42,42 +45,51 @@ public class RuntimeConfigResolver {
         Long creatorId = projectMapper.findCreatorId(projectId);
         ModelConfig model = modelId == null
                 ? modelMapper.findForRuntime(workspaceId, creatorId, userId).stream()
-                .filter(candidate -> !isEmbedding(candidate))
-                .findFirst().orElse(null)
+                        .filter(candidate -> !isEmbedding(candidate))
+                        .findFirst().orElse(null)
                 : modelMapper.findProjectVisibleById(modelId, workspaceId, projectId, creatorId, userId);
-        if (model == null || !model.isEnabled() || isEmbedding(model)) return Map.of();
+        if (model == null || !model.isEnabled() || isEmbedding(model))
+            return Map.of();
         return Map.of("model", modelPayload(model));
     }
 
     public Map<String, Object> resolveWorkspaceModelPayload(Long workspaceId, Long userId, Long modelId) {
         ModelConfig model = modelMapper.findVisibleById(modelId, workspaceId, userId);
-        if (model == null || !model.isEnabled() || isEmbedding(model)) return Map.of();
+        if (model == null || !model.isEnabled() || isEmbedding(model))
+            return Map.of();
         return Map.of("model", modelPayload(model));
     }
 
     public Map<String, Object> resolveWorkspaceEmbeddingPayload(Long workspaceId, Long userId, Long embeddingId) {
         ModelConfig embedding = modelMapper.findVisibleById(embeddingId, workspaceId, userId);
-        if (embedding == null || !embedding.isEnabled() || !isExternalEmbedding(embedding)) return Map.of();
+        if (embedding == null || !embedding.isEnabled() || !isExternalEmbedding(embedding))
+            return Map.of();
         return Map.of("embedding", embeddingPayload(embedding));
     }
 
-    public Map<String, Object> resolveEmbeddingPayload(Long workspaceId, Long projectId, Long userId, Object embeddingId) {
+    public Map<String, Object> resolveEmbeddingPayload(Long workspaceId, Long projectId, Long userId,
+            Object embeddingId) {
         Long creatorId = projectMapper.findCreatorId(projectId);
         ModelConfig embedding = resolveEmbedding(workspaceId, projectId, creatorId, userId, embeddingId);
-        if (embedding == null) return Map.of();
+        if (embedding == null)
+            return Map.of();
         return Map.of("embedding", embeddingPayload(embedding));
     }
 
     public Map<String, Object> resolveWebSearchPayload(Long projectId, Long userId) {
         WebSearchConfig webSearch = resolveWebSearch(projectId, userId);
-        if (webSearch == null) return Map.of();
+        if (webSearch == null)
+            return Map.of();
         return Map.of("webSearch", webPayload(webSearch));
     }
 
-    private ModelConfig resolveModel(Long workspaceId, Long projectId, Long creatorId, Long userId, Object requestedId) {
+    private ModelConfig resolveModel(Long workspaceId, Long projectId, Long creatorId, Long userId,
+            Object requestedId) {
         if (requestedId != null) {
-            ModelConfig requested = modelMapper.findProjectVisibleById(asLong(requestedId), workspaceId, projectId, creatorId, userId);
-            if (requested != null && requested.isEnabled() && !isEmbedding(requested)) return requested;
+            ModelConfig requested = modelMapper.findProjectVisibleById(asLong(requestedId), workspaceId, projectId,
+                    creatorId, userId);
+            if (requested != null && requested.isEnabled() && !isEmbedding(requested))
+                return requested;
         }
         return modelMapper.findForRuntime(workspaceId, creatorId, userId).stream()
                 .filter(model -> !isEmbedding(model))
@@ -85,10 +97,13 @@ public class RuntimeConfigResolver {
                 .orElse(null);
     }
 
-    private ModelConfig resolveEmbedding(Long workspaceId, Long projectId, Long creatorId, Long userId, Object requestedId) {
+    private ModelConfig resolveEmbedding(Long workspaceId, Long projectId, Long creatorId, Long userId,
+            Object requestedId) {
         if (requestedId != null) {
-            ModelConfig requested = modelMapper.findProjectVisibleById(asLong(requestedId), workspaceId, projectId, creatorId, userId);
-            if (requested != null && requested.isEnabled() && isExternalEmbedding(requested)) return requested;
+            ModelConfig requested = modelMapper.findProjectVisibleById(asLong(requestedId), workspaceId, projectId,
+                    creatorId, userId);
+            if (requested != null && requested.isEnabled() && isExternalEmbedding(requested))
+                return requested;
         }
         return modelMapper.findForRuntime(workspaceId, creatorId, userId).stream()
                 .filter(this::isExternalEmbedding)
@@ -102,7 +117,8 @@ public class RuntimeConfigResolver {
     }
 
     private boolean isExternalEmbedding(ModelConfig model) {
-        if (!isEmbedding(model)) return false;
+        if (!isEmbedding(model))
+            return false;
         Map<String, Object> config = parse(model.getConfig());
         String mode = String.valueOf(config.getOrDefault("mode", "openai"));
         return !"local".equalsIgnoreCase(mode) && !"hash".equalsIgnoreCase(mode);
@@ -110,7 +126,8 @@ public class RuntimeConfigResolver {
 
     private WebSearchConfig resolveWebSearch(Long projectId, Long userId) {
         WebSearchConfig configured = webSearchMapper.findByProject(projectId, userId);
-        if (configured != null) return configured.isEnabled() ? configured : null;
+        if (configured != null)
+            return configured.isEnabled() ? configured : null;
         WebSearchConfig defaults = new WebSearchConfig();
         defaults.setProvider("duckduckgo");
         defaults.setBaseUrl("https://html.duckduckgo.com/html/");
@@ -130,7 +147,8 @@ public class RuntimeConfigResolver {
         payload.put("model", model.getModelId());
         payload.put("timeoutSeconds", number(config, "timeout", 60));
         payload.put("retries", integer(config, "retries", 2));
-        payload.put("structuredOutputMethod", String.valueOf(config.getOrDefault("structuredOutputMethod", "json_schema")));
+        payload.put("structuredOutputMethod",
+                String.valueOf(config.getOrDefault("structuredOutputMethod", "json_schema")));
         Map<String, Object> generation = new LinkedHashMap<>();
         generation.put("temperature", decimal(config, "temperature", 0.3));
         generation.put("topP", decimal(config, "topP", 0.9));
@@ -141,11 +159,15 @@ public class RuntimeConfigResolver {
         generation.put("presencePenalty", decimal(config, "presencePenalty", 0));
         putIntegerIfPresent(generation, "seed", config.get("seed"));
         Object stop = config.get("stop");
-        if (stop instanceof List<?> values) generation.put("stop", values.stream().map(String::valueOf).filter(value -> !value.isBlank()).limit(4).toList());
+        if (stop instanceof List<?> values)
+            generation.put("stop",
+                    values.stream().map(String::valueOf).filter(value -> !value.isBlank()).limit(4).toList());
         String reasoning = String.valueOf(config.getOrDefault("reasoningEffort", "high"));
-        if (List.of("none", "low", "medium", "high").contains(reasoning)) generation.put("reasoningEffort", reasoning);
+        if (List.of("none", "low", "medium", "high").contains(reasoning))
+            generation.put("reasoningEffort", reasoning);
         Object extraBody = config.get("extraBody");
-        if (extraBody instanceof Map<?, ?> values) generation.put("extraBody", values);
+        if (extraBody instanceof Map<?, ?> values)
+            generation.put("extraBody", values);
         payload.put("generation", generation);
         return payload;
     }
@@ -166,47 +188,78 @@ public class RuntimeConfigResolver {
         String provider = tool.getProvider() == null ? "duckduckgo" : tool.getProvider().toLowerCase();
         payload.put("provider", provider);
         payload.put("apiKey", "brave".equals(provider) ? decrypt(tool.getCredentialCiphertext(), "联网搜索") : "");
-        payload.put("baseUrl", tool.getBaseUrl() == null || tool.getBaseUrl().isBlank() ? "https://html.duckduckgo.com/html/" : tool.getBaseUrl());
-        payload.put("language", tool.getLanguage() == null || tool.getLanguage().isBlank() ? "zh-hans" : tool.getLanguage());
+        payload.put("baseUrl",
+                tool.getBaseUrl() == null || tool.getBaseUrl().isBlank() ? "https://html.duckduckgo.com/html/"
+                        : tool.getBaseUrl());
+        payload.put("language",
+                tool.getLanguage() == null || tool.getLanguage().isBlank() ? "zh-hans" : tool.getLanguage());
         return payload;
     }
 
     private String decrypt(String ciphertext, String name) {
-        if (ciphertext == null || ciphertext.isBlank()) throw new IllegalStateException(name + "连接器缺少凭证");
+        if (ciphertext == null || ciphertext.isBlank())
+            throw new IllegalStateException(name + "连接器缺少凭证");
         return cipher.decrypt(ciphertext).trim();
     }
 
     private Map<String, Object> parse(String value) {
-        if (value == null || value.isBlank()) return Map.of();
-        try { return objectMapper.readValue(value, new TypeReference<>() {}); }
-        catch (Exception exception) { return Map.of(); }
+        if (value == null || value.isBlank())
+            return Map.of();
+        try {
+            return objectMapper.readValue(value, new TypeReference<>() {
+            });
+        } catch (Exception exception) {
+            return Map.of();
+        }
     }
 
     private Number number(Map<String, Object> config, String key, int fallback) {
         Object value = config.get(key);
-        if (value instanceof Number number) return number;
-        try { return Double.parseDouble(String.valueOf(value)); } catch (Exception ignored) { return fallback; }
+        if (value instanceof Number number)
+            return number;
+        try {
+            return Double.parseDouble(String.valueOf(value));
+        } catch (Exception ignored) {
+            return fallback;
+        }
     }
 
     private Number decimal(Map<String, Object> config, String key, double fallback) {
         Object value = config.get(key);
-        if (value instanceof Number number) return number;
-        try { return Double.parseDouble(String.valueOf(value)); } catch (Exception ignored) { return fallback; }
+        if (value instanceof Number number)
+            return number;
+        try {
+            return Double.parseDouble(String.valueOf(value));
+        } catch (Exception ignored) {
+            return fallback;
+        }
     }
 
     private int integer(Map<String, Object> config, String key, int fallback) {
         Object value = config.get(key);
-        if (value instanceof Number number) return Math.max(0, number.intValue());
-        try { return Math.max(0, Integer.parseInt(String.valueOf(value))); } catch (Exception ignored) { return fallback; }
+        if (value instanceof Number number)
+            return Math.max(0, number.intValue());
+        try {
+            return Math.max(0, Integer.parseInt(String.valueOf(value)));
+        } catch (Exception ignored) {
+            return fallback;
+        }
     }
 
     private void putIntegerIfPresent(Map<String, Object> target, String key, Object value) {
-        if (value == null || String.valueOf(value).isBlank()) return;
-        try { target.put(key, Math.max(0, Integer.parseInt(String.valueOf(value)))); } catch (Exception ignored) { }
+        if (value == null || String.valueOf(value).isBlank())
+            return;
+        try {
+            target.put(key, Math.max(0, Integer.parseInt(String.valueOf(value))));
+        } catch (Exception ignored) {
+        }
     }
 
     private Long asLong(Object value) {
-        try { return Long.valueOf(String.valueOf(value)); }
-        catch (Exception ignored) { return null; }
+        try {
+            return Long.valueOf(String.valueOf(value));
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 }

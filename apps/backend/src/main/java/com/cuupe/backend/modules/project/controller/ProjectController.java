@@ -27,35 +27,41 @@ public class ProjectController {
     }
 
     @PostMapping
-    public Result<Project> create(@PathVariable Long workspaceId, @Valid @RequestBody ProjectRequest request, Authentication authentication) {
+    public Result<Project> create(@PathVariable Long workspaceId, @Valid @RequestBody ProjectRequest request,
+            Authentication authentication) {
         Long userId = userId(authentication);
         Project project = projectService.create(workspaceId, userId, request);
-        auditLogService.record(workspaceId, project.getId(), userId, "PROJECT_CREATED", "PROJECT", project.getId(), Map.of("name", project.getName()));
+        auditLogService.record(workspaceId, project.getId(), userId, "PROJECT_CREATED", "PROJECT", project.getId(),
+                Map.of("name", project.getName()));
         return Result.success(project);
     }
 
     @GetMapping("/{projectId}")
-    public Result<Project> detail(@PathVariable Long workspaceId, @PathVariable Long projectId, Authentication authentication) {
+    public Result<Project> detail(@PathVariable Long workspaceId, @PathVariable Long projectId,
+            Authentication authentication) {
         return Result.success(projectService.detail(workspaceId, projectId, userId(authentication)));
     }
 
     @PatchMapping("/{projectId}")
-    public Result<Project> update(@PathVariable Long workspaceId, @PathVariable Long projectId, @Valid @RequestBody ProjectRequest request, Authentication authentication) {
+    public Result<Project> update(@PathVariable Long workspaceId, @PathVariable Long projectId,
+            @Valid @RequestBody ProjectRequest request, Authentication authentication) {
         Long userId = userId(authentication);
         Project project = projectService.update(workspaceId, projectId, userId, request);
-        auditLogService.record(workspaceId, projectId, userId, "PROJECT_UPDATED", "PROJECT", projectId, Map.of("name", project.getName()));
+        auditLogService.record(workspaceId, projectId, userId, "PROJECT_UPDATED", "PROJECT", projectId,
+                Map.of("name", project.getName()));
         return Result.success(project);
     }
 
     @PatchMapping("/{projectId}/chunking")
     public Result<Project> updateChunking(@PathVariable Long workspaceId, @PathVariable Long projectId,
-                                          @Valid @RequestBody ChunkingConfigRequest request, Authentication authentication) {
+            @Valid @RequestBody ChunkingConfigRequest request, Authentication authentication) {
         Long userId = userId(authentication);
         return Result.success(projectService.updateChunking(workspaceId, projectId, userId, request));
     }
 
     @DeleteMapping("/{projectId}")
-    public Result<Void> delete(@PathVariable Long workspaceId, @PathVariable Long projectId, Authentication authentication) {
+    public Result<Void> delete(@PathVariable Long workspaceId, @PathVariable Long projectId,
+            Authentication authentication) {
         Long userId = userId(authentication);
         projectService.delete(workspaceId, projectId, userId);
         auditLogService.record(workspaceId, projectId, userId, "PROJECT_DELETED", "PROJECT", projectId);
@@ -63,7 +69,8 @@ public class ProjectController {
     }
 
     @PatchMapping("/{projectId}/archive")
-    public Result<Project> archive(@PathVariable Long workspaceId, @PathVariable Long projectId, Authentication authentication) {
+    public Result<Project> archive(@PathVariable Long workspaceId, @PathVariable Long projectId,
+            Authentication authentication) {
         Long userId = userId(authentication);
         Project project = projectService.changeStatus(workspaceId, projectId, userId, "ARCHIVED");
         auditLogService.record(workspaceId, projectId, userId, "PROJECT_ARCHIVED", "PROJECT", projectId);
@@ -71,7 +78,8 @@ public class ProjectController {
     }
 
     @PatchMapping("/{projectId}/restore")
-    public Result<Project> restore(@PathVariable Long workspaceId, @PathVariable Long projectId, Authentication authentication) {
+    public Result<Project> restore(@PathVariable Long workspaceId, @PathVariable Long projectId,
+            Authentication authentication) {
         Long userId = userId(authentication);
         Project project = projectService.changeStatus(workspaceId, projectId, userId, "ACTIVE");
         auditLogService.record(workspaceId, projectId, userId, "PROJECT_RESTORED", "PROJECT", projectId);
@@ -80,7 +88,8 @@ public class ProjectController {
 
     private Long userId(Authentication authentication) {
         Object principal = authentication.getPrincipal();
-        if (!(principal instanceof UserLoginByPassword user) || user.getId() == null) throw new IllegalStateException("当前会话缺少用户信息");
+        if (!(principal instanceof UserLoginByPassword user) || user.getId() == null)
+            throw new IllegalStateException("当前会话缺少用户信息");
         return user.getId();
     }
 }

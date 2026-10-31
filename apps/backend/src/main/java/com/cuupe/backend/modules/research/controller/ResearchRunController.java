@@ -49,8 +49,7 @@ public class ResearchRunController {
             @PathVariable Long workspaceId,
             @PathVariable Long projectId,
             @RequestBody Map<String, Object> body,
-            Authentication auth
-    ) {
+            Authentication auth) {
         String goal = String.valueOf(body.getOrDefault("goal", "")).trim();
         if (goal.isBlank()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "调研目标不能为空");
@@ -64,7 +63,8 @@ public class ResearchRunController {
         run.setPriority(String.valueOf(body.getOrDefault("priority", "NORMAL")).toUpperCase(Locale.ROOT));
         run.setConfig(toConfig(body));
         mapper.insert(run);
-        auditLogService.record(workspaceId, projectId, userId, "RESEARCH_RUN_CREATED", "RESEARCH_RUN", run.getId(), Map.of("title", run.getTitle()));
+        auditLogService.record(workspaceId, projectId, userId, "RESEARCH_RUN_CREATED", "RESEARCH_RUN", run.getId(),
+                Map.of("title", run.getTitle()));
         notificationService.create(
                 workspaceId,
                 userId(auth),
@@ -72,14 +72,14 @@ public class ResearchRunController {
                 "research",
                 "调研运行已创建",
                 "“" + run.getTitle() + "”调研任务已进入队列。",
-                "project-runs"
-        );
+                "project-runs");
         dispatch(run, workspaceId, userId(auth), body);
         return Result.success(mapper.findById(run.getId(), projectId, userId(auth)));
     }
 
     @GetMapping("/{runId}")
-    public Result<Map<String, Object>> detail(@PathVariable Long projectId, @PathVariable Long runId, Authentication auth) {
+    public Result<Map<String, Object>> detail(@PathVariable Long projectId, @PathVariable Long runId,
+            Authentication auth) {
         ResearchRun run = required(runId, projectId, userId(auth));
         Map<String, Object> detail = new LinkedHashMap<>(objectMapper.convertValue(run, Map.class));
         try {
@@ -88,7 +88,8 @@ public class ResearchRunController {
             // A late runtime snapshot must not resurrect a cancelled/failed run.
             if (List.of("CANCELLED", "FAILED").contains(run.getStatus())) {
                 detail.put("status", run.getStatus());
-                if (run.getErrorMessage() != null) detail.put("errorMessage", run.getErrorMessage());
+                if (run.getErrorMessage() != null)
+                    detail.put("errorMessage", run.getErrorMessage());
             }
         } catch (Exception ignored) {
             detail.put("runtimeAvailable", false);
@@ -97,7 +98,8 @@ public class ResearchRunController {
     }
 
     @PostMapping("/{runId}/cancel")
-    public Result<ResearchRun> cancel(@PathVariable Long workspaceId, @PathVariable Long projectId, @PathVariable Long runId, Authentication auth) {
+    public Result<ResearchRun> cancel(@PathVariable Long workspaceId, @PathVariable Long projectId,
+            @PathVariable Long runId, Authentication auth) {
         Long userId = userId(auth);
         ResearchRun existing = required(runId, projectId, userId);
         if (List.of("COMPLETED", "FAILED", "CANCELLED").contains(existing.getStatus())) {
@@ -106,12 +108,18 @@ public class ResearchRunController {
         mapper.updateRuntime(runId, projectId, userId, "CANCELLED", null, "已取消", null, null);
         Result<ResearchRun> result = Result.success(required(runId, projectId, userId));
         auditLogService.record(workspaceId, projectId, userId, "RESEARCH_RUN_CANCELLED", "RESEARCH_RUN", runId);
-        Thread.startVirtualThread(() -> { try { aiClient.cancelRun(runId); } catch (Exception ignored) { } });
+        Thread.startVirtualThread(() -> {
+            try {
+                aiClient.cancelRun(runId);
+            } catch (Exception ignored) {
+            }
+        });
         return result;
     }
 
     @PostMapping("/{runId}/retry")
-    public Result<ResearchRun> retry(@PathVariable Long workspaceId, @PathVariable Long projectId, @PathVariable Long runId, Authentication auth) {
+    public Result<ResearchRun> retry(@PathVariable Long workspaceId, @PathVariable Long projectId,
+            @PathVariable Long runId, Authentication auth) {
         Long userId = userId(auth);
         ResearchRun run = required(runId, projectId, userId);
         if (!List.of("FAILED", "CANCELLED").contains(run.getStatus())) {
@@ -130,8 +138,7 @@ public class ResearchRunController {
             @PathVariable Long projectId,
             @PathVariable Long runId,
             @RequestBody Map<String, Object> body,
-            Authentication auth
-    ) {
+            Authentication auth) {
         Long userId = userId(auth);
         requiredWriteProject(workspaceId, projectId, userId);
         required(runId, projectId, userId);
@@ -141,14 +148,17 @@ public class ResearchRunController {
                     Map.of("mode", String.valueOf(body.getOrDefault("mode", "APPEND"))));
             return Result.success(response);
         } catch (Exception exception) {
-            throw new ApiException(HttpStatus.BAD_GATEWAY, "RESEARCH_PLAN_UPDATE_FAILED", "AI 计划更新失败：" + exception.getMessage());
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "RESEARCH_PLAN_UPDATE_FAILED",
+                    "AI 计划更新失败：" + exception.getMessage());
         }
     }
 
     private String toConfig(Map<String, Object> body) {
         Map<String, Object> config = new LinkedHashMap<>();
-        for (String key : List.of("allowWebSearch", "maxResearchRounds", "reportTemplate", "outputLanguage", "topK", "retrievalMode", "useReranker", "modelConfigId")) {
-            if (body.containsKey(key)) config.put(key, body.get(key));
+        for (String key : List.of("allowWebSearch", "maxResearchRounds", "reportTemplate", "outputLanguage", "topK",
+                "retrievalMode", "useReranker", "modelConfigId")) {
+            if (body.containsKey(key))
+                config.put(key, body.get(key));
         }
         try {
             return objectMapper.writeValueAsString(config);
@@ -161,10 +171,12 @@ public class ResearchRunController {
         Long resolvedWorkspaceId = workspaceId;
         Thread.startVirtualThread(() -> {
             try {
-                Map<String, Object> runtime = runtimeConfigResolver.resolve(resolvedWorkspaceId, run.getProjectId(), userId, requestConfig);
+                Map<String, Object> runtime = runtimeConfigResolver.resolve(resolvedWorkspaceId, run.getProjectId(),
+                        userId, requestConfig);
                 Map<String, Object> config = readConfig(run.getConfig());
                 config.putAll(agentPolicy(resolvedWorkspaceId, run.getProjectId(), userId));
-                aiClient.executeRun(run.getId(), resolvedWorkspaceId, run.getProjectId(), userId, run.getGoal(), objectMapper.writeValueAsString(config), runtime);
+                aiClient.executeRun(run.getId(), resolvedWorkspaceId, run.getProjectId(), userId, run.getGoal(),
+                        objectMapper.writeValueAsString(config), runtime);
             } catch (Exception exception) {
                 mapper.updateRuntime(run.getId(), run.getProjectId(), userId, "FAILED", null,
                         "启动分析失败", "分析服务启动失败，请检查模型配置和服务连接后重试。", null);
@@ -173,7 +185,8 @@ public class ResearchRunController {
     }
 
     private void requiredWriteProject(Long workspaceId, Long projectId, Long userId) {
-        if (projectMapper.findAccessibleById(workspaceId, projectId, userId) == null) throw notFound();
+        if (projectMapper.findAccessibleById(workspaceId, projectId, userId) == null)
+            throw notFound();
         if (!projectMapper.hasWriteAccess(workspaceId, projectId, userId)) {
             throw new ApiException(HttpStatus.FORBIDDEN, "RESEARCH_PLAN_FORBIDDEN", "只有项目创建者或管理员可以修改执行计划");
         }
@@ -191,41 +204,53 @@ public class ResearchRunController {
                     "labelExternal", reviewPolicy.isLabelExternal()));
         }
         Workspace workspace = workspaceMapper.findAccessible(workspaceId, userId);
-        if (workspace == null || workspace.getPreferences() == null || workspace.getPreferences().isBlank()) return result;
+        if (workspace == null || workspace.getPreferences() == null || workspace.getPreferences().isBlank())
+            return result;
         try {
             Map<String, Object> preferences = objectMapper.readValue(workspace.getPreferences(), Map.class);
             Object raw = preferences.get("agentPolicy");
             if (raw instanceof Map<?, ?> policy) {
-                if (policy.get("maxCalls") != null) result.put("toolMaxCalls", policy.get("maxCalls"));
-                if (policy.get("requireApproval") != null) result.put("requireToolApproval", policy.get("requireApproval"));
+                if (policy.get("maxCalls") != null)
+                    result.put("toolMaxCalls", policy.get("maxCalls"));
+                if (policy.get("requireApproval") != null)
+                    result.put("requireToolApproval", policy.get("requireApproval"));
             }
             Object localTools = preferences.get("localTools");
             if (localTools instanceof Map<?, ?> configuredTools) {
                 List<String> disabledTools = new java.util.ArrayList<>();
                 for (Map.Entry<?, ?> entry : configuredTools.entrySet()) {
-                    if (Boolean.FALSE.equals(entry.getValue())) disabledTools.add(String.valueOf(entry.getKey()));
+                    if (Boolean.FALSE.equals(entry.getValue()))
+                        disabledTools.add(String.valueOf(entry.getKey()));
                 }
-                if (!disabledTools.isEmpty()) result.put("disabledTools", disabledTools);
+                if (!disabledTools.isEmpty())
+                    result.put("disabledTools", disabledTools);
             }
             return result;
-        } catch (Exception ignored) { return result; }
+        } catch (Exception ignored) {
+            return result;
+        }
     }
 
     @SuppressWarnings("unchecked")
     private Map<String, Object> readConfig(String value) {
-        try { return objectMapper.readValue(value == null ? "{}" : value, Map.class); }
-        catch (Exception ignored) { return Map.of(); }
+        try {
+            return objectMapper.readValue(value == null ? "{}" : value, Map.class);
+        } catch (Exception ignored) {
+            return Map.of();
+        }
     }
 
     private ResearchRun required(Long id, Long projectId, Long userId) {
         ResearchRun run = mapper.findById(id, projectId, userId);
-        if (run == null) throw notFound();
+        if (run == null)
+            throw notFound();
         return run;
     }
 
     private Long userId(Authentication auth) {
         Object principal = auth.getPrincipal();
-        if (principal instanceof UserLoginByPassword user && user.getId() != null) return user.getId();
+        if (principal instanceof UserLoginByPassword user && user.getId() != null)
+            return user.getId();
         throw new IllegalStateException("当前会话缺少用户信息");
     }
 

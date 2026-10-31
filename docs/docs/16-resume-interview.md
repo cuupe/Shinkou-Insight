@@ -1,25 +1,27 @@
 # 16. 简历与面试材料
 
+> 详细备考请从 [全栈面试技术拆解](../interview/README.md) 开始：覆盖前端、Java、Python、PostgreSQL、Docker 全部服务、RAG/Agent、可靠性、120 个问答与官方资料导航，并区分当前实现和扩展方案。以下为简历与讲解摘要。
+
 ## 1. 项目名称
 
 **Shinkou Insight：企业知识调研与决策 Agent 平台**
 
 ## 2. 一句话介绍
 
-基于 Spring Boot、Vue、FastAPI、PostgreSQL、Milvus 和 LangGraph 构建的多工作区企业知识调研平台，支持文档 RAG、工具调用、可恢复 Agent 工作流、引用溯源、实时执行轨迹和离线评估。
+基于 Spring Boot、Vue、FastAPI、PostgreSQL 和 Milvus 构建的多工作区企业知识调研平台，支持文档 RAG、受约束的 Agent 决策与工具调用、运行快照、引用溯源、实时执行轨迹和离线评估。当前主执行路径为语义决策 Runtime，LangGraph 图保留为兼容与实验路径。
 
 ## 3. 简历项目描述示例
 
 ### 版本 A：Java / 全栈岗位
 
 - 将原代码影响分析项目重构为企业知识调研平台，保留邀请激活、多工作区 RBAC、项目、审计等控制面，使用 Spring Boot 统一管理知识资产、Agent Run、报告和行动项。
-- 设计 HttpOnly Cookie + JWT + Redis 会话方案，完成工作区和项目资源的多租户隔离，并对文件上传、跨工作区访问和 Agent 工具调用实施服务端权限校验。
+- 实现 HttpOnly Cookie + HttpSession 认证及会话控制，完成工作区和项目资源的多租户访问校验，并对文件上传、跨工作区访问和 Agent 工具调用实施服务端权限限制；Redis 用于验证码、限流及 AI 缓存、队列和运行快照，当前未接入共享 HttpSession。
 - 构建 Java 控制面与 Python AI Runtime 分离架构，通过 REST/SSE 展示 Agent 节点、工具、证据和错误状态，支持运行取消、有限重试和结果持久化。
 
 ### 版本 B：AI Agent / 大模型应用岗位
 
 - 实现 PDF/Markdown/TXT 解析、结构化切片、Embedding、Milvus 向量检索、PostgreSQL 关键词检索、RRF 融合与可选 Rerank，支持可点击 Chunk 引用和资料不足拒答。
-- 使用 LangGraph 编排计划、内部检索、证据评估、查询改写、外部搜索、报告生成和引用审核节点，通过最大轮次和工具白名单控制 Agent 成本与行为。
+- 构建语义决策 Runtime、Agent 角色契约与协调机制，覆盖计划、内部检索、证据评估、查询改写、外部搜索、报告生成和引用审核，通过决策/时间预算、工具次数和白名单约束成本与行为；保留 LangGraph 兼容图。
 - 建立 Prompt 版本、Pydantic 结构化输出和离线评估数据集，跟踪 Recall@K、引用正确率、JSON 成功率、Token、延迟和工具失败率。
 - 设计基于真实运行反馈的证据判定 QLoRA 实验，以 Prompt 优化模型为基线对比 Macro-F1 和冲突召回率；该模块作为后期增强而非 MVP 依赖。
 
@@ -42,7 +44,7 @@ Java 适合稳定业务、认证、权限、事务和管理 API；Python 适合�
 ### 4.3 RAG 与 LangGraph 区别
 
 ```text
-RAG 负责从资料中找到真实证据；LangGraph 负责何时检索、是否继续、何时搜索互联网、何时写报告和审核。
+RAG 负责从资料中找到证据；工作流/Agent 决策负责何时检索、是否继续、何时搜索、写报告和审核。当前主链路使用 Runtime 与 DecisionEngine，LangGraph 是仓库保留的一种兼容图实现。
 ```
 
 ### 4.4 为什么不是完全自主 Agent
@@ -71,7 +73,7 @@ RAG 负责从资料中找到真实证据；LangGraph 负责何时检索、是否
 2. 向量和关键词分数如何融合？
 3. 如何处理同一问题的冲突资料？
 4. SSE 断线和重复事件怎么处理？
-5. LangGraph Checkpoint 与业务数据库为什么都要保存？
+5. 运行快照、事件记录、业务数据库与节点级 Checkpoint 分别能保证什么？
 6. 如何防止 Prompt Injection 调用危险工具？
 7. LoRA 为什么不用于记忆企业资料？
 8. 如何证明 Prompt v2 比 v1 更好？

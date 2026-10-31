@@ -8,34 +8,30 @@ import java.util.List;
 
 @Mapper
 public interface EvaluationCaseMapper {
-    List<EvaluationCase> findByWorkspace(
-            @Param("workspaceId") Long workspaceId,
-            @Param("userId") Long userId
-    );
+        List<EvaluationCase> findByWorkspace(
+                        @Param("workspaceId") Long workspaceId,
+                        @Param("userId") Long userId);
 
-    EvaluationCase findById(
-            @Param("workspaceId") Long workspaceId,
-            @Param("id") Long id,
-            @Param("userId") Long userId
-    );
+        EvaluationCase findById(
+                        @Param("workspaceId") Long workspaceId,
+                        @Param("id") Long id,
+                        @Param("userId") Long userId);
 
-    int updateStatus(
-            @Param("workspaceId") Long workspaceId,
-            @Param("id") Long id,
-            @Param("userId") Long userId,
-            @Param("status") String status
-    );
+        int updateStatus(
+                        @Param("workspaceId") Long workspaceId,
+                        @Param("id") Long id,
+                        @Param("userId") Long userId,
+                        @Param("status") String status);
 
-    int updateDefinition(EvaluationCase item);
+        int updateDefinition(EvaluationCase item);
 
-    int saveEvaluationResult(
-            @Param("workspaceId") Long workspaceId,
-            @Param("id") Long id,
-            @Param("userId") Long userId,
-            @Param("recall") Double recall,
-            @Param("status") String status,
-            @Param("result") String result
-    );
+        int saveEvaluationResult(
+                        @Param("workspaceId") Long workspaceId,
+                        @Param("id") Long id,
+                        @Param("userId") Long userId,
+                        @Param("recall") Double recall,
+                        @Param("status") String status,
+                        @Param("result") String result);
 
-    int insert(EvaluationCase item);
+        int insert(EvaluationCase item);
 }
