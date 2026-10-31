@@ -68,6 +68,8 @@ RAG / Prompt / Tool Registry / Evaluation / Optional LoRA
 
 ## 4. 文档目录
 
+面试备考详解见 [全栈面试技术拆解](interview/README.md)，包含逐层原理、源码证据、Docker 各服务、故障场景、120 个问答及 51 项官方/论文来源。本文部分架构描述保留了早期规划背景，当前实现边界以详解中的源码核对为准。
+
 | 文档 | 内容 |
 |---|---|
 | `docs/00-refactor-plan.md` | 从旧项目迁移到新项目的具体方案 |

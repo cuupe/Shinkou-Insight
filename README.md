@@ -52,7 +52,7 @@ AI 服务同时支持向量检索、关键词检索和混合检索，并使用 R
 
 ### 8. 安全默认值优先
 
-系统包含基于 Cookie 会话的认证、Redis 会话控制、验证码和登录限流、CSRF/CORS 配置、工作区成员权限、文件类型与大小限制、对象存储隔离、内部 API Key、审计记录以及安全 Harness。文档和网页内容按不可信数据处理，不会因为检索文本中的“指令”而改变工具权限或租户上下文。
+系统包含基于 Cookie / HttpSession 的认证和会话控制、Redis 验证码与登录限流、CSRF/CORS 配置、工作区成员权限、文件类型与大小限制、对象存储隔离、内部 API Key、审计记录以及安全 Harness。文档和网页内容按不可信数据处理，不会因为检索文本中的“指令”而改变工具权限或租户上下文。
 
 ## 功能地图
 
@@ -467,6 +467,8 @@ Docker 镜像内会安装 Tesseract、Poppler、LibreOffice 和 FFmpeg；本地 
 
 ## 文档导航
 
+- [面试技术文档（私有仓库）](https://github.com/cuupe/Shinkou-Insight-Interview-Docs)：全栈技术拆解、120 个问答与官方资料，需仓库访问权限。
+- [全栈面试技术拆解](docs/interview/README.md)：从前端到 Java/Python、数据库、Docker 各服务的详细原理、实现边界、120 个面试问答与官方资料导航。
 - [产品定位](docs/product-positioning.md)：目标用户、核心模块、反虚构制度和产品边界。
 - [系统架构](docs/docs/02-architecture.md)：服务拆分、数据流和部署关系。
 - [数据库设计](docs/docs/04-database.md)：业务表、运行数据、证据、报告和评估模型。
