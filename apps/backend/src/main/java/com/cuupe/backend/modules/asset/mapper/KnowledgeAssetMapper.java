@@ -8,17 +8,35 @@ import java.util.Map;
 
 @Mapper
 public interface KnowledgeAssetMapper {
-    List<KnowledgeAsset> findByProject(@Param("projectId") Long projectId, @Param("userId") Long userId);
-    KnowledgeAsset findByProjectAndChecksum(@Param("projectId") Long projectId, @Param("checksum") String checksum, @Param("userId") Long userId);
-    KnowledgeAsset findByProjectAndSourceUrl(@Param("projectId") Long projectId, @Param("sourceUrl") String sourceUrl, @Param("userId") Long userId);
-    KnowledgeAsset findById(@Param("id") Long id, @Param("projectId") Long projectId, @Param("userId") Long userId);
-    int insert(KnowledgeAsset asset);
-    int markDeleted(@Param("id") Long id, @Param("projectId") Long projectId, @Param("userId") Long userId);
-    int resetIndex(@Param("id") Long id, @Param("projectId") Long projectId, @Param("userId") Long userId);
-    int markIndexing(@Param("id") Long id, @Param("projectId") Long projectId);
-    int markIndexed(@Param("id") Long id, @Param("projectId") Long projectId);
-    int markIndexFailed(@Param("id") Long id, @Param("projectId") Long projectId, @Param("message") String message);
-    List<Map<String, Object>> findChunks(@Param("assetId") Long assetId, @Param("projectId") Long projectId, @Param("userId") Long userId, @Param("offset") int offset, @Param("limit") int limit, @Param("chunkId") Long chunkId, @Param("pageNumber") Integer pageNumber);
-    int deleteChunks(@Param("assetId") Long assetId);
-    int insertChunk(@Param("assetId") Long assetId, @Param("chunkIndex") Integer chunkIndex, @Param("content") String content);
+        List<KnowledgeAsset> findByProject(@Param("projectId") Long projectId, @Param("userId") Long userId);
+
+        KnowledgeAsset findByProjectAndChecksum(@Param("projectId") Long projectId, @Param("checksum") String checksum,
+                        @Param("userId") Long userId);
+
+        KnowledgeAsset findByProjectAndSourceUrl(@Param("projectId") Long projectId,
+                        @Param("sourceUrl") String sourceUrl,
+                        @Param("userId") Long userId);
+
+        KnowledgeAsset findById(@Param("id") Long id, @Param("projectId") Long projectId, @Param("userId") Long userId);
+
+        int insert(KnowledgeAsset asset);
+
+        int markDeleted(@Param("id") Long id, @Param("projectId") Long projectId, @Param("userId") Long userId);
+
+        int resetIndex(@Param("id") Long id, @Param("projectId") Long projectId, @Param("userId") Long userId);
+
+        int markIndexing(@Param("id") Long id, @Param("projectId") Long projectId);
+
+        int markIndexed(@Param("id") Long id, @Param("projectId") Long projectId);
+
+        int markIndexFailed(@Param("id") Long id, @Param("projectId") Long projectId, @Param("message") String message);
+
+        List<Map<String, Object>> findChunks(@Param("assetId") Long assetId, @Param("projectId") Long projectId,
+                        @Param("userId") Long userId, @Param("offset") int offset, @Param("limit") int limit,
+                        @Param("chunkId") Long chunkId, @Param("pageNumber") Integer pageNumber);
+
+        int deleteChunks(@Param("assetId") Long assetId);
+
+        int insertChunk(@Param("assetId") Long assetId, @Param("chunkIndex") Integer chunkIndex,
+                        @Param("content") String content);
 }

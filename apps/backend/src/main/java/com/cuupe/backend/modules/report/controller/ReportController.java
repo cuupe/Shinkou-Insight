@@ -44,21 +44,29 @@ public class ReportController {
             @PathVariable Long projectId,
             @PathVariable Long reportId,
             @RequestBody Map<String, Object> body,
-            Authentication auth
-    ) {
+            Authentication auth) {
         Long userId = userId(auth);
         Report report = reviewService.lockAndLoadReport(workspaceId, projectId, reportId, userId);
         var previousFields = ProjectReviewService.reportFields(report);
         String previousStatus = report.getStatus();
-        if (body.containsKey("title")) report.setTitle(stringValue(body.get("title")));
-        if (body.containsKey("status")) report.setStatus(stringValue(body.get("status")));
-        if (body.containsKey("versionNo")) report.setVersionNo(stringValue(body.get("versionNo")));
-        if (body.containsKey("lead")) report.setLead(stringValue(body.get("lead")));
-        if (body.containsKey("summary")) report.setSummary(stringValue(body.get("summary")));
-        if (body.containsKey("recommendation")) report.setRecommendation(stringValue(body.get("recommendation")));
-        if (body.containsKey("recommendationDetail")) report.setRecommendationDetail(stringValue(body.get("recommendationDetail")));
-        if (body.containsKey("citations")) report.setCitations(integerValue(body.get("citations")));
-        if (body.containsKey("content")) report.setContent(stringValue(body.get("content")));
+        if (body.containsKey("title"))
+            report.setTitle(stringValue(body.get("title")));
+        if (body.containsKey("status"))
+            report.setStatus(stringValue(body.get("status")));
+        if (body.containsKey("versionNo"))
+            report.setVersionNo(stringValue(body.get("versionNo")));
+        if (body.containsKey("lead"))
+            report.setLead(stringValue(body.get("lead")));
+        if (body.containsKey("summary"))
+            report.setSummary(stringValue(body.get("summary")));
+        if (body.containsKey("recommendation"))
+            report.setRecommendation(stringValue(body.get("recommendation")));
+        if (body.containsKey("recommendationDetail"))
+            report.setRecommendationDetail(stringValue(body.get("recommendationDetail")));
+        if (body.containsKey("citations"))
+            report.setCitations(integerValue(body.get("citations")));
+        if (body.containsKey("content"))
+            report.setContent(stringValue(body.get("content")));
         boolean changed = !previousFields.equals(ProjectReviewService.reportFields(report));
         if (changed && "PUBLISHED".equalsIgnoreCase(previousStatus) && !body.containsKey("status")) {
             report.setStatus("DRAFT");
@@ -69,24 +77,46 @@ public class ReportController {
         }
         mapper.update(report);
         auditLogService.record(workspaceId, projectId, userId, "REPORT_UPDATED", "REPORT", reportId);
-        notificationService.create(workspaceId, userId, projectId, "report", "报告已更新", "“" + report.getTitle() + "”的内容已发生更新。", "project-reports");
+        notificationService.create(workspaceId, userId, projectId, "report", "报告已更新",
+                "“" + report.getTitle() + "”的内容已发生更新。", "project-reports");
         return Result.success(required(reportId, projectId, userId));
     }
 
     @GetMapping("/{reportId}/export")
-    public ResponseEntity<byte[]> export(@PathVariable Long workspaceId, @PathVariable Long projectId, @PathVariable Long reportId, @RequestParam(defaultValue = "markdown") String format, Authentication auth) {
+    public ResponseEntity<byte[]> export(@PathVariable Long workspaceId, @PathVariable Long projectId,
+            @PathVariable Long reportId, @RequestParam(defaultValue = "markdown") String format, Authentication auth) {
         Long userId = userId(auth);
         Report report = required(reportId, projectId, userId);
-        auditLogService.record(workspaceId, projectId, userId, "REPORT_EXPORTED", "REPORT", reportId, Map.of("format", format));
+        auditLogService.record(workspaceId, projectId, userId, "REPORT_EXPORTED", "REPORT", reportId,
+                Map.of("format", format));
         String content = report.getContent() == null ? "" : report.getContent();
         return ResponseEntity.ok()
                 .contentType(MediaType.TEXT_PLAIN)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=report-" + reportId + "." + (format.equalsIgnoreCase("json") ? "json" : "md"))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=report-" + reportId + "."
+                                + (format.equalsIgnoreCase("json") ? "json" : "md"))
                 .body(content.getBytes(StandardCharsets.UTF_8));
     }
 
-    private String stringValue(Object value) { return value == null ? null : String.valueOf(value); }
-    private Integer integerValue(Object value) { return value == null ? null : Integer.valueOf(String.valueOf(value)); }
-    private Report required(Long id, Long projectId, Long userId) { Report report = mapper.findById(id, projectId, userId); if (report == null) throw new ApiException(HttpStatus.NOT_FOUND, "REPORT_NOT_FOUND", "报告不存在或无权访问"); return report; }
-    private Long userId(Authentication auth) { Object principal = auth.getPrincipal(); if (principal instanceof UserLoginByPassword user && user.getId() != null) return user.getId(); throw new IllegalStateException("当前会话缺少用户信息"); }
+    private String stringValue(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private Integer integerValue(Object value) {
+        return value == null ? null : Integer.valueOf(String.valueOf(value));
+    }
+
+    private Report required(Long id, Long projectId, Long userId) {
+        Report report = mapper.findById(id, projectId, userId);
+        if (report == null)
+            throw new ApiException(HttpStatus.NOT_FOUND, "REPORT_NOT_FOUND", "报告不存在或无权访问");
+        return report;
+    }
+
+    private Long userId(Authentication auth) {
+        Object principal = auth.getPrincipal();
+        if (principal instanceof UserLoginByPassword user && user.getId() != null)
+            return user.getId();
+        throw new IllegalStateException("当前会话缺少用户信息");
+    }
 }

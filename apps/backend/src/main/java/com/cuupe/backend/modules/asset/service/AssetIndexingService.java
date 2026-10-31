@@ -17,7 +17,7 @@ public class AssetIndexingService {
     private final AiIndexingClient aiClient;
 
     public void schedule(KnowledgeAsset asset, Long workspaceId, Long userId,
-                         Map<String, Object> runtimeEmbedding, String chunkingConfig) {
+            Map<String, Object> runtimeEmbedding, String chunkingConfig) {
         Runnable start = () -> Thread.startVirtualThread(() -> {
             try {
                 aiClient.index(asset, workspaceId, userId, runtimeEmbedding, chunkingConfig);
@@ -30,7 +30,10 @@ public class AssetIndexingService {
         // INDEXING state before it inserts chunks or reports completion.
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override public void afterCommit() { start.run(); }
+                @Override
+                public void afterCommit() {
+                    start.run();
+                }
             });
         } else {
             start.run();

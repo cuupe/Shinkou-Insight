@@ -32,18 +32,23 @@ public class SecretCipher {
         } else {
             bytes = Base64.getDecoder().decode(encodedKey);
         }
-        if (bytes.length != 32) throw new IllegalArgumentException("encryption-key 必须是 Base64 编码的 32 字节密钥");
+        if (bytes.length != 32)
+            throw new IllegalArgumentException("encryption-key 必须是 Base64 编码的 32 字节密钥");
         this.key = new SecretKeySpec(bytes, "AES");
     }
 
     public String encrypt(String value) {
         try {
-            byte[] iv = new byte[IV_LENGTH]; random.nextBytes(iv);
+            byte[] iv = new byte[IV_LENGTH];
+            random.nextBytes(iv);
             Cipher cipher = Cipher.getInstance(TRANSFORMATION);
             cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(TAG_LENGTH, iv));
             byte[] encrypted = cipher.doFinal(value.getBytes(StandardCharsets.UTF_8));
-            return Base64.getEncoder().encodeToString(ByteBuffer.allocate(iv.length + encrypted.length).put(iv).put(encrypted).array());
-        } catch (Exception exception) { throw new IllegalStateException("无法加密配置凭证", exception); }
+            return Base64.getEncoder()
+                    .encodeToString(ByteBuffer.allocate(iv.length + encrypted.length).put(iv).put(encrypted).array());
+        } catch (Exception exception) {
+            throw new IllegalStateException("无法加密配置凭证", exception);
+        }
     }
 
     public String decrypt(String value) {
@@ -57,6 +62,8 @@ public class SecretCipher {
             Cipher cipher = Cipher.getInstance(TRANSFORMATION);
             cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(TAG_LENGTH, iv));
             return new String(cipher.doFinal(encrypted), StandardCharsets.UTF_8);
-        } catch (Exception exception) { throw new IllegalStateException("无法解密配置凭证", exception); }
+        } catch (Exception exception) {
+            throw new IllegalStateException("无法解密配置凭证", exception);
+        }
     }
 }

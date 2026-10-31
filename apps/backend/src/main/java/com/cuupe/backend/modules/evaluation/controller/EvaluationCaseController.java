@@ -48,8 +48,7 @@ public class EvaluationCaseController {
     @GetMapping
     public Result<List<EvaluationCase>> list(
             @PathVariable Long workspaceId,
-            Authentication auth
-    ) {
+            Authentication auth) {
         return Result.success(mapper.findByWorkspace(workspaceId, userId(auth)));
     }
 
@@ -57,8 +56,7 @@ public class EvaluationCaseController {
     public Result<EvaluationCase> create(
             @PathVariable Long workspaceId,
             @Valid @RequestBody CaseRequest request,
-            Authentication auth
-    ) {
+            Authentication auth) {
         EvaluationCase item = new EvaluationCase();
         item.setWorkspaceId(workspaceId);
         item.setProjectId(request.projectId());
@@ -77,8 +75,7 @@ public class EvaluationCaseController {
                 "evaluation",
                 "评估用例已创建",
                 "新的评估用例已加入评估集。",
-                "project-evaluation"
-        );
+                "project-evaluation");
         return Result.success(mapper.findById(workspaceId, item.getId(), userId(auth)));
     }
 
@@ -87,8 +84,7 @@ public class EvaluationCaseController {
             @PathVariable Long workspaceId,
             @PathVariable Long caseId,
             @RequestBody Map<String, Object> body,
-            Authentication auth
-    ) {
+            Authentication auth) {
         Long userId = userId(auth);
         EvaluationCase item = required(workspaceId, caseId, userId);
         if (containsDefinition(body)) {
@@ -99,11 +95,16 @@ public class EvaluationCaseController {
                 }
                 item.setQuery(query);
             }
-            if (body.containsKey("expectedAnswer")) item.setExpectedAnswer(trimToNull(stringValue(body.get("expectedAnswer"))));
-            if (body.containsKey("expectedAsset")) item.setExpectedAsset(normalizeExpectedAsset(stringValue(body.get("expectedAsset"))));
-            if (body.containsKey("expectedChunkIds")) item.setExpectedChunkIds(writeJson(normalizeValues(body.get("expectedChunkIds"))));
-            if (body.containsKey("requiredFacts")) item.setRequiredFacts(writeJson(normalizeValues(body.get("requiredFacts"))));
-            if (body.containsKey("forbiddenFacts")) item.setForbiddenFacts(writeJson(normalizeValues(body.get("forbiddenFacts"))));
+            if (body.containsKey("expectedAnswer"))
+                item.setExpectedAnswer(trimToNull(stringValue(body.get("expectedAnswer"))));
+            if (body.containsKey("expectedAsset"))
+                item.setExpectedAsset(normalizeExpectedAsset(stringValue(body.get("expectedAsset"))));
+            if (body.containsKey("expectedChunkIds"))
+                item.setExpectedChunkIds(writeJson(normalizeValues(body.get("expectedChunkIds"))));
+            if (body.containsKey("requiredFacts"))
+                item.setRequiredFacts(writeJson(normalizeValues(body.get("requiredFacts"))));
+            if (body.containsKey("forbiddenFacts"))
+                item.setForbiddenFacts(writeJson(normalizeValues(body.get("forbiddenFacts"))));
             item.setCreatedBy(userId);
             mapper.updateDefinition(item);
         }
@@ -121,8 +122,7 @@ public class EvaluationCaseController {
     public Result<EvaluationCase> runRetrievalEvaluation(
             @PathVariable Long workspaceId,
             @PathVariable Long caseId,
-            Authentication auth
-    ) throws IOException {
+            Authentication auth) throws IOException {
         Long userId = userId(auth);
         EvaluationCase item = required(workspaceId, caseId, userId);
         if (item.getProjectId() == null) {
@@ -148,9 +148,9 @@ public class EvaluationCaseController {
         payload.put("retrievalMode", "HYBRID");
         payload.put("useReranker", false);
         Map<String, Object> runtime = runtimeConfigResolver.resolveEmbeddingPayload(
-                workspaceId, item.getProjectId(), userId, null
-        );
-        if (runtime.get("embedding") != null) payload.put("runtimeEmbedding", runtime.get("embedding"));
+                workspaceId, item.getProjectId(), userId, null);
+        if (runtime.get("embedding") != null)
+            payload.put("runtimeEmbedding", runtime.get("embedding"));
 
         Map<String, Object> response = aiClient.knowledge("/internal/knowledge/search", payload);
         Object rawData = response.get("data");
@@ -158,7 +158,8 @@ public class EvaluationCaseController {
         List<?> results = data.get("items") instanceof List<?> list ? list : List.of();
         List<Map<?, ?>> retrieved = new ArrayList<>();
         for (Object result : results) {
-            if (result instanceof Map<?, ?> map) retrieved.add(map);
+            if (result instanceof Map<?, ?> map)
+                retrieved.add(map);
         }
 
         Set<String> retrievedChunkIds = new LinkedHashSet<>();
@@ -166,10 +167,13 @@ public class EvaluationCaseController {
         StringBuilder retrievedText = new StringBuilder();
         for (Map<?, ?> result : retrieved) {
             String chunkId = value(result, "chunkId", "chunk_id");
-            if (!chunkId.isBlank()) retrievedChunkIds.add(chunkId);
+            if (!chunkId.isBlank())
+                retrievedChunkIds.add(chunkId);
             String asset = value(result, "assetName", "asset_name");
-            if (asset.isBlank()) asset = value(result, "sourceName", "source_name");
-            if (!asset.isBlank()) retrievedAssets.add(asset);
+            if (asset.isBlank())
+                asset = value(result, "sourceName", "source_name");
+            if (!asset.isBlank())
+                retrievedAssets.add(asset);
             retrievedText.append(' ').append(value(result, "content", "content"));
         }
 
@@ -214,8 +218,7 @@ public class EvaluationCaseController {
         result.put("status", passed ? "PASSED" : "FAILED");
 
         if (mapper.saveEvaluationResult(
-                workspaceId, caseId, userId, recall, passed ? "PASSED" : "FAILED", writeJson(result)
-        ) == 0) {
+                workspaceId, caseId, userId, recall, passed ? "PASSED" : "FAILED", writeJson(result)) == 0) {
             throw notFound();
         }
         notificationService.create(
@@ -225,24 +228,26 @@ public class EvaluationCaseController {
                 "evaluation",
                 passed ? "检索评估已通过" : "检索评估未通过",
                 "“" + item.getQuery() + "”的 Recall@" + RETRIEVAL_TOP_K + " 为 " + recall + "%。",
-                "project-evaluation"
-        );
+                "project-evaluation");
         return Result.success(required(workspaceId, caseId, userId));
     }
 
     private EvaluationCase required(Long workspaceId, Long caseId, Long userId) {
         EvaluationCase item = mapper.findById(workspaceId, caseId, userId);
-        if (item == null) throw notFound();
+        if (item == null)
+            throw notFound();
         return item;
     }
 
     private boolean containsDefinition(Map<String, Object> body) {
-        return List.of("query", "expectedAnswer", "expectedAsset", "expectedChunkIds", "requiredFacts", "forbiddenFacts")
+        return List
+                .of("query", "expectedAnswer", "expectedAsset", "expectedChunkIds", "requiredFacts", "forbiddenFacts")
                 .stream().anyMatch(body::containsKey);
     }
 
     private List<String> normalizeValues(Object raw) {
-        if (!(raw instanceof List<?> values)) return List.of();
+        if (!(raw instanceof List<?> values))
+            return List.of();
         List<String> normalized = values.stream().map(this::stringValue).map(String::trim)
                 .filter(value -> !value.isBlank()).distinct().toList();
         if (normalized.size() > 50 || normalized.stream().anyMatch(value -> value.length() > 1000)) {
@@ -252,7 +257,8 @@ public class EvaluationCaseController {
     }
 
     private List<String> readJsonArray(String json) {
-        if (json == null || json.isBlank()) return List.of();
+        if (json == null || json.isBlank())
+            return List.of();
         try {
             Object parsed = objectMapper.readValue(json, List.class);
             return normalizeValues(parsed);
@@ -309,8 +315,7 @@ public class EvaluationCaseController {
             throw new ApiException(
                     HttpStatus.BAD_REQUEST,
                     "INVALID_EVALUATION_STATUS",
-                    "评估状态不能为空"
-            );
+                    "评估状态不能为空");
         }
         return switch (String.valueOf(value).trim().toUpperCase(Locale.ROOT)) {
             case "PASSED" -> "PASSED";
@@ -319,8 +324,7 @@ public class EvaluationCaseController {
             default -> throw new ApiException(
                     HttpStatus.BAD_REQUEST,
                     "INVALID_EVALUATION_STATUS",
-                    "评估状态不正确"
-            );
+                    "评估状态不正确");
         };
     }
 
@@ -328,8 +332,7 @@ public class EvaluationCaseController {
         return new ApiException(
                 HttpStatus.NOT_FOUND,
                 "EVALUATION_CASE_NOT_FOUND",
-                "评估用例不存在或无权访问"
-        );
+                "评估用例不存在或无权访问");
     }
 
     private Long userId(Authentication auth) {
@@ -343,7 +346,6 @@ public class EvaluationCaseController {
             String expectedAsset,
             List<String> expectedChunkIds,
             List<String> requiredFacts,
-            List<String> forbiddenFacts
-    ) {
+            List<String> forbiddenFacts) {
     }
 }

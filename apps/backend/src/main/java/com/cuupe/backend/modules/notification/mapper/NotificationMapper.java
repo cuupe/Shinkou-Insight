@@ -8,29 +8,25 @@ import java.util.List;
 
 @Mapper
 public interface NotificationMapper {
-    List<Notification> findByWorkspaceAndUser(
-            @Param("workspaceId") Long workspaceId,
-            @Param("userId") Long userId
-    );
+        List<Notification> findByWorkspaceAndUser(
+                        @Param("workspaceId") Long workspaceId,
+                        @Param("userId") Long userId);
 
-    int insert(
-            @Param("workspaceId") Long workspaceId,
-            @Param("recipientUserId") Long recipientUserId,
-            @Param("projectId") Long projectId,
-            @Param("kind") String kind,
-            @Param("title") String title,
-            @Param("body") String body,
-            @Param("routeName") String routeName
-    );
+        int insert(
+                        @Param("workspaceId") Long workspaceId,
+                        @Param("recipientUserId") Long recipientUserId,
+                        @Param("projectId") Long projectId,
+                        @Param("kind") String kind,
+                        @Param("title") String title,
+                        @Param("body") String body,
+                        @Param("routeName") String routeName);
 
-    int markRead(
-            @Param("id") Long id,
-            @Param("workspaceId") Long workspaceId,
-            @Param("userId") Long userId
-    );
+        int markRead(
+                        @Param("id") Long id,
+                        @Param("workspaceId") Long workspaceId,
+                        @Param("userId") Long userId);
 
-    int markAllRead(
-            @Param("workspaceId") Long workspaceId,
-            @Param("userId") Long userId
-    );
+        int markAllRead(
+                        @Param("workspaceId") Long workspaceId,
+                        @Param("userId") Long userId);
 }

@@ -22,8 +22,7 @@ public class AuditLogService {
             String action,
             String resourceType,
             Object resourceId,
-            Map<String, ?> details
-    ) {
+            Map<String, ?> details) {
         String json;
         try {
             json = objectMapper.writeValueAsString(details == null ? Map.of() : details);
@@ -38,8 +37,7 @@ public class AuditLogService {
                 resourceType,
                 resourceId == null ? null : String.valueOf(resourceId),
                 "SUCCESS",
-                json
-        );
+                json);
     }
 
     public void recordFailure(
@@ -49,8 +47,7 @@ public class AuditLogService {
             String action,
             String resourceType,
             Object resourceId,
-            Map<String, ?> details
-    ) {
+            Map<String, ?> details) {
         String json;
         try {
             json = objectMapper.writeValueAsString(details == null ? Map.of() : details);
@@ -65,8 +62,7 @@ public class AuditLogService {
                 resourceType,
                 resourceId == null ? null : String.valueOf(resourceId),
                 "FAILURE",
-                json
-        );
+                json);
     }
 
     public void record(
@@ -75,8 +71,7 @@ public class AuditLogService {
             Long actorUserId,
             String action,
             String resourceType,
-            Object resourceId
-    ) {
+            Object resourceId) {
         record(workspaceId, projectId, actorUserId, action, resourceType, resourceId, Map.of());
     }
 

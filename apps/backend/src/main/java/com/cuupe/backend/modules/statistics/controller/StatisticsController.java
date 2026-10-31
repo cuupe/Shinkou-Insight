@@ -26,20 +26,22 @@ public class StatisticsController {
 
     @GetMapping("/{workspaceId}/statistics")
     public Result<StatisticsResponse> workspace(@PathVariable Long workspaceId,
-                                                @RequestParam(defaultValue = "30") int days,
-                                                Authentication authentication) {
+            @RequestParam(defaultValue = "30") int days,
+            Authentication authentication) {
         Long userId = userId(authentication);
-        if (workspaceMapper.findAccessible(workspaceId, userId) == null) throw notFound("工作区不存在或无权访问");
+        if (workspaceMapper.findAccessible(workspaceId, userId) == null)
+            throw notFound("工作区不存在或无权访问");
         return Result.success(load(workspaceId, null, userId, days));
     }
 
     @GetMapping("/{workspaceId}/projects/{projectId}/statistics")
     public Result<StatisticsResponse> project(@PathVariable Long workspaceId,
-                                              @PathVariable Long projectId,
-                                              @RequestParam(defaultValue = "30") int days,
-                                              Authentication authentication) {
+            @PathVariable Long projectId,
+            @RequestParam(defaultValue = "30") int days,
+            Authentication authentication) {
         Long userId = userId(authentication);
-        if (projectMapper.findAccessibleById(workspaceId, projectId, userId) == null) throw notFound("项目不存在或无权访问");
+        if (projectMapper.findAccessibleById(workspaceId, projectId, userId) == null)
+            throw notFound("项目不存在或无权访问");
         return Result.success(load(workspaceId, projectId, userId, days));
     }
 

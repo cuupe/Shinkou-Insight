@@ -34,12 +34,17 @@ public class ProjectSettingsController {
     private final ObjectMapper objectMapper;
     private final AuditLogService auditLogService;
 
-    /** Project candidates include the current user, project creator and workspace defaults. */
+    /**
+     * Project candidates include the current user, project creator and workspace
+     * defaults.
+     */
     @GetMapping("/models")
-    public Result<List<ModelConfig>> models(@PathVariable Long workspaceId, @PathVariable Long projectId, Authentication auth) {
+    public Result<List<ModelConfig>> models(@PathVariable Long workspaceId, @PathVariable Long projectId,
+            Authentication auth) {
         Long userId = userId(auth);
         memberAccess(workspaceId, projectId, userId);
-        return Result.success(modelMapper.findForProject(workspaceId, projectId, projectMapper.findCreatorId(projectId), userId));
+        return Result.success(
+                modelMapper.findForProject(workspaceId, projectId, projectMapper.findCreatorId(projectId), userId));
     }
 
     @GetMapping("/tools")
@@ -49,19 +54,20 @@ public class ProjectSettingsController {
 
     @GetMapping("/local-tools")
     public Result<Map<String, Object>> localTools(@PathVariable Long workspaceId, @PathVariable Long projectId,
-                                                   Authentication auth) {
+            Authentication auth) {
         Long currentUserId = userId(auth);
         memberAccess(workspaceId, projectId, currentUserId);
         try {
             return Result.success(aiClient.localTools());
         } catch (Exception exception) {
-            throw new ApiException(HttpStatus.BAD_GATEWAY, "LOCAL_TOOLS_UNAVAILABLE", "本地工具系统暂不可用，请检查 Python AI 服务是否已启动");
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "LOCAL_TOOLS_UNAVAILABLE",
+                    "本地工具系统暂不可用，请检查 Python AI 服务是否已启动");
         }
     }
 
     @PostMapping("/local-tools/reload")
     public Result<Map<String, Object>> reloadLocalTools(@PathVariable Long workspaceId, @PathVariable Long projectId,
-                                                         Authentication auth) {
+            Authentication auth) {
         Long currentUserId = userId(auth);
         writeAccess(workspaceId, projectId, currentUserId);
         try {
@@ -73,7 +79,7 @@ public class ProjectSettingsController {
 
     @PostMapping("/tools")
     public Result<ToolConfig> createTool(@PathVariable Long workspaceId, @PathVariable Long projectId,
-                                         @Valid @RequestBody ToolConfigRequest request, Authentication auth) {
+            @Valid @RequestBody ToolConfigRequest request, Authentication auth) {
         Long currentUserId = userId(auth);
         rejectWebSearch(request);
         String scope = scope(request.scope());
@@ -90,15 +96,16 @@ public class ProjectSettingsController {
         config.setEnabled(request.enabled() == null || request.enabled());
         config.setScope(scope);
         toolMapper.insert(config);
-        auditLogService.record(workspaceId, projectId, currentUserId, "TOOL_CONFIG_CREATED", "TOOL_CONFIG", config.getId(),
+        auditLogService.record(workspaceId, projectId, currentUserId, "TOOL_CONFIG_CREATED", "TOOL_CONFIG",
+                config.getId(),
                 Map.of("connectorType", config.getConnectorType(), "scope", config.getScope()));
         return Result.success(toolMapper.findById(config.getId(), projectId, currentUserId));
     }
 
     @PatchMapping("/tools/{id}")
     public Result<ToolConfig> updateTool(@PathVariable Long workspaceId, @PathVariable Long projectId,
-                                         @PathVariable Long id, @Valid @RequestBody ToolConfigRequest request,
-                                         Authentication auth) {
+            @PathVariable Long id, @Valid @RequestBody ToolConfigRequest request,
+            Authentication auth) {
         Long currentUserId = userId(auth);
         rejectWebSearch(request);
         ToolConfig config = requiredTool(id, projectId, currentUserId);
@@ -108,19 +115,22 @@ public class ProjectSettingsController {
         config.setEndpoint(request.endpoint().trim());
         config.setConnectorType(defaultValue(request.connectorType(), config.getConnectorType()));
         config.setAuthType(defaultValue(request.authType(), config.getAuthType()));
-        if (request.credential() != null && !request.credential().isBlank()) config.setCredentialCiphertext(cipher.encrypt(request.credential()));
+        if (request.credential() != null && !request.credential().isBlank())
+            config.setCredentialCiphertext(cipher.encrypt(request.credential()));
         config.setConfig(defaultValue(request.config(), config.getConfig()));
-        if (request.enabled() != null) config.setEnabled(request.enabled());
+        if (request.enabled() != null)
+            config.setEnabled(request.enabled());
         config.setScope(scope);
         toolMapper.update(config);
-        auditLogService.record(workspaceId, projectId, currentUserId, "TOOL_CONFIG_UPDATED", "TOOL_CONFIG", config.getId(),
+        auditLogService.record(workspaceId, projectId, currentUserId, "TOOL_CONFIG_UPDATED", "TOOL_CONFIG",
+                config.getId(),
                 Map.of("connectorType", config.getConnectorType(), "scope", config.getScope()));
         return Result.success(toolMapper.findById(id, projectId, currentUserId));
     }
 
     @DeleteMapping("/tools/{id}")
     public Result<Void> deleteTool(@PathVariable Long workspaceId, @PathVariable Long projectId,
-                                   @PathVariable Long id, Authentication auth) {
+            @PathVariable Long id, Authentication auth) {
         Long currentUserId = userId(auth);
         ToolConfig config = requiredTool(id, projectId, currentUserId);
         accessForUpdate(workspaceId, projectId, currentUserId, config, config.getScope());
@@ -131,13 +141,16 @@ public class ProjectSettingsController {
 
     private Long userId(Authentication auth) {
         Object principal = auth.getPrincipal();
-        if (principal instanceof UserLoginByPassword user && user.getId() != null) return user.getId();
+        if (principal instanceof UserLoginByPassword user && user.getId() != null)
+            return user.getId();
         throw new IllegalStateException("Current session does not contain user information");
     }
 
     private void accessForCreate(Long workspaceId, Long projectId, Long userId, String scope) {
-        if ("PERSONAL".equals(scope)) memberAccess(workspaceId, projectId, userId);
-        else writeAccess(workspaceId, projectId, userId);
+        if ("PERSONAL".equals(scope))
+            memberAccess(workspaceId, projectId, userId);
+        else
+            writeAccess(workspaceId, projectId, userId);
     }
 
     private void accessForUpdate(Long workspaceId, Long projectId, Long userId, ToolConfig config, String scope) {
@@ -162,7 +175,8 @@ public class ProjectSettingsController {
 
     private ToolConfig requiredTool(Long id, Long projectId, Long userId) {
         ToolConfig config = toolMapper.findById(id, projectId, userId);
-        if (config == null) throw new ApiException(HttpStatus.NOT_FOUND, "TOOL_CONFIG_NOT_FOUND", "工具配置不存在或无权访问");
+        if (config == null)
+            throw new ApiException(HttpStatus.NOT_FOUND, "TOOL_CONFIG_NOT_FOUND", "工具配置不存在或无权访问");
         return config;
     }
 
@@ -175,11 +189,13 @@ public class ProjectSettingsController {
         if ("WEB_SEARCH".equalsIgnoreCase(defaultValue(request.connectorType(), ""))) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "WEB_SEARCH_USE_DEDICATED_SETTINGS", "联网搜索必须在独立的联网搜索设置中配置");
         }
-        if (request.config() == null || request.config().isBlank()) return;
+        if (request.config() == null || request.config().isBlank())
+            return;
         try {
             Map<String, Object> config = objectMapper.readValue(request.config(), Map.class);
             if ("web_search".equalsIgnoreCase(String.valueOf(config.getOrDefault("purpose", "")))) {
-                throw new ApiException(HttpStatus.BAD_REQUEST, "WEB_SEARCH_USE_DEDICATED_SETTINGS", "联网搜索必须在独立的联网搜索设置中配置");
+                throw new ApiException(HttpStatus.BAD_REQUEST, "WEB_SEARCH_USE_DEDICATED_SETTINGS",
+                        "联网搜索必须在独立的联网搜索设置中配置");
             }
         } catch (ApiException exception) {
             throw exception;
@@ -195,7 +211,8 @@ public class ProjectSettingsController {
     private String scope(String value) {
         String normalized = defaultValue(value, "TEAM").trim().toUpperCase();
         if (!"PERSONAL".equals(normalized) && !"TEAM".equals(normalized)) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_CONFIG_SCOPE", "Configuration scope must be PERSONAL or TEAM");
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_CONFIG_SCOPE",
+                    "Configuration scope must be PERSONAL or TEAM");
         }
         return normalized;
     }

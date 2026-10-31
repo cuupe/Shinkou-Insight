@@ -9,7 +9,9 @@ import org.springframework.stereotype.Service;
 import java.util.Arrays;
 import java.util.Comparator;
 
-/** Keeps manually-created session authentications subject to a bounded limit. */
+/**
+ * Keeps manually-created session authentications subject to a bounded limit.
+ */
 @Service
 @RequiredArgsConstructor
 public class SessionSecurityService {
@@ -17,7 +19,8 @@ public class SessionSecurityService {
     private final AuthSecurityProperties properties;
 
     public void register(String sessionId, String principal) {
-        if (sessionId == null || principal == null) return;
+        if (sessionId == null || principal == null)
+            return;
         SessionInformation[] active = activeSessions(principal);
         int allowedExisting = Math.max(0, properties.getMaxActiveSessionsPerUser() - 1);
         Arrays.stream(active)
@@ -29,16 +32,19 @@ public class SessionSecurityService {
 
     public void expireOtherSessions(String principal, String currentSessionId) {
         for (SessionInformation session : activeSessions(principal)) {
-            if (!session.getSessionId().equals(currentSessionId)) session.expireNow();
+            if (!session.getSessionId().equals(currentSessionId))
+                session.expireNow();
         }
     }
 
     public void expireAllSessions(String principal) {
-        for (SessionInformation session : activeSessions(principal)) session.expireNow();
+        for (SessionInformation session : activeSessions(principal))
+            session.expireNow();
     }
 
     public void remove(String sessionId) {
-        if (sessionId != null) sessionRegistry.removeSessionInformation(sessionId);
+        if (sessionId != null)
+            sessionRegistry.removeSessionInformation(sessionId);
     }
 
     private SessionInformation[] activeSessions(String principal) {

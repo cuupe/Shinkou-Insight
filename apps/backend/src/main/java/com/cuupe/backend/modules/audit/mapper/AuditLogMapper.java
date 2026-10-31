@@ -35,6 +35,5 @@ public interface AuditLogMapper {
             @Param("resourceType") String resourceType,
             @Param("resourceId") String resourceId,
             @Param("outcome") String outcome,
-            @Param("details") String details
-    );
+            @Param("details") String details);
 }

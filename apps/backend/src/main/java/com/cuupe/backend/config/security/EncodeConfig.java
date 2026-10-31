@@ -17,8 +17,7 @@ public class EncodeConfig {
         BCryptPasswordEncoder bcrypt = new BCryptPasswordEncoder(12);
         DelegatingPasswordEncoder encoder = new DelegatingPasswordEncoder(
                 "bcrypt",
-                Map.of("bcrypt", bcrypt)
-        );
+                Map.of("bcrypt", bcrypt));
         encoder.setDefaultPasswordEncoderForMatches(bcrypt);
         return encoder;
     }

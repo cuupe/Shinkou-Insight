@@ -17,7 +17,8 @@ public class StorageQuotaService {
     private final StorageQuotaMapper mapper;
 
     public void validateFileSize(long bytes) {
-        if (bytes <= 0) throw ApiException.badRequest("EMPTY_FILE", "文件不能为空");
+        if (bytes <= 0)
+            throw ApiException.badRequest("EMPTY_FILE", "文件不能为空");
         if (bytes >= MAX_SINGLE_FILE_BYTES) {
             throw ApiException.badRequest("FILE_TOO_LARGE", "单个文件必须小于 256 MB");
         }
@@ -38,7 +39,8 @@ public class StorageQuotaService {
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void release(Long userId, long bytes) {
-        if (bytes <= 0) return;
+        if (bytes <= 0)
+            return;
         mapper.ensureUser(userId);
         long tracked = value(mapper.lockUsedBytes(userId));
         long actual = value(mapper.findFileBytes(userId)) + value(mapper.findKnowledgeBytes(userId));
@@ -60,8 +62,7 @@ public class StorageQuotaService {
                 MAX_STORAGE_BYTES,
                 remainingBytes,
                 usagePercent,
-                MAX_SINGLE_FILE_BYTES
-        );
+                MAX_SINGLE_FILE_BYTES);
     }
 
     private long value(Long value) {

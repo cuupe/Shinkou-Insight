@@ -7,5 +7,6 @@ import org.apache.ibatis.annotations.Param;
 @Mapper
 public interface ProjectPlanMapper {
     ProjectPlan findByProject(@Param("workspaceId") Long workspaceId, @Param("projectId") Long projectId);
+
     int upsert(ProjectPlan plan);
 }

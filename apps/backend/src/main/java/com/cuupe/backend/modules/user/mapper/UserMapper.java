@@ -9,19 +9,18 @@ import java.time.LocalDateTime;
 
 @Mapper
 public interface UserMapper {
-    User findUserByPhoneNumber(
-            @Param("phoneNumber") String phoneNumber
-    );
+        User findUserByPhoneNumber(
+                        @Param("phoneNumber") String phoneNumber);
 
-    UserLoginByPassword findAuthUserByPhoneNumber(
-            @Param("phoneNumber") String phoneNumber
-    );
+        UserLoginByPassword findAuthUserByPhoneNumber(
+                        @Param("phoneNumber") String phoneNumber);
 
-    User findUserById(@Param("id") Long id);
+        User findUserById(@Param("id") Long id);
 
-    void updateLoginAt(@Param("id") Long id);
+        void updateLoginAt(@Param("id") Long id);
 
-        void updateProfile(@Param("id") Long id, @Param("userName") String userName, @Param("email") String email, @Param("timezone") String timezone);
+        void updateProfile(@Param("id") Long id, @Param("userName") String userName, @Param("email") String email,
+                        @Param("timezone") String timezone);
 
         void updateNotificationPreferences(@Param("id") Long id, @Param("preferences") String preferences);
 
@@ -29,16 +28,14 @@ public interface UserMapper {
 
         int updatePhoneNumber(@Param("id") Long id, @Param("phoneNumber") String phoneNumber);
 
-    boolean existPhoneNumber(
-            @Param("phoneNumber") String phoneNumber
-    );
+        boolean existPhoneNumber(
+                        @Param("phoneNumber") String phoneNumber);
 
-    void createNewUser(
-            @Param("userName") String userName,
-            @Param("phoneNumber") String phoneNumber,
-            @Param("password") String password,
-            @Param("createAt") LocalDateTime createAt,
-            @Param("status") Integer status
-            );
+        void createNewUser(
+                        @Param("userName") String userName,
+                        @Param("phoneNumber") String phoneNumber,
+                        @Param("password") String password,
+                        @Param("createAt") LocalDateTime createAt,
+                        @Param("status") Integer status);
 
 }

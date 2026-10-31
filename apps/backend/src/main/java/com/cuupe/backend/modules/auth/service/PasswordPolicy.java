@@ -15,10 +15,14 @@ public class PasswordPolicy {
         }
 
         int classes = 0;
-        if (password.chars().anyMatch(Character::isUpperCase)) classes++;
-        if (password.chars().anyMatch(Character::isLowerCase)) classes++;
-        if (password.chars().anyMatch(Character::isDigit)) classes++;
-        if (password.chars().anyMatch(character -> !Character.isLetterOrDigit(character))) classes++;
+        if (password.chars().anyMatch(Character::isUpperCase))
+            classes++;
+        if (password.chars().anyMatch(Character::isLowerCase))
+            classes++;
+        if (password.chars().anyMatch(Character::isDigit))
+            classes++;
+        if (password.chars().anyMatch(character -> !Character.isLetterOrDigit(character)))
+            classes++;
         if (classes < 3) {
             throw ApiException.badRequest("PASSWORD_TOO_WEAK", "密码至少需要包含大写字母、小写字母、数字、特殊字符中的三类");
         }

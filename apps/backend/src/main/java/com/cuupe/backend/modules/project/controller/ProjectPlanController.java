@@ -27,8 +27,8 @@ public class ProjectPlanController {
 
     @GetMapping
     public Result<ProjectPlan> detail(@PathVariable Long workspaceId,
-                                      @PathVariable Long projectId,
-                                      Authentication authentication) {
+            @PathVariable Long projectId,
+            Authentication authentication) {
         Long userId = userId(authentication);
         requiredProject(workspaceId, projectId, userId);
         ProjectPlan plan = planMapper.findByProject(workspaceId, projectId);
@@ -43,9 +43,9 @@ public class ProjectPlanController {
 
     @PutMapping
     public Result<ProjectPlan> save(@PathVariable Long workspaceId,
-                                    @PathVariable Long projectId,
-                                    @Valid @RequestBody ProjectPlanRequest request,
-                                    Authentication authentication) {
+            @PathVariable Long projectId,
+            @Valid @RequestBody ProjectPlanRequest request,
+            Authentication authentication) {
         Long userId = userId(authentication);
         requiredProject(workspaceId, projectId, userId);
         if (!projectMapper.hasWriteAccess(workspaceId, projectId, userId)) {
@@ -70,15 +70,19 @@ public class ProjectPlanController {
 
     private Project requiredProject(Long workspaceId, Long projectId, Long userId) {
         Project project = projectMapper.findAccessibleById(workspaceId, projectId, userId);
-        if (project == null) throw new ApiException(HttpStatus.NOT_FOUND, "PROJECT_NOT_FOUND", "项目不存在或无权访问");
+        if (project == null)
+            throw new ApiException(HttpStatus.NOT_FOUND, "PROJECT_NOT_FOUND", "项目不存在或无权访问");
         return project;
     }
 
     private Long userId(Authentication authentication) {
         Object principal = authentication.getPrincipal();
-        if (principal instanceof UserLoginByPassword user && user.getId() != null) return user.getId();
+        if (principal instanceof UserLoginByPassword user && user.getId() != null)
+            return user.getId();
         throw new IllegalStateException("当前会话缺少用户信息");
     }
 
-    private String value(String value) { return value == null ? "" : value.trim(); }
+    private String value(String value) {
+        return value == null ? "" : value.trim();
+    }
 }
